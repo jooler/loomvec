@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "loomvec.fullname" . }}-config
+  labels:
+    {{- include "loomvec.labels" . | nindent 4 }}
+data:
+  # 非敏感配置速览（实际注入经 Deployment env，见 templates/_helpers.tpl loomvec.env）
+  loomvec-env: {{ .Values.config.env | quote }}
+  log-level: {{ .Values.config.logLevel | quote }}
+  log-json: {{ .Values.config.logJson | toString | quote }}
+  auth-dev-mode: {{ .Values.config.auth.devMode | toString | quote }}
+  ai-mock: {{ .Values.config.ai.mock | toString | quote }}
+  storage-bucket-raw: {{ .Values.config.storage.bucketRaw | quote }}
+  storage-bucket-derived: {{ .Values.config.storage.bucketDerived | quote }}
+  mineru-enabled: {{ .Values.config.mineru.enabled | toString | quote }}
+  mineru-backend: {{ .Values.config.mineru.backend | quote }}
+  postgres-url: {{ .Values.postgres.url | quote }}
+  redis-url: {{ .Values.redis.url | quote }}
+  milvus-uri: {{ include "loomvec.milvusUri" . | quote }}
+  storage-endpoint: {{ include "loomvec.storageEndpoint" . | quote }}

@@ -1,0 +1,346 @@
+# =====================================================================
+# LoomVec Helm chart 默认值（P4-INF-02）
+# 所有应用配置项与仓库根 .env.example 的 LOOMVEC_ 键名语义一致；
+# LOOMVEC_ 前缀与嵌套分隔符 __ 由模板自动拼接，见 templates/_helpers.tpl 的 loomvec.env。
+# =====================================================================
+
+# ---------- 全局 ----------
+global:
+  # 统一镜像仓库前缀（如 registry.example.com/loomvec），留空使用各 image 原值
+  imageRegistry: ""
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  # - name: regcred
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod 级安全上下文默认值
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+# ---------- 应用配置（对应 .env.example，键名见各注释） ----------
+config:
+  # LOOMVEC_ENV：dev | prod
+  env: prod
+  # LOOMVEC_LOG_LEVEL
+  logLevel: INFO
+  # LOOMVEC_LOG_JSON
+  logJson: true
+
+  auth:
+    # LOOMVEC_AUTH__DEV_MODE：生产必须 false（P0 dev 认证仅限本地联调）
+    devMode: false
+
+  storage:
+    # LOOMVEC_STORAGE__BUCKET_RAW / LOOMVEC_STORAGE__BUCKET_DERIVED
+    #（内置 RustFS 部署不含自动建桶逻辑，bucket 由应用首次写入时创建或预先手工创建）
+    bucketRaw: loomvec-raw
+    bucketDerived: loomvec-derived
+
+  mineru:
+    # MinerU 解析服务不随本 chart 部署（大镜像、可选依赖）；
+    # 关闭后不再注入 LOOMVEC_MINERU__*。
+    enabled: true
+    # LOOMVEC_MINERU__BASE_URL：集群内/外 MinerU 服务地址
+    baseUrl: ""
+    # LOOMVEC_MINERU__BACKEND
+    backend: pipeline
+
+  ai:
+    # LOOMVEC_AI__MOCK：生产禁止开启（全部通道走确定性本地实现）
+    mock: true
+    # 其余 LOOMVEC_AI__* 直传项，键名 = LOOMVEC_AI__<键>（嵌套用 __）。
+    # 例：
+    #   EMBEDDING__BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
+    #   EMBEDDING__MODEL: text-embedding-v4
+    #   EMBEDDING__DIM: "1024"
+    #   EMBEDDING__BATCH_SIZE: "16"
+    #   LLM__BASE_URL: ""
+    #   LLM__MODEL: ""
+    #   RERANK__API_STYLE: openai
+    #   CLIP__DIM: "512"
+    #   VLM__MODEL: ""
+    #   MOCK_IMPL__CHUNK_WINDOW_LINES: "12"
+    # API 密钥（EMBEDDING__API_KEY / LLM__API_KEY / RERANK__API_KEY / CLIP__API_KEY / VLM__API_KEY）
+    # 不要写在这里 —— 放 secret.stringData（见下），经 Secret 注入。
+    extra: {}
+
+  # 其它 LOOMVEC_ 直传项，键名 = LOOMVEC_<键>。例：
+  #   SEARCH__DEFAULT_TOP_K: "10"
+  #   SEARCH__RERANK_ENABLED: "true"
+  #   SEARCH__IMAGE_SEARCH_ENABLED: "true"
+  #   PIPELINE__CHUNK_MAX_CHARS: "2000"
+  #   PIPELINE__EMBED_BATCH_SIZE: "16"
+  #   PIPELINE__SUMMARY_ENABLED: "false"
+  #   WORKER__TASK_TIME_LIMIT: "3600"
+  #   UPLOAD__MAX_SIZE_BYTES: "209715200"
+  #   IMAGE__THUMBNAIL_FORMAT: webp
+  #   OTEL__ENDPOINT: http://otel-collector.observability:4317
+  # 注意：LOOMVEC_MILVUS__URI / LOOMVEC_STORAGE__ENDPOINT / LOOMVEC_POSTGRES__URL /
+  #       LOOMVEC_REDIS__URL 由下方依赖段计算，不可在此覆盖。
+  extraEnv: {}
+
+# ---------- 敏感配置（Secret 注入） ----------
+secret:
+  # false 或设置 existingSecret 时 chart 不创建 Secret
+  create: true
+  # 引用既有 Secret（键名约定见下）：auth-jwt-secret / storage-access-key / storage-secret-key
+  existingSecret: ""
+  # LOOMVEC_AUTH__JWT_SECRET：生产必须换成强随机值（kubectl create secret generic ... 或外部注入）
+  jwtSecret: "change-me-to-a-strong-random-secret"
+  # LOOMVEC_STORAGE__ACCESS_KEY / LOOMVEC_STORAGE__SECRET_KEY（同时也是内置 RustFS 的凭据）
+  storageAccessKey: "loomvec"
+  storageSecretKey: "loomvec-secret"
+  # 额外键值（键名即环境变量名，例：LOOMVEC_AI__EMBEDDING__API_KEY）
+  stringData: {}
+  # LOOMVEC_AI__EMBEDDING__API_KEY: sk-xxx
+  # LOOMVEC_AI__LLM__API_KEY: sk-xxx
+  # LOOMVEC_AI__RERANK__API_KEY: sk-xxx
+  # LOOMVEC_AI__CLIP__API_KEY: sk-xxx
+  # LOOMVEC_AI__VLM__API_KEY: sk-xxx
+
+# ---------- PostgreSQL 18 + Apache AGE ----------
+postgres:
+  # 本 chart 不内置 Postgres（需 AGE 扩展的自定义镜像，见 deploy/compose/postgres-age）。
+  # enabled=true 用下方 url 指向外部/云托管实例；密钥建议改走 existingSecret。
+  enabled: true
+  # LOOMVEC_POSTGRES__URL（asyncpg DSN）
+  url: postgresql+asyncpg://loomvec:loomvec@postgres:5432/loomvec
+  # 整个 DSN 放到 <existingSecret>/<existingSecretKey> 时填 existingSecret（优先于 url）
+  existingSecret: ""
+  existingSecretKey: "postgres-url"
+
+# ---------- Redis（Celery broker / 缓存 / 限流） ----------
+redis:
+  # 同 postgres：chart 不内置 Redis；true 用 url，false/留空 url 时用 existingSecret
+  enabled: true
+  # LOOMVEC_REDIS__URL
+  url: redis://redis:6379/0
+  existingSecret: ""
+  existingSecretKey: "redis-url"
+
+# ---------- Milvus（分布式） ----------
+milvus:
+  # true：经 bitnami/milvus 子 chart 部署分布式 Milvus（先 helm dependency update）；
+  # false：不部署，LOOMVEC_MILVUS__URI 取 external.uri（云托管 / 外部集群）。
+  enabled: true
+  external:
+    uri: ""
+  # 透传给 bitnami/milvus 子 chart 的配置（详见 bitnami/milvus chart 文档）。
+  # 生产务必覆盖子 chart 内消息队列/存储组件的默认凭据与资源，例：
+  #   cluster:
+  #     enabled: true
+  #   persistence:
+  #     size: 100Gi
+  extra: {}
+
+# ---------- 对象存储（RustFS / S3 兼容） ----------
+storage:
+  # internal：chart 内 StatefulSet 部署 RustFS（3 副本）；
+  # external：外置 S3 兼容存储（云 OSS / 已有 RustFS / MinIO），填 external 段。
+  mode: internal
+  external:
+    # LOOMVEC_STORAGE__ENDPOINT
+    endpoint: ""
+    accessKey: ""
+    secretKey: ""
+    # 凭据走 Secret：accessKey/secretKey 留空时取 <existingSecret> 的
+    # accessKeyKey / secretKeyKey 键
+    existingSecret: ""
+    accessKeyKey: "storage-access-key"
+    secretKeyKey: "storage-secret-key"
+  internal:
+    image:
+      # 生产请固定版本号（对齐 https://github.com/rustfs/rustfs releases）
+      repository: rustfs/rustfs
+      tag: "latest"
+    replicas: 3
+    port: 9000
+    consolePort: 9001
+    resources: {}
+    # 每副本 10Gi；按数据量调整
+    storageSize: 10Gi
+    storageClass: ""
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+# ---------- API（FastAPI） ----------
+api:
+  image:
+    repository: loomvec/api
+    tag: "" # 默认取 .Chart.AppVersion
+  replicaCount: 2
+  port: 8000
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  # 滚动更新：maxSurge 1 / maxUnavailable 0（保证容量不缩水）
+  strategy:
+    type: RollingUpdate
+    maxSurge: 1
+    maxUnavailable: 0
+  # 就绪/存活探针（/readyz 含依赖探测；/healthz 仅存活）
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 6
+  livenessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 5
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+  # 兼容内置 nginx 反代：额外创建名为 "api" 的 Service
+  #（apps/web、apps/admin 的 nginx.conf 反代 http://api:8000）
+  aliasService:
+    enabled: true
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------- Worker（Celery） ----------
+worker:
+  image:
+    repository: loomvec/worker
+    tag: "" # 默认取 .Chart.AppVersion
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  # celery 启动参数：三队列全监听（pipeline / pipeline_high / pipeline_low，见 core/constants.py；
+  # pipeline_low 承载实体合并/社区/webhook 补投等周期任务，漏掉会导致任务积压无人消费）
+  celeryArgs:
+    - "-l"
+    - "info"
+    - "-Q"
+    - "pipeline,pipeline_high,pipeline_low"
+    - "--concurrency=2"
+  # 长任务 worker 可改 OnDelete（随批次手动滚动）；RollingUpdate 时小步逐批
+  strategy:
+    type: RollingUpdate
+    maxSurge: 1
+    maxUnavailable: 0
+  # 等待 celery 任务收尾（对齐 WORKER__TASK_SOFT_TIME_LIMIT=3500s）
+  terminationGracePeriodSeconds: 3600
+  hpa:
+    # 可选：基于 CPU 扩缩 worker
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------- Web / Admin（nginx 静态站） ----------
+web:
+  image:
+    repository: loomvec/web
+    tag: "" # 默认取 .Chart.AppVersion
+  replicaCount: 2
+  port: 80
+  resources: {}
+  strategy:
+    type: RollingUpdate
+    maxSurge: 1
+    maxUnavailable: 0
+  pdb:
+    enabled: false
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+admin:
+  image:
+    repository: loomvec/admin
+    tag: "" # 默认取 .Chart.AppVersion
+  replicaCount: 1
+  port: 80
+  resources: {}
+  strategy:
+    type: RollingUpdate
+    maxSurge: 1
+    maxUnavailable: 0
+  pdb:
+    enabled: false
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------- 数据库迁移（alembic upgrade head） ----------
+migrate:
+  image:
+    repository: loomvec/api
+    tag: "" # 默认取 .Chart.AppVersion
+  backoffLimit: 2
+  # 成功后保留时长，便于查日志
+  ttlSecondsAfterFinished: 600
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# ---------- Ingress（nginx ingress） ----------
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  # nginx.ingress.kubernetes.io/proxy-body-size: 200m   # 对齐上传白名单上限
+  hosts:
+    - host: loomvec.example.com
+      paths:
+        - path: /
+          service: web
+        - path: /admin
+          service: admin
+        - path: /api
+          service: api
+  tls: []
+  #  - secretName: loomvec-tls
+  #    hosts:
+  #      - loomvec.example.com
+
+# ---------- 监控 ----------
+serviceMonitor:
+  # Prometheus Operator 的 ServiceMonitor（抓 api /metrics）；
+  # 无 Operator 的集群可沿用 deploy/monitoring/prometheus.yml 静态抓取（见 README）。
+  enabled: false
+  interval: 15s
+  scrapeTimeout: 10s
+  # 追加抓取 worker :9808（需 worker 侧 exporter，见 deploy/monitoring/prometheus.yml）
+  extraEndpoints: []
+  labels: {}
+
+# ---------- 通用注入 ----------
+extraLabels: {}

@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  backend-lint-test:
+    name: 后端 lint + 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Sync
+        run: uv sync --locked
+      - name: Ruff lint
+        run: uv run ruff check services scripts
+      - name: Ruff format check
+        run: uv run ruff format --check services scripts
+      - name: Unit tests（无 Docker 环境，集成测试自动跳过）
+        run: uv run pytest -m "not integration" -q
+      - name: 契约快照校验
+        run: uv run python scripts/export_openapi.py --check
+
+  frontend-lint-test-build:
+    name: 前端 lint + 测试 + 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint（tsc + eslint）
+        run: pnpm -r lint
+      - name: Vitest
+        run: pnpm -r test
+      - name: Build
+        run: pnpm -r build
+
+  contract-sdk:
+    name: 契约生成检查（openapi → sdk-ts）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: uv sync --locked
+      - run: pnpm install --frozen-lockfile
+      - name: 导出 OpenAPI + 生成 sdk-ts
+        run: |
+          uv run python scripts/export_openapi.py
+          pnpm sdk:generate
+      - name: 生成产物必须与仓库同步（git diff --exit-code）
+        run: |
+          git add -N packages/sdk-ts/src
+          git diff --exit-code -- packages/sdk-ts/src
+
+  docker-build:
+    name: Docker 镜像构建（api/worker/web/admin）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build api
+        run: docker build -t loomvec-api:ci -f services/api/Dockerfile .
+      - name: Build worker
+        run: docker build -t loomvec-worker:ci -f services/worker/Dockerfile .
+      - name: Build web（stub 契约产物）
+        run: docker build -t loomvec-web:ci -f apps/web/Dockerfile .
+      - name: Build admin（stub 契约产物）
+        run: docker build -t loomvec-admin:ci -f apps/admin/Dockerfile .
+      # PG18+AGE 与 MinerU 镜像构建重、依赖外网源码，见 deploy/compose/ 各 Dockerfile；
+      # 入围 P0 验收在本地 compose 中验证。
+
+  audit:
+    name: 依赖审计与 License 扫描（P4-QA-03）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Sync（后端）
+        run: uv sync --locked
+      - name: Python License 扫描（Copyleft/NC 拒绝，白名单见脚本头注）
+        run: uv run python scripts/check_licenses.py
+      - run: pnpm install --frozen-lockfile
+      - name: pnpm audit（生产依赖漏洞）
+        run: pnpm audit --prod
+      - name: 前端 License 扫描
+        run: |
+          pnpm licenses list --prod > /tmp/npm-licenses.txt
+          if grep -nE 'GPLv?[23]|GNU .*General Public License|SSPL|EUPL|CC-BY-NC' /tmp/npm-licenses.txt; then
+            echo "::error::前端依赖命中 Copyleft/NC License（见上方行）"
+            exit 1
+          fi
+          echo "前端依赖 License 扫描通过"
+
+  evals:
+    name: 检索评测回归（P1-QA-01，手动触发，需自托管 runner 或已配云端凭据）
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      # CI 内无 MinerU/GPU 全栈：使用 mock AI + 临时 compose 栈
+      - name: 起基础设施栈
+        run: |
+          cd deploy/compose && cp .env.example .env
+          docker compose up -d postgres redis rustfs etcd milvus
+      - run: make migrate
+      - name: 起 API 与 worker（mock AI）
+        run: |
+          export LOOMVEC_AI__MOCK=true
+          export LOOMVEC_POSTGRES__URL=postgresql+asyncpg://loomvec:loomvec@localhost:5433/loomvec
+          uv run uvicorn loomvec.api.main:app --port 8080 &
+          uv run celery -A loomvec.worker.celery_app:celery_app worker -l info -Q pipeline,pipeline_high &
+          sleep 15
+      - name: evals 回归
+        run: uv run python evals/run_evals.py --threshold 0.6

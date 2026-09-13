@@ -1,0 +1,138 @@
+{{- if eq .Values.storage.mode "internal" -}}
+{{- $internal := .Values.storage.internal -}}
+{{- /* Headless service：StatefulSet 网络标识 */ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "loomvec.fullname" . }}-rustfs-headless
+  labels:
+    {{- include "loomvec.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: s3
+      port: {{ $internal.port }}
+    - name: console
+      port: {{ $internal.consolePort }}
+  selector:
+    {{- include "loomvec.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+---
+# 客户端访问入口（S3 API）；应用经 LOOMVEC_STORAGE__ENDPOINT 指向此地址
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "loomvec.fullname" . }}-rustfs
+  labels:
+    {{- include "loomvec.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+spec:
+  type: ClusterIP
+  ports:
+    - name: s3
+      port: {{ $internal.port }}
+      targetPort: s3
+    - name: console
+      port: {{ $internal.consolePort }}
+      targetPort: console
+  selector:
+    {{- include "loomvec.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+---
+# RustFS（S3 兼容对象存储）StatefulSet；凭据与应用共享（secret.storageAccessKey）
+# 说明：每副本独立 PVC（副本间不做数据复制），生产跨副本纠删/复制请外置存储
+#（storage.mode=external）或在其前放置具备复制能力的存储层。
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "loomvec.fullname" . }}-rustfs
+  labels:
+    {{- include "loomvec.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+spec:
+  serviceName: {{ include "loomvec.fullname" . }}-rustfs-headless
+  replicas: {{ $internal.replicas }}
+  selector:
+    matchLabels:
+      {{- include "loomvec.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rustfs
+  template:
+    metadata:
+      labels:
+        {{- include "loomvec.componentLabels" (dict "component" "rustfs" "context" $) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: rustfs
+          image: {{ include "loomvec.image" (dict "root" $ "image" $internal.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "loomvec.secretName" . }}
+                  key: storage-access-key
+            - name: RUSTFS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "loomvec.secretName" . }}
+                  key: storage-secret-key
+            - name: RUSTFS_VOLUMES
+              value: /data
+          ports:
+            - name: s3
+              containerPort: {{ $internal.port }}
+            - name: console
+              containerPort: {{ $internal.consolePort }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: s3
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: s3
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            {{- toYaml $internal.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- with $internal.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $internal.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $internal.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with $internal.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $internal.storageSize }}
+{{- end }}

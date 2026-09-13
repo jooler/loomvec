@@ -1,0 +1,32 @@
+# 构建上下文瘦身（仓库根为上下文的镜像构建：services/api、services/worker、apps/web、apps/admin）
+# 注意：
+# - services/ 与 packages/ 必须保留——api/worker 镜像 COPY services，web/admin 镜像 COPY packages/sdk-ts；
+# - openapi.json 为本地生成产物，刻意排除：web/admin 构建使用仓库内已提交的 sdk-ts schema（CI contract-sdk 保证同步）；
+# - MinerU 与 AGE 镜像使用独立构建上下文（third_party/mineru、deploy/compose/postgres-age），不受本文件影响。
+.git
+.github
+.venv
+.DS_Store
+.env
+.env.local
+deploy/compose/.env
+
+node_modules
+**/node_modules
+**/dist
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+**/.pytest_cache
+.ruff_cache
+**/.ruff_cache
+**/*.tsbuildinfo
+celerybeat-schedule.db
+
+# 运行/评测/文档目录不进镜像
+tmp
+docs
+deploy
+scripts
+evals
+third_party

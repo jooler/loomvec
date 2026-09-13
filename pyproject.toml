@@ -1,0 +1,52 @@
+[project]
+name = "loomvec"
+version = "0.0.0"
+description = "LoomVec workspace root (see services/* for member packages)"
+requires-python = ">=3.12"
+dependencies = ["loomvec-api", "loomvec-worker"]
+
+[tool.uv.workspace]
+members = ["services/core", "services/api", "services/worker"]
+
+[tool.uv.sources]
+loomvec-core = { workspace = true }
+loomvec-api = { workspace = true }
+loomvec-worker = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    # smoke 脚本依赖（scripts/smoke/）
+    "asyncpg>=0.30",
+    "pymilvus>=2.6",
+    "boto3>=1.35",
+    "httpx>=0.28",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["services/*/src", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+# RUF001/002/003：中文文档字符串中的全角标点为正常用法，不视为歧义
+ignore = ["B008", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# 迁移脚本：列定义行重复冗长，可读性优先
+"services/api/alembic/versions/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["services"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+markers = [
+    "integration: 需要 Docker 的 testcontainers 集成测试（docker compose 场景）",
+]
+
+[tool.coverage.run]
+source = ["loomvec"]

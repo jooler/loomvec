@@ -1,0 +1,19 @@
+{{- /* PodDisruptionBudget：api / worker / web / admin 各自可开关 */ -}}
+{{- range $component := list "api" "worker" "web" "admin" -}}
+{{- $cfg := index $.Values $component -}}
+{{- if $cfg.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "loomvec.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "loomvec.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  minAvailable: {{ $cfg.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "loomvec.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $component }}
+{{- end }}
+{{- end }}

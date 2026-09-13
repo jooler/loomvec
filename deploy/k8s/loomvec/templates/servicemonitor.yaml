@@ -1,0 +1,27 @@
+{{- if .Values.serviceMonitor.enabled -}}
+# Prometheus Operator（prometheus-community/kube-prometheus-stack）方式抓取。
+# 未部署 Operator 的集群：沿用 deploy/monitoring/prometheus.yml 静态抓取，
+# 将 scrape target 指向 <fullname>-api.<namespace>.svc:<port>/metrics。
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "loomvec.fullname" . }}-api
+  labels:
+    {{- include "loomvec.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "loomvec.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+    {{- with .Values.serviceMonitor.extraEndpoints }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

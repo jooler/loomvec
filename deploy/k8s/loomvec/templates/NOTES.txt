@@ -1,0 +1,40 @@
+{{/* LoomVec Helm 部署完成。
+
+组件：
+  - api（FastAPI，{{ .Values.api.replicaCount }} 副本，HPA {{ .Values.api.hpa.minReplicas }}~{{ .Values.api.hpa.maxReplicas }} @ CPU {{ .Values.api.hpa.targetCPUUtilizationPercentage }}%）
+  - worker（Celery 队列 pipeline/pipeline_high）
+  - web / admin（nginx 静态站）
+  - rustfs（{{ if eq .Values.storage.mode "internal" }}内置 {{ .Values.storage.internal.replicas }} 副本{{ else }}外置 S3：{{ .Values.storage.external.endpoint }}{{ end }}）
+  - milvus（{{ if .Values.milvus.enabled }}bitnami 子 chart（分布式）{{ else }}外置：{{ .Values.milvus.external.uri }}{{ end }}）
+  - migrate（pre-install/pre-upgrade 钩子 Job，alembic upgrade head）
+
+常用命令：
+  kubectl get pods -l "app.kubernetes.io/instance={{ .Release.Name }}"
+  kubectl logs deploy/{{ include "loomvec.fullname" . }}-api -f
+  kubectl logs job/{{ include "loomvec.fullname" . }}-migrate
+  访问 web：kubectl port-forward svc/{{ include "loomvec.fullname" . }}-web {{ .Values.web.port }}:{{ .Values.web.port }}
+
+扩缩容：helm upgrade 调整 replicaCount / hpa，或 kubectl scale / kubectl patch hpa。
+滚动更新策略：api/web/admin 为 maxSurge=1 / maxUnavailable=0；worker 默认逐批
+（可改 strategy.type=OnDelete 手动滚动）。详见 chart README.md。
+*/}}
+感谢部署 LoomVec！
+
+Release:       {{ .Release.Name }}
+Namespace:     {{ .Release.Namespace }}
+Chart:         {{ include "loomvec.chart" . }}
+App version:   {{ .Chart.AppVersion }}
+
+1. 等待迁移 Job 与 Pod 就绪：
+   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+2. 端口转发验证：
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "loomvec.fullname" . }}-web {{ .Values.web.port }}:{{ .Values.web.port }}
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "loomvec.fullname" . }}-api {{ .Values.api.port }}:{{ .Values.api.port }}
+
+   健康检查：curl http://localhost:{{ .Values.api.port }}/readyz
+
+3. {{ if .Values.ingress.enabled }}Ingress 已启用：{{ range .Values.ingress.hosts }}{{ .host }}{{ end }}{{ else }}Ingress 未启用（values.ingress.enabled=true 开启）{{ end }}。
+
+4. 生产前必改：secret.jwtSecret、AI 密钥（secret.stringData）、config.ai.mock=false、
+   postgres/redis 指向托管实例。备份恢复见 scripts/backup/。

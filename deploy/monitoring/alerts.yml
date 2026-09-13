@@ -1,0 +1,66 @@
+# P4-INF-01 告警规则：队列积压 / 失败率 / 组件宕机 / 配额超限（docs/11 P4-INF-01）
+groups:
+  - name: loomvec-availability
+    rules:
+      - alert: LoomvecApiDown
+        expr: up{job="loomvec-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LoomVec API 不可达"
+          description: "API 实例 {{ $labels.instance }} 已 1 分钟无法抓取指标。"
+
+      - alert: LoomvecWorkerDown
+        expr: up{job="loomvec-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LoomVec worker 不可达"
+          description: "管线执行器离线，任务将持续积压。"
+
+      - alert: LoomvecQueueBacklog
+        expr: loomvec_queue_length{queue="pipeline"} > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "管线队列积压"
+          description: "pipeline 队列长度 {{ $value }} 已持续 10 分钟超过 100。"
+
+      - alert: LoomvecPipelineFailureRate
+        expr: |
+          sum(rate(loomvec_pipeline_jobs_total{status="failed"}[30m]))
+            /
+          clamp_min(sum(rate(loomvec_pipeline_jobs_total[30m])), 0.001) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "管线失败率过高（30 分钟窗口 > 20%）"
+
+      - alert: LoomvecDeadLetterGrowing
+        expr: increase(loomvec_dead_letter_size[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "出现新的死信任务，需运营介入重试"
+
+      - alert: LoomvecComponentDegraded
+        expr: loomvec_component_up == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "组件 {{ $labels.component }} 健康探测失败"
+          description: "PostgreSQL/Milvus/RustFS/Redis/MinerU/worker 七组件之一宕机或降级。"
+
+      - alert: LoomvecQuotaExceeded
+        expr: loomvec_space_usage_ratio > 0.9
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "空间 {{ $labels.space }} 用量超过配额 90%"

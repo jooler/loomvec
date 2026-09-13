@@ -1,0 +1,21 @@
+# P4-INF-01 Alertmanager 路由（默认 webhook；生产替换为钉钉/企微/Slack receiver）
+route:
+  receiver: default
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [ 'severity="critical"' ]
+      receiver: critical
+
+receivers:
+  - name: default
+  # 运维 Webhook 消费自身告警事件（复用 LoomVec 统一错误契约之外的告警载荷）
+  # 注意：Alertmanager 不支持配置文件内的环境变量替换（${VAR} 会原样导致解析失败），
+  # webhook 地址只能写死在此处；生产接入钉钉/企微/Slack 时直接修改本文件。
+  # 当前为 no-op 占位地址（无 critical 告警接收端）。
+  - name: critical
+    webhook_configs:
+      - url: "http://localhost:8000/api/v1/healthz"
+        send_resolved: true

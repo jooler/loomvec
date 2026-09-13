@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+*.tsbuildinfo
+apps/*/dist/
+coverage/
+
+# Env
+.env
+.env.local
+deploy/compose/.env
+
+# OpenAPI 导出产物（由脚本生成，不入库；契约快照在 services/api/tests/__snapshots__/）
+openapi.json
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# MinerU 本地解析输出
+third_party/mineru/output/
+# AGE 扩展源码（构建 postgres-age 镜像前经 `make age-src` 克隆，见 Makefile）
+deploy/compose/postgres-age/age-src/
+tmp/
+
+# Celery beat 本地调度状态（运行时产物）
+celerybeat-schedule.db
+celerybeat-schedule.*.db

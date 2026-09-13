@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loomvec-core"
+version = "0.1.0"
+description = "LoomVec 核心领域库：配置、可观测性、存储适配、仓储模式"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "structlog>=24.4",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "boto3>=1.35",
+    "opentelemetry-api>=1.28",
+    "opentelemetry-sdk>=1.28",
+    "opentelemetry-exporter-otlp>=1.28",
+    "prometheus-client>=0.21",
+    "httpx>=0.28",
+    "tenacity>=9.0",
+    "pymilvus>=2.6",
+    "pillow>=10.4",
+    "networkx>=3.3",
+]
+
+[project.optional-dependencies]
+# P3 可选重型依赖：缺省时功能降级（场景切分退化为 ffmpeg scene score、
+# 转写跳过、社区检测退化为贪心模块度），管线不阻断。
+media = ["scenedetect>=0.6.5", "opencv-python-headless>=4.10", "faster-whisper>=1.1"]
+communities = ["igraph>=0.11", "leidenalg>=0.10"]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.25"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loomvec"]

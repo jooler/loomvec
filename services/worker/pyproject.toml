@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loomvec-worker"
+version = "0.1.0"
+description = "LoomVec 处理管线执行器（Celery + Redis）"
+requires-python = ">=3.12"
+dependencies = [
+    "loomvec-core",
+    "celery[redis]>=5.5",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.25"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loomvec"]

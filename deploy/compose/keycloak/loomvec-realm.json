@@ -1,0 +1,37 @@
+{
+  "realm": "loomvec",
+  "enabled": true,
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "loomvec-api",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "loomvec-dev-secret",
+      "redirectUris": ["http://localhost:5174/*", "http://localhost:8080/*", "urn:loopback:loomvec-oidc"],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "ops-admin",
+      "enabled": true,
+      "email": "ops-admin@example.com",
+      "firstName": "Ops",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "ops-admin-pass", "temporary": false }],
+      "attributes": { "loomvec_roles": "super_admin" }
+    },
+    {
+      "username": "tenant-user",
+      "enabled": true,
+      "email": "tenant-user@example.com",
+      "firstName": "Tenant",
+      "lastName": "User",
+      "credentials": [{ "type": "password", "value": "tenant-user-pass", "temporary": false }]
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+# P4-INF-01 Prometheus 抓取与规则配置
+# 由 deploy/compose/compose.yaml（observability profile）与 Helm chart 共用
+# 开发环境：api/worker 在宿主机运行（make api / make worker），Prometheus 容器经
+# host.docker.internal 抓取（compose 已注入 extra_hosts: host-gateway）；
+# K8s 环境改用 ServiceMonitor 抓取集群内 Service（见 deploy/k8s/loomvec values）。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: loomvec
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: loomvec-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8080"] # make api 默认端口
+  - job_name: loomvec-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:9808"] # worker 指标端口（LOOMVEC_WORKER__METRICS_PORT）
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

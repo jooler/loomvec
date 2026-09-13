@@ -1,0 +1,122 @@
+"""P2-CORE-02 资源级授权服务：成员关系 × 审核状态 → 空间/资产可见性与操作权。
+
+分层约定：
+- 纯判定函数（`at_least` / `decide_asset_visibility`）无 IO，供单测覆盖权限矩阵；
+- DB 判定（`require_space_role` / `visible_space_ids`）供 API 依赖与仓储层调用，
+  是"租户 × 空间 × 角色"三重过滤的单点实现——路由层不自行拼成员查询。
+
+语义（09 文档 · 能力矩阵）：
+- viewer：只读，且仅可见"通过审核"的资产（review_required 空间）；
+- editor：上传/编辑/删除自己可管理范围内的资产，可见全部审核状态；
+- owner：成员管理、空间设置、删除空间；
+- 被移除成员即失权：一切判定即时查 space_member，不缓存。
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from loomvec.core.db.models import ReviewStatus, Space, SpaceMember, SpaceRole
+from loomvec.core.errors import NotFoundError, PermissionDeniedError
+
+ROLE_RANK: dict[SpaceRole, int] = {
+    SpaceRole.VIEWER: 0,
+    SpaceRole.EDITOR: 1,
+    SpaceRole.OWNER: 2,
+}
+
+
+def at_least(role: SpaceRole | str, min_role: SpaceRole | str) -> bool:
+    """角色序数比较：owner > editor > viewer。"""
+    r = ROLE_RANK[SpaceRole(role)]
+    m = ROLE_RANK[SpaceRole(min_role)]
+    return r >= m
+
+
+def can_manage_asset(
+    *,
+    role: SpaceRole | str,
+    asset_created_by: uuid.UUID | None,
+    user_id: uuid.UUID | None,
+) -> bool:
+    """资产编辑/删除边界（doc 05 能力矩阵）：
+
+    - owner：空间内全部资产；
+    - editor：仅自己上传的（created_by == user_id）；API Key 身份（user_id 为空）
+      仅可管理同为 API Key 登记的资产（created_by 为空）；
+    - viewer：无权。
+    """
+    if at_least(role, SpaceRole.OWNER):
+        return True
+    if not at_least(role, SpaceRole.EDITOR):
+        return False
+    if user_id is None:  # API Key 身份：仅限 API Key 登记的资产
+        return asset_created_by is None
+    return asset_created_by == user_id
+
+
+def decide_asset_visibility(
+    *, review_required: bool, review_status: ReviewStatus | None, role: SpaceRole | str
+) -> bool:
+    """审核状态 × 角色判可见：viewer 仅见通过审核资产；editor/owner 全见。"""
+    if at_least(role, SpaceRole.EDITOR):
+        return True
+    if not review_required:
+        return True
+    return review_status == ReviewStatus.APPROVED
+
+
+@dataclass(frozen=True)
+class SpaceAccess:
+    """通过校验后的空间访问上下文（space + 成员行）。"""
+
+    space: Space
+    member: SpaceMember
+
+    @property
+    def role(self) -> SpaceRole:
+        return self.member.role
+
+
+async def get_membership(
+    session: AsyncSession, *, space_id: uuid.UUID, user_id: uuid.UUID
+) -> SpaceMember | None:
+    stmt = select(SpaceMember).where(
+        SpaceMember.space_id == space_id,
+        SpaceMember.user_id == user_id,
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def require_space_role(
+    session: AsyncSession,
+    *,
+    space_id: uuid.UUID,
+    user_id: uuid.UUID,
+    min_role: SpaceRole | str = SpaceRole.VIEWER,
+) -> SpaceAccess:
+    """空间访问闸门：空间必须存在，且请求者是具备最低角色的成员。
+
+    非成员与无权限统一 403（不泄露空间存在性）；空间不存在 404。
+    """
+    space = (
+        await session.execute(select(Space).where(Space.id == space_id, Space.deleted_at.is_(None)))
+    ).scalar_one_or_none()
+    if space is None:
+        raise NotFoundError(resource="space", id=str(space_id))
+    member = await get_membership(session, space_id=space_id, user_id=user_id)
+    if member is None or not at_least(member.role, min_role):
+        raise PermissionDeniedError(reason="无该空间访问权限", space_id=str(space_id))
+    return SpaceAccess(space=space, member=member)
+
+
+async def visible_space_ids(session: AsyncSession, *, user_id: uuid.UUID) -> list[uuid.UUID]:
+    """用户可见（成员中）的空间集合：检索/列表聚合过滤的根。"""
+    stmt = select(SpaceMember.space_id).where(
+        SpaceMember.user_id == user_id,
+    )
+    return list((await session.execute(stmt)).scalars().all())

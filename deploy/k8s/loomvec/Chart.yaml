@@ -1,0 +1,25 @@
+apiVersion: v2
+name: loomvec
+description: LoomVec 知识库平台（FastAPI api、Celery worker、React 静态站 web/admin）
+type: application
+
+# 与 services/api/pyproject.toml 的 version 保持一致
+version: 0.1.0
+# 与 services/api/pyproject.toml 的 [project].version 保持一致
+appVersion: "0.1.0"
+
+home: https://github.com/loomvec/loomvec
+keywords:
+  - loomvec
+  - rag
+  - knowledge-base
+  - milvus
+
+# Milvus 分布式通过 bitnami 子 chart 引入（helm dependency update 后生效），
+# 由 values.yaml 的 milvus.enabled 开关控制。
+# 生产环境建议把 version 钉到具体版本（先 `helm search repo bitnami/milvus` 查看可用版本）。
+dependencies:
+  - name: milvus
+    version: ">=11.0.0-0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: milvus.enabled

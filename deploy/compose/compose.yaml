@@ -1,0 +1,246 @@
+# LoomVec 基础设施栈（P0）
+# 用法：cp .env.example .env && docker compose up -d
+# 冒烟验证：uv run python scripts/smoke/run.py
+name: loomvec
+
+services:
+  # ---------- PostgreSQL 18 + Apache AGE（openCypher） ----------
+  postgres:
+    build:
+      context: ./postgres-age
+      dockerfile: Dockerfile
+    image: loomvec/postgres-age:18
+    container_name: loomvec-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-loomvec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-loomvec}
+      POSTGRES_DB: ${POSTGRES_DB:-loomvec}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./postgres-age/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-loomvec} -d ${POSTGRES_DB:-loomvec}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ---------- Redis（Celery broker / 缓存 / 限流） ----------
+  redis:
+    image: redis:8-alpine
+    container_name: loomvec-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ---------- RustFS（S3 兼容对象存储；同时充当 Milvus 存储后端） ----------
+  rustfs:
+    image: rustfs/rustfs:latest # 建议生产固定版本号（对齐 https://github.com/rustfs/rustfs releases）
+    container_name: loomvec-rustfs
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-loomvec}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-loomvec-secret}
+      RUSTFS_VOLUMES: /data
+    ports:
+      - "${RUSTFS_PORT:-9000}:9000"
+      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - rustfs_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ---------- etcd（Milvus 元数据） ----------
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    container_name: loomvec-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: >
+      etcd
+      -advertise-client-urls=http://etcd:2379
+      -listen-client-urls=http://0.0.0.0:2379
+      --data-dir=/etcd
+    volumes:
+      - etcd_data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # ---------- Milvus 2.6 Standalone（dense + BM25 混合检索） ----------
+  milvus:
+    image: milvusdb/milvus:v2.6.23
+    container_name: loomvec-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      # 用 RustFS 承担 Milvus 的对象存储（替代默认 MinIO）
+      MINIO_ADDRESS: rustfs:9000
+      MINIO_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-loomvec}
+      MINIO_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-loomvec-secret}
+      COMMON_STORAGETYPE: remote
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_METRICS_PORT:-9091}:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9091/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 30
+
+  # ---------- MinerU 3.4（文档解析，CPU pipeline 后端） ----------
+  # 镜像从仓库内 vendored 源码构建（third_party/mineru，Apache-2.0+附加条款，见 02 文档合规项）
+  # 首次启动会自动下载 pipeline 模型到 mineru_models 卷（约 1~2GB，需等待）
+  mineru:
+    build:
+      context: ../../third_party/mineru
+      dockerfile: ../../deploy/compose/mineru/Dockerfile
+      additional_contexts:
+        # entrypoint.sh 位于 deploy 目录，经命名上下文注入构建
+        deploy: ../../deploy/compose/mineru
+    image: loomvec/mineru:3.4.5-cpu
+    container_name: loomvec-mineru
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/app/entrypoint.sh"]
+    environment:
+      MINERU_MODEL_SOURCE: modelscope
+      MINERU_TOOLS_CONFIG_JSON: /models/mineru.template.json
+    ports:
+      - "${MINERU_PORT:-8000}:8000"
+    volumes:
+      - mineru_models:/models
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 600s # 首次启动含模型下载
+      retries: 60
+
+  # ---------- 可选：Milvus 管理界面 ----------
+  attu:
+    image: zilliz/attu:v2.6
+    container_name: loomvec-attu
+    restart: unless-stopped
+    profiles: ["debug"]
+    environment:
+      MILVUS_URL: milvus:19530
+    ports:
+      - "${ATTU_PORT:-3001}:3000"
+    depends_on:
+      milvus:
+        condition: service_healthy
+
+  # ---------- P4-QA-02 测试 IdP（SSO/OAuth 集成测试与本地联调） ----------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: loomvec-keycloak
+    restart: unless-stopped
+    profiles: ["sso"]
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./keycloak/loomvec-realm.json:/opt/keycloak/data/import/loomvec-realm.json:ro
+    ports:
+      - "${KEYCLOAK_PORT:-8088}:8080"
+
+  # ---------- P4-INF-01 监控告警栈 ----------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: loomvec-prometheus
+    restart: unless-stopped
+    profiles: ["observability"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # api/worker 在宿主机运行，经此抓取
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: loomvec-alertmanager
+    restart: unless-stopped
+    profiles: ["observability"]
+    volumes:
+      - ../monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: loomvec-grafana
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3002}:3000"
+
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: loomvec-loki
+    restart: unless-stopped
+    profiles: ["observability"]
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ../monitoring/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+
+  promtail:
+    image: grafana/promtail:3.4.2
+    container_name: loomvec-promtail
+    restart: unless-stopped
+    profiles: ["observability"]
+    volumes:
+      - ../monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+  rustfs_data:
+  etcd_data:
+  milvus_data:
+  mineru_models:
+  prometheus_data:
+  grafana_data:
+  loki_data:

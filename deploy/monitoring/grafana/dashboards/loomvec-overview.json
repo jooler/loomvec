@@ -1,0 +1,91 @@
+{
+  "title": "LoomVec 平台总览",
+  "uid": "loomvec-overview",
+  "tags": ["loomvec"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "API 可用性",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "up{job=\"loomvec-api\"}" }]
+    },
+    {
+      "type": "stat",
+      "title": "Worker 可用性",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "up{job=\"loomvec-worker\"}" }]
+    },
+    {
+      "type": "stat",
+      "title": "队列深度（pipeline）",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "celery_queue_length{queue=\"pipeline\"}" }]
+    },
+    {
+      "type": "stat",
+      "title": "30m 管线失败率",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "description": "阈值 20% 告警（见 alerts.yml LoomvecPipelineFailureRate）",
+      "targets": [
+        {
+          "expr": "sum(rate(loomvec_pipeline_jobs_total{status=\"failed\"}[30m])) / clamp_min(sum(rate(loomvec_pipeline_jobs_total[30m])), 0.001)"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "死信任务（1h 新增）",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "increase(loomvec_dead_letter_total[1h])" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "管线吞吐（各状态/分钟）",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(loomvec_pipeline_jobs_total[5m])) * 60",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "各阶段耗时 P95（秒）",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, step) (rate(loomvec_pipeline_step_seconds_bucket[10m])))",
+          "legendFormat": "{{step}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "检索延迟 P50/P95",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(loomvec_search_seconds_bucket[10m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(loomvec_search_seconds_bucket[10m])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "组件健康（七组件）",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "loomvec_component_up", "legendFormat": "{{component}}" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}
