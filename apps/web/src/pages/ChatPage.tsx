@@ -1,28 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Dot, MessageSquarePlus, Send, ShieldAlert, Waypoints } from 'lucide-react';
+import { Dot, Send, ShieldAlert, Waypoints } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { Button } from '@loomvec/ui/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
-import { Switch } from '@loomvec/ui/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@loomvec/ui/components/ui/collapsible';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
+import { StatusBadge } from '@loomvec/ui/components/status-badge';
+import { MultiSelect } from '@/components/multi-select';
+import { useChatSessions, useMySpaces } from '@/hooks';
+import { extractApiError } from '@/utils';
 import { streamChatAnswer, type ChatCitation, type GraphEvidence } from '@/chat';
 
 /**
- * P3-WEB-01 空间问答：会话列表 / SSE 流式渲染 / 引用 [n] 点击跳转定位 /
- * 图谱证据链面板（05 文档 §5.5）。
- * 约定：无 locator 的引用不渲染编号跳转；LLM 不可用时入口禁用并提示。
+ * 问答（用户级，05 文档 §5.5）：全高三段式布局，会话列表常驻 AppLayout 侧栏上部
+ * （本页不再内嵌侧栏）。召回空间范围按会话配置（空 = 我的全部空间），可随时调整；
+ * 图谱联合召回常态开启（无开关）；引用 [n] 点击回溯定位；LLM 不可用时入口禁用。
  */
-
-interface SessionItem {
-  session_id: string;
-  space_id: string;
-  title: string;
-}
 
 interface MessageItem {
   message_id: string;
@@ -89,53 +86,53 @@ function jumpToCitation(navigate: ReturnType<typeof useNavigate>, c: ChatCitatio
 }
 
 export function ChatPage() {
-  const { spaceId } = useParams<{ spaceId: string }>();
+  const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [msgs, setMsgs] = useState<Msg[]>([]);
-  const [useGraph, setUseGraph] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // 本会话召回范围的多选本地值；null = 未改动，回显服务端值
+  const [scopeOverride, setScopeOverride] = useState<string[] | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // 流式进行中标记：阻止消息列表查询回灌清掉正在生成的气泡
+  // （新会话首问时 sessionId 刚建立，messages 查询会以空列表先返回）
+  const streamingRef = useRef(false);
+
+  const spaces = useMySpaces();
 
   const status = useQuery({
-    queryKey: ['chat-status', spaceId],
-    queryFn: () =>
-      api.GET('/api/v1/spaces/{space_id}/chat/status', { params: { path: { space_id: spaceId! } } }),
-    enabled: !!spaceId,
+    queryKey: ['chat-status'],
+    queryFn: async () => {
+      const resp = await api.GET('/api/v1/chat/status', {});
+      return resp.data as unknown as { enabled?: boolean; reason?: string } | undefined;
+    },
   });
 
-  const sessions = useQuery({
-    queryKey: ['chat-sessions', spaceId],
-    queryFn: async () => {
-      const resp = await api.GET('/api/v1/spaces/{space_id}/chat/sessions', {
-        params: { path: { space_id: spaceId! } },
-      });
-      return resp.data as unknown as { items: SessionItem[]; total: number } | undefined;
-    },
-    enabled: !!spaceId,
-  });
+  const sessions = useChatSessions();
 
   const messages = useQuery({
-    queryKey: ['chat-messages', spaceId, sessionId],
+    queryKey: ['chat-messages', sessionId],
     queryFn: async () => {
-      const resp = await api.GET('/api/v1/spaces/{space_id}/chat/sessions/{session_id}/messages', {
-        params: { path: { space_id: spaceId!, session_id: sessionId! } },
+      const resp = await api.GET('/api/v1/chat/sessions/{session_id}/messages', {
+        params: { path: { session_id: sessionId! } },
       });
       return resp.data as unknown as { items: MessageItem[]; total: number } | undefined;
     },
-    enabled: !!spaceId && !!sessionId,
+    enabled: !!sessionId,
   });
 
+  // 切换会话（路由变化）：清空气泡与本地范围改动；流式中（首问自动建会话跳转）不清
   useEffect(() => {
-    if (!sessionId && sessions.data?.items?.length) {
-      setSessionId(sessions.data.items[0].session_id);
+    if (!streamingRef.current) {
+      setMsgs([]);
+      setErrorMsg(null);
+      setScopeOverride(null);
     }
-  }, [sessions.data, sessionId]);
+  }, [sessionId]);
 
   useEffect(() => {
-    if (messages.data?.items && sessionId) {
+    if (messages.data?.items && sessionId && !streamingRef.current) {
       setMsgs(
         messages.data.items.map((m) => ({
           role: m.role as 'user' | 'assistant',
@@ -151,17 +148,19 @@ export function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs]);
 
-  const createSession = useMutation({
-    mutationFn: () =>
-      api.POST('/api/v1/spaces/{space_id}/chat/sessions', {
-        params: { path: { space_id: spaceId! } },
-        body: {},
-      }),
-    onSuccess: (resp) => {
-      const s = resp.data as unknown as { session_id: string } | undefined;
-      if (s) setSessionId(s.session_id);
-      setMsgs([]);
-      queryClient.invalidateQueries({ queryKey: ['chat-sessions', spaceId] });
+  const updateScope = useMutation({
+    mutationFn: async (scopeIds: string[]) => {
+      const { error } = await api.PATCH('/api/v1/chat/sessions/{session_id}', {
+        params: { path: { session_id: sessionId! } },
+        body: { scope_space_ids: scopeIds },
+      });
+      if (error) throw new Error(extractApiError(error, '更新召回范围失败'));
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] }),
+    onError: (e) => {
+      // 失败回滚为服务端值，避免本地显示与实际召回范围不一致
+      setScopeOverride(null);
+      toast.error(e.message);
     },
   });
 
@@ -169,63 +168,78 @@ export function ChatPage() {
     mutationFn: async (question: string) => {
       let sid = sessionId;
       if (!sid) {
-        const resp = await api.POST('/api/v1/spaces/{space_id}/chat/sessions', {
-          params: { path: { space_id: spaceId! } },
+        const resp = await api.POST('/api/v1/chat/sessions', {
           body: { title: question.slice(0, 50) },
         });
-        const s = resp.data as { session_id: string } | undefined;
-        sid = s?.session_id ?? null;
+        const s = resp.data as unknown as { session_id?: string } | undefined;
+        sid = s?.session_id;
         if (sid) {
-          setSessionId(sid);
-          queryClient.invalidateQueries({ queryKey: ['chat-sessions', spaceId] });
+          navigate(`/chat/${sid}`);
+          void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
         }
       }
       if (!sid) throw new Error('会话创建失败');
 
       setMsgs((prev) => [...prev, { role: 'user', content: question }]);
       setMsgs((prev) => [...prev, { role: 'assistant', content: '', streaming: true }]);
+      streamingRef.current = true;
 
-      await streamChatAnswer(spaceId!, sid, question, useGraph ? true : false, {
-        onMeta: (meta) => {
-          setMsgs((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last?.streaming) {
-              next[next.length - 1] = {
-                ...last,
-                citations: meta.citations,
-                graphEvidence: meta.graph_evidence,
-              };
-            }
-            return next;
-          });
-        },
-        onDelta: (text) => {
-          setMsgs((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last?.streaming) next[next.length - 1] = { ...last, content: last.content + text };
-            return next;
-          });
-        },
-        onDone: () => {
-          setMsgs((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last?.streaming) next[next.length - 1] = { ...last, streaming: false };
-            return next;
-          });
-          queryClient.invalidateQueries({ queryKey: ['chat-messages', spaceId, sessionId ?? sid] });
-        },
-        onError: (message) => {
-          setErrorMsg(message);
-          setMsgs((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last?.streaming) next[next.length - 1] = { ...last, streaming: false };
-            return next;
-          });
-        },
+      try {
+        await streamChatAnswer(sid, question, {
+          onMeta: (meta) => {
+            setMsgs((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.streaming) {
+                next[next.length - 1] = {
+                  ...last,
+                  citations: meta.citations,
+                  graphEvidence: meta.graph_evidence,
+                };
+              }
+              return next;
+            });
+          },
+          onDelta: (text) => {
+            setMsgs((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.streaming) next[next.length - 1] = { ...last, content: last.content + text };
+              return next;
+            });
+          },
+          onDone: () => {
+            setMsgs((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.streaming) next[next.length - 1] = { ...last, streaming: false };
+              return next;
+            });
+            void queryClient.invalidateQueries({ queryKey: ['chat-messages', sid] });
+            void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
+          },
+          onError: (message) => {
+            setErrorMsg(message);
+            setMsgs((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.streaming) next[next.length - 1] = { ...last, streaming: false };
+              return next;
+            });
+          },
+        });
+      } finally {
+        streamingRef.current = false;
+      }
+    },
+    // 网络层异常（fetch/reader 中断）兜底：结束气泡并提示，否则流式标记永不落地
+    onError: (e) => {
+      setErrorMsg(e instanceof Error ? e.message : '生成失败，请重试');
+      setMsgs((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.streaming) next[next.length - 1] = { ...last, streaming: false };
+        return next;
       });
     },
   });
@@ -238,63 +252,47 @@ export function ChatPage() {
     ask.mutate(q);
   };
 
-  const chatDisabled = (status.data as unknown as { enabled?: boolean } | undefined)?.enabled === false;
+  const chatDisabled = status.data?.enabled === false;
+  const currentSession = (sessions.data?.items ?? []).find((s) => s.session_id === sessionId);
+  const scopeIds = scopeOverride ?? currentSession?.scope_space_ids ?? [];
+  const spaceOptions = (spaces.data ?? []).map((s) => ({ value: s.id, label: s.name }));
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-      <Card className="h-fit gap-2 py-4">
-        <CardHeader className="flex-row items-center justify-between border-b pb-2">
-          <CardTitle className="text-sm">会话</CardTitle>
-          <Button
-            size="icon"
-            variant="ghost"
-            title="新建会话"
-            onClick={() => createSession.mutate()}
-          >
-            <MessageSquarePlus className="size-4" />
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-1">
-          {(sessions.data?.items ?? []).map((s) => (
-            <button
-              key={s.session_id}
-              type="button"
-              className={`w-full truncate rounded px-2 py-1.5 text-left text-sm hover:bg-muted ${
-                s.session_id === sessionId ? 'bg-muted font-medium' : ''
-              }`}
-              onClick={() => {
-                setSessionId(s.session_id);
-                setMsgs([]);
+    <div className="flex h-svh min-w-0 flex-col">
+      {/* 顶栏：会话标题 + 召回范围（会话列表在 AppLayout 侧栏上部） */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background px-4 py-3">
+        <h1 className="truncate text-base font-semibold">{currentSession?.title || '对话'}</h1>
+        {sessionId && (
+          <div className="flex items-center gap-2">
+            <span className="shrink-0 text-sm text-muted-foreground">召回空间</span>
+            <MultiSelect
+              value={scopeIds}
+              options={spaceOptions}
+              placeholder="全部空间（我的全部空间）"
+              loading={spaces.isLoading || sessions.isLoading}
+              onChange={(v) => {
+                setScopeOverride(v);
+                updateScope.mutate(v);
               }}
-            >
-              {s.title || '新会话'}
-            </button>
-          ))}
-          {sessions.data && (sessions.data.items?.length ?? 0) === 0 && (
-            <p className="px-2 py-1 text-sm text-muted-foreground">暂无会话</p>
-          )}
-        </CardContent>
-      </Card>
+            />
+            <StatusBadge tone="purple">图谱联合召回</StatusBadge>
+          </div>
+        )}
+      </div>
 
-      <Card className="flex min-h-[70vh] flex-col gap-0 py-4">
-        <CardHeader className="flex-row items-center justify-between border-b pb-3">
-          <CardTitle className="text-base">空间问答</CardTitle>
-          <span className="flex items-center gap-2 text-sm text-muted-foreground">
-            图谱召回
-            <Switch checked={useGraph} onCheckedChange={setUseGraph} />
-          </span>
-        </CardHeader>
-        <CardContent className="flex-1 space-y-4 overflow-y-auto pt-4">
+      {/* 消息区：滚动仅限此区域 */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-4">
           {chatDisabled && (
             <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               <ShieldAlert className="size-4" />
-              问答暂不可用：{(status.data as unknown as { reason?: string } | undefined)?.reason ?? 'LLM 未配置'}（检索不受影响）
+              问答暂不可用：{status.data?.reason ?? 'LLM 未配置'}（检索不受影响）
             </div>
           )}
           {msgs.length === 0 && !ask.isPending && (
             <EmptyState
-              title="向知识空间提问"
-              description="答案基于本空间检索来源生成，引用可点击回溯到原文位置。"
+              title={sessionId ? '向所选空间提问' : '开始一段对话'}
+              description="答案基于会话召回范围内的检索来源生成，引用可点击回溯到原文位置。"
             />
           )}
           {msgs.map((m, i) => (
@@ -347,7 +345,7 @@ export function ChatPage() {
                             <span className="font-medium">{ev.head.name}</span>
                             <span className="mx-1 text-primary">—{ev.relation.type}→</span>
                             <span className="font-medium">{ev.tail.name}</span>
-                            {ev.hops > 1 && <span className="ml-1 text-muted-foreground">(2跳)</span>}
+                            {ev.hops > 1 && <span className="ml-1 text-muted-foreground">（{ev.hops} 跳）</span>}
                           </li>
                         ))}
                       </ul>
@@ -360,39 +358,39 @@ export function ChatPage() {
           {errorMsg && (
             <p className="text-sm text-destructive">
               {errorMsg}
-              {errorMsg.includes('中断') && (
-                <button
-                  type="button"
-                  className="ml-2 text-primary hover:underline"
-                  onClick={() => {
-                    const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
-                    if (lastUser) ask.mutate(lastUser.content);
-                  }}
-                >
-                  重试
-                </button>
-              )}
+              <button
+                type="button"
+                className="ml-2 text-primary hover:underline"
+                onClick={() => {
+                  const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
+                  if (lastUser) ask.mutate(lastUser.content);
+                }}
+              >
+                重试
+              </button>
             </p>
           )}
           <div ref={bottomRef} />
-        </CardContent>
-        <CardContent className="border-t pt-3">
-          <div className="flex items-center gap-2">
-            <Input
-              placeholder={chatDisabled ? '问答暂不可用' : '输入问题，Enter 发送…'}
-              value={input}
-              disabled={chatDisabled}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit();
-              }}
-            />
-            <Button size="icon" disabled={chatDisabled || ask.isPending || !input.trim()} onClick={submit}>
-              {ask.isPending ? <Spinner className="size-4" /> : <Send className="size-4" />}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
+
+      {/* 输入区 */}
+      <div className="border-t bg-background px-4 py-3">
+        <div className="mx-auto flex w-full max-w-3xl items-center gap-2">
+          <Input
+            placeholder={chatDisabled ? '问答暂不可用' : '输入问题，Enter 发送…'}
+            value={input}
+            disabled={chatDisabled}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit();
+            }}
+          />
+          <Button size="icon" disabled={chatDisabled || ask.isPending || !input.trim()} onClick={submit}>
+            {ask.isPending ? <Spinner className="size-4" /> : <Send className="size-4" />}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

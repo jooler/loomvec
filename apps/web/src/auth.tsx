@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api, clearToken, getStoredToken, storeToken } from '@loomvec/sdk-ts';
+import { extractApiError } from './utils';
 
 export interface MeInfo {
   user_id: string;
@@ -35,8 +36,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(existing);
     api
       .GET('/api/v1/me')
-      .then((resp) => setMe((resp.data ?? null) as MeInfo | null))
-      .catch(() => clearToken())
+      .then((resp) => {
+        if (resp.data) {
+          setMe(resp.data as unknown as MeInfo);
+          return;
+        }
+        // 旧 JWT 已失效（如后端密钥轮换、token 过期）：openapi-fetch 对 401 不抛错，
+        // 必须连同 React state 一起清空，否则 RequireAuth 仍认为已登录而进入脏状态。
+        // 仅 401 清登录态：5xx / 临时故障保留 token，避免把用户误登出。
+        if (resp.response?.status === 401) {
+          clearToken();
+          setToken(null);
+          setMe(null);
+        }
+      })
+      .catch(() => {
+        // 网络异常：保留 token（进入应用后由各查询重试；401 由 SDK 中间件兜底清理）
+      })
       .finally(() => setReady(true));
   }, []);
 
@@ -48,7 +64,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ username, roles: roles ?? ['user'] }),
     });
     if (!resp.ok) {
-      throw new Error((await resp.json().catch(() => null))?.message ?? '登录失败');
+      const err = await resp.json().catch(() => null);
+      throw new Error(extractApiError(err, '登录失败'));
     }
     const data = (await resp.json()) as { access_token: string };
     storeToken(data.access_token);

@@ -42,6 +42,12 @@ class OauthClientPatchRequest(BaseModel):
     status: Literal["active", "suspended"] | None = None
 
 
+class OauthClientDeleteRequest(BaseModel):
+    """删除理由：运营端 UI 强制填写并记入审计（docs/04 §六.1）；API 层宽容可选。"""
+
+    reason: str | None = Field(default=None, max_length=500)
+
+
 def _out(c: OauthClient) -> dict[str, Any]:
     return {
         "id": str(c.id),
@@ -196,6 +202,7 @@ async def patch_client(
 @router.delete("/oauth/clients/{client_db_id}", status_code=204)
 async def delete_client(
     client_db_id: uuid.UUID,
+    body: OauthClientDeleteRequest | None = None,
     identity: Identity = Depends(require_admin("admin:write")),
     session: AsyncSession = Depends(get_session),
 ) -> None:
@@ -209,5 +216,6 @@ async def delete_client(
         action="admin.oauth.client_delete",
         object_type="oauth_client",
         object_id=str(client_db_id),
+        reason=body.reason if body else None,
     )
     await session.commit()

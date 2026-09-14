@@ -4,10 +4,9 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Check, File, RefreshCw, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams } from 'react-router';
+import { useParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
-import { useMySpaces } from '@/hooks';
 import { extractApiError, formatBytes } from '@/utils';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
@@ -41,16 +40,12 @@ type RejectValues = z.infer<typeof rejectSchema>;
 
 export function ReviewPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [rejecting, setRejecting] = useState<{ assetId: string; name: string } | null>(null);
   const form = useForm<RejectValues>({
     resolver: zodResolver(rejectSchema),
     defaultValues: { reason: '' },
   });
-
-  const spaces = useMySpaces();
-  const spaceName = (spaces.data ?? []).find((s) => s.id === spaceId)?.name;
 
   const queue = useQuery({
     queryKey: ['review-queue', spaceId],
@@ -100,16 +95,11 @@ export function ReviewPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title={`审核队列 · ${spaceName ?? '空间'}`}
+        title="审核队列"
         actions={
-          <>
-            <Button variant="outline" onClick={() => queue.refetch()}>
-              <RefreshCw /> 刷新
-            </Button>
-            <Button variant="outline" onClick={() => navigate(`/s/${spaceId}/assets`)}>
-              返回资产
-            </Button>
-          </>
+          <Button variant="outline" onClick={() => queue.refetch()}>
+            <RefreshCw /> 刷新
+          </Button>
         }
       />
 

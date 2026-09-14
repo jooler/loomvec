@@ -21,11 +21,11 @@ from loomvec.core.db.models._common import enum_values
 
 
 class ChatSession(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """问答会话（P3-CORE-05）：作用域固定单空间（聚合问答后置）。"""
+    """问答会话（用户级，跨空间）：召回范围 scope_space_ids 为空列表 = 我的全部空间。"""
 
     __tablename__ = "chat_session"
 
-    space_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    scope_space_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
     )

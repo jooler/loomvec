@@ -54,6 +54,12 @@ class SubscriptionPatchRequest(BaseModel):
     paused: bool | None = None
 
 
+class SubscriptionDeleteRequest(BaseModel):
+    """删除理由：运营端 UI 强制填写并记入审计（docs/04 §六.1）；API 层宽容可选。"""
+
+    reason: str | None = Field(default=None, max_length=500)
+
+
 def _sub_out(s: WebhookSubscription) -> dict[str, Any]:
     return {
         "id": str(s.id),
@@ -207,6 +213,7 @@ async def reset_secret(
 @router.delete("/webhooks/subscriptions/{sub_id}", status_code=204)
 async def delete_subscription(
     sub_id: uuid.UUID,
+    body: SubscriptionDeleteRequest | None = None,
     identity: Identity = Depends(require_admin("admin:write")),
     session: AsyncSession = Depends(get_session),
 ) -> None:
@@ -228,6 +235,7 @@ async def delete_subscription(
         action="admin.webhook.subscription_delete",
         object_type="webhook_subscription",
         object_id=str(sub_id),
+        reason=body.reason if body else None,
     )
     await session.commit()
 

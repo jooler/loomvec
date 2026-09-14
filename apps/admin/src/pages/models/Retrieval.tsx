@@ -15,7 +15,7 @@ type SpaceIndexRow = ReindexStatus['spaces'][number];
 /** 索引状态（/retrieval）：各空间未嵌入/多版本单元计数，索引维护决策依据（docs/04 §5.7）。 */
 export function RetrievalPage() {
   const [page, setPage] = useState(1);
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin-reindex-status'],
     queryFn: () => unwrap<ReindexStatus>(api.GET('/api/v1/admin/reindex/status')),
     refetchInterval: 15_000,
@@ -66,6 +66,7 @@ export function RetrievalPage() {
             columns={columns}
             data={spaces.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)}
             loading={isLoading}
+            error={isError ? error : undefined}
             total={spaces.length}
             page={page}
             pageSize={PAGE_SIZE}

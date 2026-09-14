@@ -10,7 +10,8 @@ import { usePerm } from '@/auth';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
-import { ReasonModal, SecretModal } from '@/components/ReasonModal';
+import { ReasonModal } from '@/components/ReasonModal';
+import { SecretModal } from '@/components/SecretModal';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Badge } from '@loomvec/ui/components/ui/badge';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -63,7 +64,7 @@ export function OauthClientsPage() {
   const limit = page.pageSize;
   const offset = (page.current - 1) * page.pageSize;
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['admin-oauth-clients', limit, offset],
     queryFn: () =>
       unwrap<PagedResp<OauthClient>>(
@@ -118,6 +119,25 @@ export function OauthClientsPage() {
       invalidate();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '操作失败');
+    }
+  };
+
+  /** 删除应用（危险操作）：理由入审计。 */
+  const remove = async (c: OauthClient, reason: string) => {
+    setBusy(true);
+    try {
+      await unwrap(
+        api.DELETE('/api/v1/admin/oauth/clients/{client_db_id}', {
+          params: { path: { client_db_id: c.id } },
+          body: { reason },
+        }),
+      );
+      toast.success('已删除');
+      invalidate();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '操作失败');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -249,6 +269,7 @@ export function OauthClientsPage() {
         columns={columns}
         data={data?.items}
         loading={isFetching}
+        error={isError ? error : undefined}
         total={data?.total}
         page={page.current}
         pageSize={page.pageSize}
@@ -332,7 +353,7 @@ export function OauthClientsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 删除应用（危险操作） */}
+      {/* 删除应用（危险操作）：理由入审计 */}
       <ReasonModal
         open={deleteTarget !== null}
         title={`删除 OAuth 应用「${deleteTarget?.name ?? ''}」`}
@@ -341,24 +362,7 @@ export function OauthClientsPage() {
         danger
         confirmLoading={busy}
         onCancel={() => setDeleteTarget(null)}
-        onOk={async (reason) => {
-          if (!deleteTarget) return;
-          setBusy(true);
-          try {
-            await unwrap(
-              api.DELETE('/api/v1/admin/oauth/clients/{client_db_id}', {
-                params: { path: { client_db_id: deleteTarget.id } },
-              }),
-            );
-            toast.success(`已删除（理由：${reason}）`);
-            setDeleteTarget(null);
-            invalidate();
-          } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
-          } finally {
-            setBusy(false);
-          }
-        }}
+        onOk={(reason) => (deleteTarget ? remove(deleteTarget, reason) : Promise.resolve())}
       />
 
       {/* 一次性 secret 展示 */}

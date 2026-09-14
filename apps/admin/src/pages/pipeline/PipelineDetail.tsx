@@ -16,6 +16,7 @@ import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import type { JobDetail, JobRow } from '@/types';
+import { jobStatusMeta } from '@/constants';
 import { formatDateTime, formatSeconds } from '@/utils';
 
 /** 任务详情：输入资产、各阶段耗时分解、错误信息、重试（docs/04 §5.6）。 */
@@ -27,7 +28,7 @@ export function PipelineDetailPage() {
   const [busy, setBusy] = useState(false);
 
   const jobKey = ['admin-pipeline-job', jobId];
-  const { data: job, isLoading } = useQuery({
+  const { data: job, isLoading, isError, error } = useQuery({
     queryKey: jobKey,
     enabled: !!jobId,
     queryFn: () =>
@@ -136,19 +137,14 @@ export function PipelineDetailPage() {
               <DescriptionList cols={2}>
                 <DescriptionItem label="任务 ID">{job?.id}</DescriptionItem>
                 <DescriptionItem label="状态">
-                  <StatusBadge
-                    tone={
-                      job?.status === 'failed'
-                        ? 'red'
-                        : job?.status === 'succeeded'
-                          ? 'green'
-                          : job?.status === 'running'
-                            ? 'blue'
-                            : 'gray'
-                    }
-                  >
-                    {job?.status}
-                  </StatusBadge>
+                  {job ? (
+                    (() => {
+                      const m = jobStatusMeta(job.status);
+                      return <StatusBadge tone={m.tone}>{m.text}</StatusBadge>;
+                    })()
+                  ) : (
+                    '-'
+                  )}
                 </DescriptionItem>
                 <DescriptionItem label="资产">{job?.asset_name ?? '-'}</DescriptionItem>
                 <DescriptionItem label="资产 ID">{job?.asset_id ?? '-'}</DescriptionItem>
@@ -174,7 +170,12 @@ export function PipelineDetailPage() {
           <CardTitle>同资产各阶段（耗时分解）</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable columns={stepsColumns} data={job?.asset_steps} loading={isLoading} />
+          <DataTable
+            columns={stepsColumns}
+            data={job?.asset_steps}
+            loading={isLoading}
+            error={isError ? error : undefined}
+          />
         </CardContent>
       </Card>
     </div>

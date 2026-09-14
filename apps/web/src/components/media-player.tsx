@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Volume2 } from 'lucide-react';
-import { api } from '@loomvec/sdk-ts';
+import { api, getStoredToken } from '@loomvec/sdk-ts';
+import { formatClock } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Progress } from '@loomvec/ui/components/ui/progress';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
@@ -11,6 +12,9 @@ import { Spinner } from '@loomvec/ui/components/ui/spinner';
  * - 播放器 seek 到 time_start、片段区间进度条高亮；
  * - 关键帧侧栏（点击 seek）；转写文本随播放同步高亮；
  * - 懒转码过渡：转码进行中以关键帧 + 进度条提示，完成后自动可播。
+ *
+ * 字幕接口需 Bearer 鉴权而 <track> 无法携带请求头：先带 token 取回 WebVTT 文本，
+ * 再以 Blob URL 挂给 <track>（解析结果同时驱动转写高亮面板）。
  */
 
 interface Keyframe {
@@ -34,7 +38,7 @@ interface Cue {
   text: string;
 }
 
-/** 极简 WebVTT 解析（字幕轨与转写高亮共用）。 */
+/** 极简 WebVTT 解析（字幕轨与转写高亮共用；后端固定输出 HH:MM:SS.mmm 时间轴）。 */
 export function parseWebVTT(text: string): Cue[] {
   const cues: Cue[] = [];
   const lines = text.split(/\r?\n/);
@@ -52,25 +56,19 @@ export function parseWebVTT(text: string): Cue[] {
   return cues;
 }
 
-function fmtTime(t: number): string {
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
 export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: number }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
-  const [subtitlesText, setSubtitlesText] = useState<string | null>(null);
+  const [subtitles, setSubtitles] = useState<{ text: string; blobUrl: string } | null>(null);
 
   // 懒转码进行中轮询；其余模式一次性获取
   const playback = useQuery({
     queryKey: ['playback', assetId],
     queryFn: async () => {
       const resp = await api.GET('/api/v1/assets/{asset_id}/playback', {
-        params: { path: { asset_id: assetId as `${string}@${string}` } },
+        params: { path: { asset_id: assetId } },
       });
       return (resp.data ?? null) as PlaybackData | null;
     },
@@ -79,30 +77,61 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
   });
 
   const data = playback.data ?? null;
+  const mode = data?.mode;
 
-  // 字幕（转写）
+  // 字幕（转写）：带鉴权取回文本 → Blob URL 供 <track>，解析结果驱动高亮面板
   useEffect(() => {
-    if (!data || data.mode === 'transcoding' || data.mode === 'unsupported') return;
-    fetch(`/api/v1/assets/${assetId}/subtitles`)
-      .then(async (r) => (r.ok ? setSubtitlesText(await r.text()) : setSubtitlesText(null)))
-      .catch(() => setSubtitlesText(null));
-  }, [assetId, data]);
+    if (!mode || mode === 'transcoding' || mode === 'unsupported') return;
+    const token = getStoredToken();
+    let cancelled = false;
+    let blobUrl: string | null = null;
+    fetch(`/api/v1/assets/${assetId}/subtitles`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+      .then(async (r) => {
+        // 404 = 无转写；401/5xx 同样按无字幕处理，不打断播放
+        if (!r.ok) return;
+        const text = await r.text();
+        blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/vtt' }));
+        if (!cancelled) setSubtitles({ text, blobUrl });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [assetId, mode]);
+
+  // 卸载时释放 Blob URL
+  useEffect(() => {
+    return () => {
+      if (subtitles) URL.revokeObjectURL(subtitles.blobUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const cues = useMemo(
-    () => (subtitlesText ? parseWebVTT(subtitlesText) : []),
-    [subtitlesText],
+    () => (subtitles ? parseWebVTT(subtitles.text) : []),
+    [subtitles],
   );
   const activeCue = cues.find((c) => currentTime >= c.start && currentTime <= c.end);
 
-  // ?t= 或检索命中 seek
+  // ?t= 或检索命中 seek：元数据未加载前设置 currentTime 会被浏览器丢弃，等 loadedmetadata 再执行
   useEffect(() => {
-    if (seekTo === undefined || !data || data.mode === 'transcoding') return;
+    if (seekTo === undefined || !data || mode === 'transcoding') return;
     const el = videoRef.current ?? audioRef.current;
-    if (el) {
+    if (!el) return;
+    const apply = () => {
       el.currentTime = seekTo;
       el.play().catch(() => undefined);
+    };
+    if (el.readyState >= 1) {
+      apply();
+      return;
     }
-  }, [seekTo, data?.mode]);
+    el.addEventListener('loadedmetadata', apply, { once: true });
+    return () => el.removeEventListener('loadedmetadata', apply);
+  }, [seekTo, data, mode]);
 
   const doSeek = (t: number) => {
     const el = videoRef.current ?? audioRef.current;
@@ -120,13 +149,13 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
       </div>
     );
   }
-  if (!data || data.mode === 'unsupported') {
+  if (!data || mode === 'unsupported') {
     return <p className="text-sm text-muted-foreground">该资产暂不支持在线播放。</p>;
   }
 
   const dur = duration ?? data.duration ?? 0;
 
-  if (data.mode === 'transcoding') {
+  if (mode === 'transcoding') {
     // 懒转码过渡：关键帧 + 进度提示（05 文档 §5.6）
     return (
       <div className="space-y-3">
@@ -142,7 +171,7 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
     );
   }
 
-  const isAudio = data.mode === 'audio';
+  const isAudio = mode === 'audio';
 
   return (
     <div className="space-y-3">
@@ -157,12 +186,12 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
             onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
           >
-            {cues.length > 0 && (
+            {subtitles && (
               <track
                 kind="subtitles"
                 srcLang="zh"
                 label="转写"
-                src={`/api/v1/assets/${assetId}/subtitles`}
+                src={subtitles.blobUrl}
               />
             )}
           </audio>
@@ -176,12 +205,12 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
           onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
         >
-          {cues.length > 0 && (
+          {subtitles && (
             <track
               kind="subtitles"
               srcLang="zh"
               label="转写"
-              src={`/api/v1/assets/${assetId}/subtitles`}
+              src={subtitles.blobUrl}
             />
           )}
         </video>
@@ -200,8 +229,8 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
             className="w-full"
           />
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>{fmtTime(currentTime)}</span>
-            <span>{fmtTime(dur)}</span>
+            <span>{formatClock(currentTime)}</span>
+            <span>{formatClock(dur)}</span>
           </div>
           {data.keyframes.length > 0 && (
             <div className="relative h-1.5 rounded bg-muted">
@@ -211,7 +240,7 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
                   <button
                     key={i}
                     type="button"
-                    title={`场景 ${fmtTime(k.time_start)}`}
+                    title={`场景 ${formatClock(k.time_start)}`}
                     className="absolute top-0 h-1.5 w-2 rounded bg-primary/60 hover:bg-primary"
                     style={{ left: `${left}%` }}
                     onClick={() => doSeek(k.time_start)}
@@ -236,7 +265,7 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
                 }`}
                 onClick={() => doSeek(c.start)}
               >
-                <span className="mr-1 text-muted-foreground">{fmtTime(c.start)}</span>
+                <span className="mr-1 text-muted-foreground">{formatClock(c.start)}</span>
                 {c.text}
               </button>
             ))}
@@ -281,7 +310,7 @@ function KeyframeRail({
             ) : (
               <div className="grid h-12 w-20 place-items-center rounded bg-muted text-xs">场景 {i + 1}</div>
             )}
-            <span className="text-[10px] text-muted-foreground">{fmtTime(k.time_start)}</span>
+            <span className="text-[10px] text-muted-foreground">{formatClock(k.time_start)}</span>
           </Button>
         ))}
       </div>

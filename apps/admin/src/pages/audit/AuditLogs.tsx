@@ -16,37 +16,48 @@ import { Input } from '@loomvec/ui/components/ui/input';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import type { AuditLogRow, PagedResp } from '@/types';
-import { formatDateTime } from '@/utils';
+import { extractApiError, formatDateTime } from '@/utils';
 
 const PAGE_SIZE = 20;
 
 /** 审计日志（/audit）：全量写操作 + 登录事件，按操作者/对象/时间/租户筛选，JSONL 导出（docs/04 §5.10）。 */
 export function AuditLogsPage() {
-  const [actor, setActor] = useState('');
-  const [action, setAction] = useState('');
-  const [objectType, setObjectType] = useState('');
-  const [tenantId, setTenantId] = useState('');
-  const [since, setSince] = useState<string | null>(null);
-  const [until, setUntil] = useState<string | null>(null);
+  // 筛选草稿态：输入过程不发请求，点「查询」（或回车）一次性提交，避免每键触发列表请求
+  const [draft, setDraft] = useState({
+    actor: '',
+    action: '',
+    objectType: '',
+    tenantId: '',
+    since: '',
+    until: '',
+  });
+  const [filters, setFilters] = useState({
+    actor: '',
+    action: '',
+    objectType: '',
+    tenantId: '',
+    since: null as string | null,
+    until: null as string | null,
+  });
   const [page, setPage] = useState({ current: 1, pageSize: PAGE_SIZE });
   const [detail, setDetail] = useState<AuditLogRow | null>(null);
 
   const limit = page.pageSize;
   const offset = (page.current - 1) * page.pageSize;
 
-  const { data, isFetching } = useQuery({
-    queryKey: ['admin-audit-logs', actor, action, objectType, tenantId, since, until, limit, offset],
+  const { data, isFetching, isError, error } = useQuery({
+    queryKey: ['admin-audit-logs', filters, limit, offset],
     queryFn: () =>
       unwrap<PagedResp<AuditLogRow>>(
         api.GET('/api/v1/admin/audit-logs', {
           params: {
             query: {
-              actor: actor || undefined,
-              action: action || undefined,
-              object_type: objectType || undefined,
-              tenant_id: tenantId || undefined,
-              since: since ?? undefined,
-              until: until ?? undefined,
+              actor: filters.actor || undefined,
+              action: filters.action || undefined,
+              object_type: filters.objectType || undefined,
+              tenant_id: filters.tenantId || undefined,
+              since: filters.since ?? undefined,
+              until: filters.until ?? undefined,
               limit,
               offset,
             },
@@ -55,13 +66,25 @@ export function AuditLogsPage() {
       ),
   });
 
-  const filters = () => ({
-    actor: actor || undefined,
-    action: action || undefined,
-    object_type: objectType || undefined,
-    tenant_id: tenantId || undefined,
-    since: since ?? undefined,
-    until: until ?? undefined,
+  const applyFilters = () => {
+    setFilters({
+      actor: draft.actor.trim(),
+      action: draft.action.trim(),
+      objectType: draft.objectType.trim(),
+      tenantId: draft.tenantId.trim(),
+      since: draft.since || null,
+      until: draft.until || null,
+    });
+    setPage({ current: 1, pageSize: PAGE_SIZE });
+  };
+
+  const exportFilters = () => ({
+    actor: filters.actor || undefined,
+    action: filters.action || undefined,
+    object_type: filters.objectType || undefined,
+    tenant_id: filters.tenantId || undefined,
+    since: filters.since ?? undefined,
+    until: filters.until ?? undefined,
   });
 
   /** JSONL 导出下载（a link 下载；需携带 Bearer token，故经 api 取文本后落地 Blob）。 */
@@ -69,9 +92,9 @@ export function AuditLogsPage() {
     try {
       const { data: text, error } = await api.GET('/api/v1/admin/audit-logs/export', {
         parseAs: 'text',
-        params: { query: { ...filters(), limit: 10000 } },
+        params: { query: { ...exportFilters(), limit: 10000 } },
       });
-      if (error != null) throw new Error('导出失败');
+      if (error != null) throw new Error(extractApiError(error, '导出失败'));
       const blob = new Blob([String(text ?? '')], { type: 'application/x-ndjson' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -147,65 +170,61 @@ export function AuditLogsPage() {
         }
       />
 
-      <div className="flex flex-wrap items-center gap-2">
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          applyFilters();
+        }}
+      >
         <Input
           placeholder="操作者 user_id（UUID）"
           className="w-60"
-          onChange={(e) => {
-            setActor(e.target.value.trim());
-            setPage({ current: 1, pageSize: PAGE_SIZE });
-          }}
+          value={draft.actor}
+          onChange={(e) => setDraft((d) => ({ ...d, actor: e.target.value }))}
         />
         <Input
           placeholder="操作（前缀匹配，如 admin.tenant）"
           className="w-56"
-          onChange={(e) => {
-            setAction(e.target.value.trim());
-            setPage({ current: 1, pageSize: PAGE_SIZE });
-          }}
+          value={draft.action}
+          onChange={(e) => setDraft((d) => ({ ...d, action: e.target.value }))}
         />
         <Input
           placeholder="对象类型，如 tenant / space"
           className="w-44"
-          onChange={(e) => {
-            setObjectType(e.target.value.trim());
-            setPage({ current: 1, pageSize: PAGE_SIZE });
-          }}
+          value={draft.objectType}
+          onChange={(e) => setDraft((d) => ({ ...d, objectType: e.target.value }))}
         />
         <Input
           placeholder="租户 ID（UUID）"
           className="w-60"
-          onChange={(e) => {
-            setTenantId(e.target.value.trim());
-            setPage({ current: 1, pageSize: PAGE_SIZE });
-          }}
+          value={draft.tenantId}
+          onChange={(e) => setDraft((d) => ({ ...d, tenantId: e.target.value }))}
         />
         <Input
           type="date"
           aria-label="起始时间"
           className="w-40"
-          value={since ?? ''}
-          onChange={(e) => {
-            setSince(e.target.value || null);
-            setPage({ current: 1, pageSize: PAGE_SIZE });
-          }}
+          value={draft.since}
+          onChange={(e) => setDraft((d) => ({ ...d, since: e.target.value }))}
         />
         <Input
           type="date"
           aria-label="截止时间"
           className="w-40"
-          value={until ?? ''}
-          onChange={(e) => {
-            setUntil(e.target.value || null);
-            setPage({ current: 1, pageSize: PAGE_SIZE });
-          }}
+          value={draft.until}
+          onChange={(e) => setDraft((d) => ({ ...d, until: e.target.value }))}
         />
-      </div>
+        <Button type="submit" variant="outline">
+          查询
+        </Button>
+      </form>
 
       <DataTable
         columns={columns}
         data={data?.items}
         loading={isFetching}
+        error={isError ? error : undefined}
         total={data?.total}
         page={page.current}
         pageSize={page.pageSize}

@@ -70,7 +70,7 @@ export function UserListPage() {
   const limit = page.pageSize;
   const offset = (page.current - 1) * page.pageSize;
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['admin-users', q, status, limit, offset],
     queryFn: () =>
       unwrap<PagedResp<UserRow>>(
@@ -282,6 +282,7 @@ export function UserListPage() {
         columns={columns}
         data={data?.items}
         loading={isFetching}
+        error={isError ? error : undefined}
         total={data?.total}
         page={page.current}
         pageSize={page.pageSize}

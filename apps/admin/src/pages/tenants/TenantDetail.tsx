@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
@@ -12,18 +12,12 @@ import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/descrip
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ReasonModal } from '@/components/ReasonModal';
 import { Button } from '@loomvec/ui/components/ui/button';
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@loomvec/ui/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
 import { Label } from '@loomvec/ui/components/ui/label';
-import { Switch } from '@loomvec/ui/components/ui/switch';
-import type { OidcBinding, TenantRow } from '@/types';
+import type { TenantRow } from '@/types';
 import { formatDateTime, formatQuota } from '@/utils';
+import { OidcBindingCard } from './OidcBindingCard';
 
 const quotaSchema = z.object({
   quota_storage_bytes: z.number({ error: '请输入存储配额' }).min(0),
@@ -35,17 +29,8 @@ const editSchema = z.object({
   plan: z.string(),
 });
 
-const bindingSchema = z.object({
-  domain: z.string().min(1, '请输入邮箱域').max(255),
-  issuer: z.string().min(1, '请输入 Issuer').max(512),
-  client_id: z.string().min(1, '请输入 Client ID').max(255),
-  client_secret: z.string().max(512),
-  enabled: z.boolean(),
-});
-
 type QuotaValues = z.infer<typeof quotaSchema>;
 type EditValues = z.infer<typeof editSchema>;
-type BindingValues = z.infer<typeof bindingSchema>;
 
 /** 租户详情：用量报表 / 配额调整 / 编辑 / 停用启用 / OIDC 域绑定（docs/04 §5.2）。 */
 export function TenantDetailPage() {
@@ -67,10 +52,6 @@ export function TenantDetailPage() {
     resolver: zodResolver(editSchema),
     defaultValues: { name: '', plan: '' },
   });
-  const bindingForm = useForm<BindingValues>({
-    resolver: zodResolver(bindingSchema),
-    defaultValues: { domain: '', issuer: '', client_id: '', client_secret: '', enabled: true },
-  });
 
   const tenantKey = ['admin-tenant', tenantId];
   const { data: tenant } = useQuery({
@@ -84,39 +65,11 @@ export function TenantDetailPage() {
       ),
   });
 
-  const { data: binding } = useQuery({
-    queryKey: ['admin-tenant-oidc', tenantId],
-    enabled: !!tenantId,
-    queryFn: () =>
-      unwrap<OidcBinding | null>(
-        api.GET('/api/v1/admin/tenants/{tenant_id}/oidc-binding', {
-          params: { path: { tenant_id: tenantId! } },
-        }),
-      ),
-  });
-
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: tenantKey });
     void queryClient.invalidateQueries({ queryKey: ['admin-tenants'] });
     void queryClient.invalidateQueries({ queryKey: ['admin-system-status'] });
   };
-
-  // 绑定记录变更时回填表单（对应旧 Form key={binding?.id ?? 'new'} 重挂载语义）
-  const bindingId = binding?.id ?? 'new';
-  useEffect(() => {
-    bindingForm.reset(
-      binding
-        ? {
-            domain: binding.domain,
-            issuer: binding.issuer,
-            client_id: binding.client_id,
-            client_secret: '',
-            enabled: binding.enabled,
-          }
-        : { domain: '', issuer: '', client_id: '', client_secret: '', enabled: true },
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bindingId]);
 
   const activateTenant = async () => {
     try {
@@ -131,30 +84,6 @@ export function TenantDetailPage() {
       toast.error(e instanceof Error ? e.message : '操作失败');
     }
   };
-
-  /** OIDC 绑定保存：空 secret 保留原值（后端语义）。 */
-  const saveBinding = async (values: BindingValues) => {
-    if (!binding?.has_secret && !values.client_secret) {
-      bindingForm.setError('client_secret', { message: '请输入 Client Secret' });
-      return;
-    }
-    setBusy(true);
-    try {
-      await unwrap(
-        api.PUT('/api/v1/admin/tenants/{tenant_id}/oidc-binding', {
-          params: { path: { tenant_id: tenantId! } },
-          body: { ...values, client_secret: values.client_secret ?? '' },
-        }),
-      );
-      toast.success('OIDC 域绑定已保存');
-      void queryClient.invalidateQueries({ queryKey: ['admin-tenant-oidc', tenantId] });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : '保存失败');
-    } finally {
-      setBusy(false);
-    }
-  };
-  const submitBinding = bindingForm.handleSubmit(saveBinding);
 
   return (
     <div className="space-y-4">
@@ -225,92 +154,7 @@ export function TenantDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>OIDC 域绑定</CardTitle>
-          <CardAction>
-            {binding ? (
-              <span className="text-sm">该邮箱域登录的用户自动归属本租户</span>
-            ) : (
-              <span className="text-sm text-muted-foreground">
-                未绑定（域内首个用户由租户管理员分配角色）
-              </span>
-            )}
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitBinding();
-            }}
-            className="max-w-[560px] space-y-4"
-          >
-            <div className="space-y-2">
-              <Label htmlFor="binding-domain">邮箱域</Label>
-              <Input id="binding-domain" maxLength={255} {...bindingForm.register('domain')} />
-              <p className="text-xs text-muted-foreground">如 example.com</p>
-              {bindingForm.formState.errors.domain && (
-                <p className="text-sm text-destructive">
-                  {bindingForm.formState.errors.domain.message}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="binding-issuer">Issuer</Label>
-              <Input
-                id="binding-issuer"
-                maxLength={512}
-                placeholder="https://idp.example.com"
-                {...bindingForm.register('issuer')}
-              />
-              {bindingForm.formState.errors.issuer && (
-                <p className="text-sm text-destructive">
-                  {bindingForm.formState.errors.issuer.message}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="binding-client-id">Client ID</Label>
-              <Input id="binding-client-id" maxLength={255} {...bindingForm.register('client_id')} />
-              {bindingForm.formState.errors.client_id && (
-                <p className="text-sm text-destructive">
-                  {bindingForm.formState.errors.client_id.message}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="binding-client-secret">Client Secret</Label>
-              <Input
-                id="binding-client-secret"
-                type="password"
-                maxLength={512}
-                autoComplete="new-password"
-                {...bindingForm.register('client_secret')}
-              />
-              <p className="text-xs text-muted-foreground">
-                {binding?.has_secret ? '已设置；留空保留原值' : '必填（首次绑定）'}
-              </p>
-              {bindingForm.formState.errors.client_secret && (
-                <p className="text-sm text-destructive">
-                  {bindingForm.formState.errors.client_secret.message}
-                </p>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch
-                id="binding-enabled"
-                checked={bindingForm.watch('enabled')}
-                onCheckedChange={(v) => bindingForm.setValue('enabled', v)}
-              />
-              <Label htmlFor="binding-enabled">启用</Label>
-            </div>
-            <Button type="submit" disabled={busy || !canWrite}>
-              {busy ? '保存中…' : '保存绑定'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      {tenantId && <OidcBindingCard tenantId={tenantId} canWrite={canWrite} />}
 
       {/* 配额调整：必填理由入审计 */}
       <ReasonModal

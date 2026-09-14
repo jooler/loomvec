@@ -8,9 +8,9 @@ import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useMySpaces } from '@/hooks';
-import { extractApiError, formatBytes, ROLE_META } from '@/utils';
+import { CHUNK_PRESETS, EMBEDDING_MODELS, extractApiError, formatBytes, ROLE_META, ROLE_TONE } from '@/utils';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
-import { StatusBadge, type BadgeTone } from '@loomvec/ui/components/status-badge';
+import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Badge } from '@loomvec/ui/components/ui/badge';
 import { Button } from '@loomvec/ui/components/ui/button';
 import {
@@ -43,24 +43,6 @@ import { Textarea } from '@loomvec/ui/components/ui/textarea';
 /**
  * P2-WEB-01 空间管理：我的空间卡片（角色/审核/成员数）+ 创建空间向导。
  */
-
-const EMBEDDING_MODELS = [
-  { value: 'mock', label: 'mock（测试用确定性向量）' },
-  { value: 'bge-m3', label: 'bge-m3' },
-];
-
-const CHUNK_PRESETS = [
-  { value: 'balanced', label: 'balanced（均衡）' },
-  { value: 'fine', label: 'fine（细粒度分片）' },
-  { value: 'long', label: 'long（长文分片）' },
-];
-
-/** ROLE_META 的 antd 色 → StatusBadge tone。 */
-const ROLE_COLOR_TONE: Record<string, BadgeTone> = {
-  gold: 'amber',
-  blue: 'blue',
-  default: 'gray',
-};
 
 /** Radix Select 不允许空串 value：此哨兵表示「默认（不指定）」。 */
 const UNSET = '__unset__';
@@ -282,7 +264,7 @@ export function SpacesPage() {
                     <CardHeader>
                       <CardTitle className="truncate">{s.name}</CardTitle>
                       <CardAction>
-                        <StatusBadge tone={roleMeta ? ROLE_COLOR_TONE[roleMeta.color] : undefined}>
+                        <StatusBadge tone={ROLE_TONE[s.my_role ?? '']}>
                           {roleMeta?.text ?? s.my_role}
                         </StatusBadge>
                       </CardAction>
@@ -301,36 +283,6 @@ export function SpacesPage() {
                           存储配额{' '}
                           {s.quota_storage_bytes > 0 ? formatBytes(s.quota_storage_bytes) : '不限'}
                         </Badge>
-                      </div>
-                      <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate(`/s/${s.id}/assets`)}
-                        >
-                          资产
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate(`/s/${s.id}/upload`)}
-                        >
-                          上传
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate(`/s/${s.id}/members`)}
-                        >
-                          成员
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate(`/s/${s.id}/settings`)}
-                        >
-                          设置
-                        </Button>
                       </div>
                     </CardContent>
                   </Card>

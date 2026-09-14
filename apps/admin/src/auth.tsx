@@ -1,5 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { api, clearToken, getStoredToken, storeToken } from '@loomvec/sdk-ts';
+import { useQueryClient } from '@tanstack/react-query';
+import { clearToken, getStoredToken, storeToken } from '@loomvec/sdk-ts';
+import { toast } from 'sonner';
+import { api, setUnauthorizedHandler } from './api';
 
 export interface MeInfo {
   user_id: string;
@@ -33,6 +36,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [me, setMe] = useState<MeInfo | null>(null);
   const [ready, setReady] = useState(false);
+  const queryClient = useQueryClient();
+
+  const logout = () => {
+    clearToken();
+    setToken(null);
+    setMe(null);
+    // 清空查询缓存，避免换账号后上一账号的数据闪现
+    queryClient.clear();
+  };
+
+  // 会话中途 401（token 过期/吊销）：SDK 中间件已清 localStorage，这里同步 React
+  // 登录态并回登录页。AuthProvider 在 Router 外，用 hash 直跳（HashRouter 会响应）。
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      logout();
+      toast.error('登录已过期，请重新登录', { id: 'auth-expired' });
+      if (window.location.hash !== '#/login') window.location.hash = '#/login';
+    });
+    return () => setUnauthorizedHandler(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const existing = getStoredToken();
@@ -43,8 +67,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(existing);
     api
       .GET('/api/v1/me')
-      .then((resp) => setMe((resp.data ?? null) as MeInfo | null))
-      .catch(() => clearToken())
+      .then((resp) => {
+        if (resp.data) {
+          setMe(resp.data as unknown as MeInfo);
+          return;
+        }
+        // 旧 JWT 已失效（如后端密钥轮换、token 过期）：openapi-fetch 对 401 不抛错，
+        // 必须连同 React state 一起清空，否则 RequireAuth 仍认为已登录而卡在 403 页。
+        clearToken();
+        setToken(null);
+        setMe(null);
+      })
+      .catch(() => {
+        clearToken();
+        setToken(null);
+        setMe(null);
+      })
       .finally(() => setReady(true));
   }, []);
 
@@ -63,12 +101,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(data.access_token);
     const meResp = await api.GET('/api/v1/me');
     setMe((meResp.data ?? null) as MeInfo | null);
-  };
-
-  const logout = () => {
-    clearToken();
-    setToken(null);
-    setMe(null);
   };
 
   return (

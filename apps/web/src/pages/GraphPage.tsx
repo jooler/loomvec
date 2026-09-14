@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitMerge, RotateCcw, ShieldAlert, Undo2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useMySpaces } from '@/hooks';
+import { extractApiError } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
@@ -21,7 +23,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@loomvec/ui/components/ui/alert-dialog';
-import { toast } from 'sonner';
 
 /**
  * P3-WEB-05 图谱管理（空间 owner 视角）：实体列表 / 合并日志审阅与回滚 /
@@ -34,6 +35,30 @@ const REASON_LABEL: Record<string, string> = {
   manual: '人工',
 };
 
+interface GraphStats {
+  entities: number;
+  edges: number;
+  merges: number;
+}
+
+interface EntityItem {
+  entity_id: string;
+  name: string;
+  type: string;
+  description: string | null;
+  aliases: string[];
+}
+
+interface MergeItem {
+  log_id: string;
+  status: string;
+  reason: string;
+  score: number | null;
+  created_by: string | null;
+  created_at: string | null;
+  snapshot_names?: { loser?: unknown; winner?: unknown };
+}
+
 export function GraphPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const queryClient = useQueryClient();
@@ -43,101 +68,88 @@ export function GraphPage() {
   const myRole = (spaces.data ?? []).find((s) => s.id === spaceId)?.my_role;
   const isOwner = myRole === 'owner';
 
-  interface GraphStats {
-    entities: number;
-    edges: number;
-    merges: number;
-  }
   const stats = useQuery({
     queryKey: ['graph-stats', spaceId],
     queryFn: async () => {
       const resp = await api.GET('/api/v1/spaces/{space_id}/graph/stats', {
         params: { path: { space_id: spaceId! } },
       });
-      return resp.data as unknown as GraphStats | undefined;
+      if (resp.error) throw new Error(extractApiError(resp.error, '加载图谱统计失败'));
+      return resp.data as unknown as GraphStats;
     },
     enabled: !!spaceId,
   });
 
-  interface EntityItem {
-    entity_id: string;
-    name: string;
-    type: string;
-    description: string | null;
-    aliases: string[];
-  }
   const entities = useQuery({
     queryKey: ['graph-entities', spaceId, entityQuery],
     queryFn: async () => {
       const resp = await api.GET('/api/v1/spaces/{space_id}/graph/entities', {
         params: { path: { space_id: spaceId! }, query: { q: entityQuery || undefined, limit: 100 } },
       });
-      return resp.data as unknown as { items: EntityItem[]; total: number } | undefined;
+      if (resp.error) throw new Error(extractApiError(resp.error, '加载实体失败'));
+      return resp.data as unknown as { items: EntityItem[]; total: number };
     },
     enabled: !!spaceId,
   });
 
-  interface MergeItem {
-    log_id: string;
-    status: string;
-    reason: string;
-    score: number | null;
-    created_by: string | null;
-    created_at: string | null;
-    snapshot_names?: { loser?: unknown; winner?: unknown };
-  }
   const merges = useQuery({
     queryKey: ['graph-merges', spaceId],
     queryFn: async () => {
       const resp = await api.GET('/api/v1/spaces/{space_id}/graph/merges', {
         params: { path: { space_id: spaceId! }, query: { limit: 50 } },
       });
-      return resp.data as unknown as { items: MergeItem[]; total: number } | undefined;
+      if (resp.error) throw new Error(extractApiError(resp.error, '加载合并日志失败'));
+      return resp.data as unknown as { items: MergeItem[]; total: number };
     },
     enabled: !!spaceId,
   });
 
   const rollback = useMutation({
-    mutationFn: (logId: string) =>
-      api.POST('/api/v1/spaces/{space_id}/graph/merges/{log_id}/rollback', {
-        params: { path: { space_id: spaceId!, log_id: logId } },
-      }),
+    mutationFn: async (logId: string) => {
+      const { error } = await api.POST(
+        '/api/v1/spaces/{space_id}/graph/merges/{log_id}/rollback',
+        { params: { path: { space_id: spaceId!, log_id: logId } } },
+      );
+      if (error) throw new Error(extractApiError(error, '回滚失败（需要 owner 角色）'));
+    },
     onSuccess: () => {
       toast.success('已回滚该次合并');
       queryClient.invalidateQueries({ queryKey: ['graph-merges', spaceId] });
       queryClient.invalidateQueries({ queryKey: ['graph-entities', spaceId] });
       queryClient.invalidateQueries({ queryKey: ['graph-stats', spaceId] });
     },
-    onError: () => toast.error('回滚失败'),
+    onError: (e) => toast.error(e.message),
   });
 
   const runMerge = useMutation({
-    mutationFn: () =>
-      api.POST('/api/v1/spaces/{space_id}/graph/merge/run', {
+    mutationFn: async () => {
+      const { error } = await api.POST('/api/v1/spaces/{space_id}/graph/merge/run', {
         params: { path: { space_id: spaceId! } },
         body: {},
-      }),
+      });
+      if (error) throw new Error(extractApiError(error, '触发失败（需要 owner 角色）'));
+    },
     onSuccess: () => {
       toast.success('合并任务已入队（低优先级队列异步执行）');
       queryClient.invalidateQueries({ queryKey: ['graph-merges', spaceId] });
     },
-    onError: () => toast.error('触发失败（需要 owner 角色）'),
+    onError: (e) => toast.error(e.message),
   });
 
   const rebuild = useMutation({
-    mutationFn: () =>
-      api.POST('/api/v1/spaces/{space_id}/graph/rebuild', {
+    mutationFn: async () => {
+      const { error } = await api.POST('/api/v1/spaces/{space_id}/graph/rebuild', {
         params: { path: { space_id: spaceId! } },
         body: { reprocess_assets: true },
-      }),
+      });
+      if (error) throw new Error(extractApiError(error, '触发失败（需要 owner 角色）'));
+    },
     onSuccess: () => {
       toast.success('图谱重建已入队，将逐资产重跑图谱步骤');
       queryClient.invalidateQueries({ queryKey: ['graph-stats', spaceId] });
     },
-    onError: () => toast.error('触发失败（需要 owner 角色）'),
+    onError: (e) => toast.error(e.message),
   });
-
-  const statsData = stats.data;
 
   return (
     <div className="space-y-4">
@@ -145,21 +157,21 @@ export function GraphPage() {
         <Card className="gap-2 py-4">
           <CardContent>
             <p className="text-sm text-muted-foreground">实体</p>
-            <p className="text-2xl font-semibold">{statsData?.entities ?? '—'}</p>
+            <p className="text-2xl font-semibold">{stats.data?.entities ?? '—'}</p>
           </CardContent>
         </Card>
         <Card className="gap-2 py-4">
           <CardContent>
             <p className="text-sm text-muted-foreground">关系（图边）</p>
             <p className="text-2xl font-semibold">
-              {statsData?.edges === -1 ? '图谱不可用' : (statsData?.edges ?? '—')}
+              {stats.data?.edges === -1 ? '图谱不可用' : (stats.data?.edges ?? '—')}
             </p>
           </CardContent>
         </Card>
         <Card className="gap-2 py-4">
           <CardContent>
             <p className="text-sm text-muted-foreground">合并次数</p>
-            <p className="text-2xl font-semibold">{statsData?.merges ?? '—'}</p>
+            <p className="text-2xl font-semibold">{stats.data?.merges ?? '—'}</p>
           </CardContent>
         </Card>
       </div>
@@ -215,6 +227,8 @@ export function GraphPage() {
             <div className="grid place-items-center py-8">
               <Spinner className="size-5 text-muted-foreground" />
             </div>
+          ) : entities.isError ? (
+            <p className="text-sm text-destructive">{(entities.error as Error).message}</p>
           ) : (entities.data?.items?.length ?? 0) === 0 ? (
             <EmptyState title="暂无实体" description="上传文档并完成图谱抽取后，实体将出现在这里。" />
           ) : (
@@ -255,6 +269,8 @@ export function GraphPage() {
             <div className="grid place-items-center py-8">
               <Spinner className="size-5 text-muted-foreground" />
             </div>
+          ) : merges.isError ? (
+            <p className="text-sm text-destructive">{(merges.error as Error).message}</p>
           ) : (merges.data?.items?.length ?? 0) === 0 ? (
             <EmptyState title="暂无合并记录" />
           ) : (

@@ -1,19 +1,24 @@
 /**
- * 共享 react-query hooks：空间列表 / 空间维度字典（分类、标签）/ 通知轮询。
+ * 共享 react-query hooks：当前用户 / 空间列表 / 空间维度字典（分类、标签）/ 通知。
+ * 同一 queryKey 的 queryFn 必须全库唯一（返回形态一致），否则缓存互相污染。
  */
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
+import type { MeInfo } from '../auth';
 import { extractApiError } from '../utils';
 
-export interface SpaceLike {
-  id: string;
-  slug: string;
-  name: string;
-  description: string | null;
-  space_type: string;
-  review_required: boolean;
-  my_role?: string | null;
-  member_count?: number | null;
+/** 当前用户信息（个人中心 / 通知未读数共用缓存）。 */
+export function useMe() {
+  return useQuery({
+    queryKey: ['me'],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/me');
+      if (error) throw new Error(extractApiError(error, '加载用户信息失败'));
+      return data as unknown as MeInfo;
+    },
+    staleTime: 30_000,
+  });
 }
 
 /** 我的空间列表（多页共用缓存）。 */
@@ -24,6 +29,25 @@ export function useMySpaces() {
       const { data, error } = await api.GET('/api/v1/spaces');
       if (error) throw new Error(extractApiError(error, '加载空间列表失败'));
       return data.items;
+    },
+  });
+}
+
+/** 对话会话条目（侧栏会话列表 / 对话页共用）。 */
+export interface ChatSessionItem {
+  session_id: string;
+  title: string;
+  scope_space_ids: string[];
+}
+
+/** 对话会话列表（AppLayout 侧栏 + 对话页共用缓存）。 */
+export function useChatSessions() {
+  return useQuery({
+    queryKey: ['chat-sessions'],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/chat/sessions', {});
+      if (error) throw new Error(extractApiError(error, '加载会话列表失败'));
+      return data as unknown as { items: ChatSessionItem[]; total: number };
     },
   });
 }
@@ -43,9 +67,7 @@ export function useSpaceCategories(spaceId?: string | null) {
   });
 }
 
-/**
- * 空间标签选项：资产列表 API 不携带标签，这里抽样前 20 个资产的详情聚合（演示规模够用）。
- */
+/** 空间标签选项（空间标签字典接口）。 */
 export function useSpaceTags(spaceId?: string | null) {
   return useQuery({
     queryKey: ['space-tags', spaceId],
@@ -61,15 +83,48 @@ export function useSpaceTags(spaceId?: string | null) {
   });
 }
 
-/** 通知列表（AppLayout 轮询 30s + 个人中心共用缓存）。 */
+/** 通知列表（侧栏未读徽标 30s 轮询 + 通知页共用缓存，单次最多 200 条）。 */
 export function useNotifications() {
   return useQuery({
     queryKey: ['notifications'],
     queryFn: async () => {
-      const { data, error } = await api.GET('/api/v1/notifications');
+      const { data, error } = await api.GET('/api/v1/notifications', {
+        params: { query: { limit: 200 } },
+      });
       if (error) throw new Error(extractApiError(error, '加载通知失败'));
       return data;
     },
     refetchInterval: 30_000,
   });
+}
+
+/** 通知已读动作（顶栏铃铛与个人中心共用）。 */
+export function useNotificationActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    void queryClient.invalidateQueries({ queryKey: ['me'] });
+  };
+
+  const markRead = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await api.POST('/api/v1/notifications/{notification_id}/read', {
+        params: { path: { notification_id: id } },
+      });
+      if (error) throw new Error(extractApiError(error, '标记已读失败'));
+    },
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e.message),
+  });
+
+  const markAllRead = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST('/api/v1/notifications/read-all');
+      if (error) throw new Error(extractApiError(error, '全部已读失败'));
+    },
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e.message),
+  });
+
+  return { markRead, markAllRead };
 }

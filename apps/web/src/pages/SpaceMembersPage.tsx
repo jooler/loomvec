@@ -7,11 +7,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
-import { extractApiError, ROLE_META } from '@/utils';
+import { extractApiError, ROLE_META, ROLE_TONE } from '@/utils';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
-import { StatusBadge, type BadgeTone } from '@loomvec/ui/components/status-badge';
+import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Alert, AlertDescription } from '@loomvec/ui/components/ui/alert';
 import { Avatar, AvatarFallback } from '@loomvec/ui/components/ui/avatar';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -35,19 +35,9 @@ const ROLE_OPTIONS = [
   { value: 'owner', label: '所有者（owner）' },
 ];
 
-/** ROLE_META 的 antd 色 → StatusBadge tone。 */
-const ROLE_COLOR_TONE: Record<string, BadgeTone> = {
-  gold: 'amber',
-  blue: 'blue',
-  default: 'gray',
-};
-
 function RoleBadge({ role }: { role: string }) {
-  const meta = ROLE_META[role];
   return (
-    <StatusBadge tone={meta ? ROLE_COLOR_TONE[meta.color] : undefined}>
-      {meta?.text ?? role}
-    </StatusBadge>
+    <StatusBadge tone={ROLE_TONE[role]}>{ROLE_META[role]?.text ?? role}</StatusBadge>
   );
 }
 
@@ -280,12 +270,16 @@ export function SpaceMembersPage() {
             </Card>
           )}
 
-          <DataTable
-            columns={columns}
-            data={members.data}
-            loading={members.isLoading}
-            getRowId={(row) => row.user_id}
-          />
+          {members.isError ? (
+            <p className="text-sm text-destructive">{(members.error as Error).message}</p>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={members.data}
+              loading={members.isLoading}
+              getRowId={(row) => row.user_id}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

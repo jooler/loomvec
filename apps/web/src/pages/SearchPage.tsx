@@ -5,6 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
 import { api } from '@loomvec/sdk-ts';
 import { useMySpaces, useSpaceCategories, useSpaceTags } from '@/hooks';
+import { extractApiError, formatClock } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
@@ -30,11 +31,8 @@ const UNIT_TYPE_LABEL: Record<string, { tone: 'gray' | 'blue' | 'purple'; text: 
 /** 分类筛选的“不过滤”哨兵值（Radix Select 不允许空串 value）。 */
 const ALL = '__all__';
 
-function fmtClock(t: number): string {
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
+/** 空间选择器的「全部空间（聚合）」哨兵值。 */
+const ALL_SPACES = '__all_spaces__';
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -118,8 +116,8 @@ export function SearchPage() {
   }, [spaces.data]);
 
   const search = useMutation({
-    mutationFn: (q: string) =>
-      api.POST('/api/v1/search', {
+    mutationFn: async (q: string) => {
+      const { data, error } = await api.POST('/api/v1/search', {
         body: {
           query: q,
           top_k: 10,
@@ -131,20 +129,23 @@ export function SearchPage() {
           tag_ids: tagIds.length > 0 ? tagIds : undefined,
           category_id: categoryId || undefined,
         },
-      }),
+      });
+      if (error) throw new Error(extractApiError(error, '检索失败'));
+      return data;
+    },
   });
 
-  const hits = search.data?.data?.items ?? [];
+  const hits = search.data?.items ?? [];
 
   const runSearch = () => {
     const q = query.trim();
     if (q) search.mutate(q);
   };
 
-  const switchSpace = (next: string | undefined) => {
-    // 切换检索范围：全部空间 ↔ 单个空间（保留query参数重新挂路由）
-    if (next) navigate(`/s/${next}/search`);
-    else navigate('/search');
+  const switchSpace = (next: string) => {
+    // 切换检索范围：全部空间 ↔ 单个空间（重新挂路由，筛选状态随路由复位）
+    if (next === ALL_SPACES) navigate('/search');
+    else navigate(`/s/${next}/search`);
   };
 
   return (
@@ -152,11 +153,12 @@ export function SearchPage() {
       <Card className="gap-3 py-4">
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Select value={spaceId} onValueChange={(v) => switchSpace(v)}>
+            <Select value={spaceId ?? ALL_SPACES} onValueChange={switchSpace}>
               <SelectTrigger className="w-[200px]">
                 <SelectValue placeholder="选择空间" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={ALL_SPACES}>全部空间（聚合）</SelectItem>
                 {(spaces.data ?? []).map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}
@@ -267,6 +269,8 @@ export function SearchPage() {
             <div className="grid place-items-center py-10">
               <Spinner className="size-5 text-muted-foreground" />
             </div>
+          ) : search.isError ? (
+            <p className="text-sm text-destructive">{(search.error as Error).message}</p>
           ) : search.data && hits.length === 0 ? (
             <EmptyState title="没有命中的语义单元" />
           ) : (
@@ -304,7 +308,7 @@ export function SearchPage() {
                     <p className="mt-1.5 text-sm text-muted-foreground">
                       来源：{hit.asset_name}
                       {page !== undefined && ` · 第 ${page + 1} 页`}
-                      {tStart !== undefined && ` · ${fmtClock(tStart)} 起`}
+                      {tStart !== undefined && ` · ${formatClock(tStart)} 起`}
                       {locator?.start_line !== undefined &&
                         ` · 行 ${locator.start_line}-${locator.end_line}`}
                     </p>

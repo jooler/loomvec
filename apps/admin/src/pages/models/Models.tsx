@@ -8,7 +8,6 @@ import { z } from 'zod';
 import { cn } from 'cn';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
-import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ReasonModal } from '@/components/ReasonModal';
@@ -72,7 +71,7 @@ export function ModelsPage() {
   const limit = page.pageSize;
   const offset = (page.current - 1) * page.pageSize;
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['admin-reembed', status, limit, offset],
     queryFn: () =>
       unwrap<PagedResp<ReembedTask>>(
@@ -105,17 +104,16 @@ export function ModelsPage() {
   });
 
   /** 取消任务（危险操作）：pending 直接取消；running 由 worker 协作停止。 */
-  const cancel = async (reason: string) => {
-    if (!cancelTarget) return;
+  const cancel = async (task: ReembedTask, reason: string) => {
     setBusy(true);
     try {
       await unwrap(
         api.POST('/api/v1/admin/reembed/{task_id}/cancel', {
-          params: { path: { task_id: cancelTarget.id } },
+          params: { path: { task_id: task.id } },
+          body: { reason },
         }),
       );
-      toast.success(`已取消（理由：${reason}）`);
-      setCancelTarget(null);
+      toast.success('已取消（running 状态由 worker 协作停止）');
       invalidate();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '操作失败');
@@ -195,22 +193,15 @@ export function ModelsPage() {
       header: '操作',
       cell: ({ row }) =>
         row.original.status === 'pending' || row.original.status === 'running' ? (
-          <ConfirmAction
-            trigger={
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-destructive hover:text-destructive"
-                disabled={!canWrite}
-              >
-                取消
-              </Button>
-            }
-            title="确认取消该重嵌入任务？"
-            description="取消为危险操作，需填写理由确认。"
-            danger
-            onConfirm={() => setCancelTarget(row.original)}
-          />
+          <Button
+            variant="link"
+            size="sm"
+            className="h-auto p-0 text-destructive hover:text-destructive"
+            disabled={!canWrite}
+            onClick={() => setCancelTarget(row.original)}
+          >
+            取消
+          </Button>
         ) : (
           '-'
         ),
@@ -255,6 +246,7 @@ export function ModelsPage() {
         columns={columns}
         data={data?.items}
         loading={isFetching}
+        error={isError ? error : undefined}
         total={data?.total}
         page={page.current}
         pageSize={PAGE_SIZE}
@@ -328,7 +320,7 @@ export function ModelsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 取消任务（危险操作） */}
+      {/* 取消任务（危险操作）：理由入审计 */}
       <ReasonModal
         open={cancelTarget !== null}
         title={`取消重嵌入任务 ${cancelTarget?.id.slice(0, 8) ?? ''}`}
@@ -337,7 +329,7 @@ export function ModelsPage() {
         danger
         confirmLoading={busy}
         onCancel={() => setCancelTarget(null)}
-        onOk={cancel}
+        onOk={(reason) => (cancelTarget ? cancel(cancelTarget, reason) : Promise.resolve())}
       />
     </div>
   );

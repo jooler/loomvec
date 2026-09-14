@@ -22,8 +22,15 @@ const GROUP_TITLE: Record<string, string> = {
   extensions: '扩展插件',
 };
 
-/** 编辑值控件：按当前值类型选择（布尔 → 开关；数字 → 输入框；数组/对象 → JSON 文本）。 */
-function ValueEditor(props: { value: unknown; onChange: (v: unknown) => void }) {
+/** 编辑值控件：按原始值类型选择（布尔 → 开关；数字 → 输入框；字符串 → 纯文本；
+ *  数组/对象 → JSON 文本）。仅结构化（数组/对象）值尝试 JSON.parse，
+ *  避免字符串值被静默强转（"007"→7、"true"→true、"null"→null）。 */
+function ValueEditor(props: {
+  value: unknown;
+  /** 原始值是否为数组/对象（决定文本按 JSON 解析还是按纯字符串提交） */
+  structured: boolean;
+  onChange: (v: unknown) => void;
+}) {
   const { value } = props;
   if (typeof value === 'boolean') {
     return <Switch checked={value} onCheckedChange={(v) => props.onChange(v)} />;
@@ -44,8 +51,12 @@ function ValueEditor(props: { value: unknown; onChange: (v: unknown) => void }) 
       className="max-w-md"
       value={typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
       onChange={(e) => {
-        // 尝试解析为 JSON（数组/对象/数字），否则按字符串处理
         const text = e.target.value;
+        if (!props.structured) {
+          props.onChange(text);
+          return;
+        }
+        // 结构化值：尽量解析为 JSON 以便保存对象/数组；半成品输入先按原文本暂存
         try {
           props.onChange(JSON.parse(text));
         } catch {
@@ -64,7 +75,7 @@ export function SettingsPage({ group }: { group: string }) {
   const [editValue, setEditValue] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin-settings'],
     queryFn: () => unwrap<SettingItem[]>(api.GET('/api/v1/admin/settings')),
   });
@@ -73,6 +84,15 @@ export function SettingsPage({ group }: { group: string }) {
 
   const save = async (reason: string) => {
     if (!editTarget) return;
+    // 结构化配置：半成品 JSON（解析失败暂存的字符串）不允许提交
+    if (
+      editTarget.value != null &&
+      typeof editTarget.value === 'object' &&
+      typeof editValue === 'string'
+    ) {
+      toast.error('JSON 格式无效，请修正后再保存');
+      return;
+    }
     setBusy(true);
     try {
       await unwrap(
@@ -175,7 +195,12 @@ export function SettingsPage({ group }: { group: string }) {
         }
       />
 
-      <DataTable columns={columns} data={items} loading={isLoading} />
+      <DataTable
+        columns={columns}
+        data={items}
+        loading={isLoading}
+        error={isError ? error : undefined}
+      />
 
       {/* 配置修改：必填理由入审计（docs/04 §六） */}
       <ReasonModal
@@ -196,7 +221,11 @@ export function SettingsPage({ group }: { group: string }) {
         {editTarget && (
           <div className="space-y-2 pb-4">
             <p className="text-sm font-medium">新值（{editTarget.description}）</p>
-            <ValueEditor value={editValue} onChange={setEditValue} />
+            <ValueEditor
+              value={editValue}
+              structured={editTarget.value != null && typeof editTarget.value === 'object'}
+              onChange={setEditValue}
+            />
           </div>
         )}
       </ReasonModal>

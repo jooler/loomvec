@@ -63,7 +63,7 @@ export function SpaceDetailPage() {
   });
 
   const spaceKey = ['admin-space', spaceId];
-  const { data: space } = useQuery({
+  const { data: space, isError, error } = useQuery({
     queryKey: spaceKey,
     enabled: !!spaceId,
     queryFn: () =>
@@ -215,7 +215,12 @@ export function SpaceDetailPage() {
           <CardTitle>成员列表</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable columns={memberColumns} data={space?.members} getRowId={(m) => m.user_id} />
+          <DataTable
+            columns={memberColumns}
+            data={space?.members}
+            error={isError ? error : undefined}
+            getRowId={(m) => m.user_id}
+          />
         </CardContent>
       </Card>
 

@@ -1,6 +1,7 @@
 /**
- * P3-WEB-01 问答 SSE 客户端：POST 提问 + 流式解析（EventSource 不支持 POST）。
+ * 问答 SSE 客户端：POST 提问 + 流式解析（EventSource 不支持 POST）。
  * 协议：event: meta / delta / done / error，data 为 JSON（见 api/services/qa.py）。
+ * 端点为用户级 /api/v1/chat/*；图谱联合召回由后端常态开启，无请求级开关。
  */
 import { getStoredToken } from '@loomvec/sdk-ts';
 
@@ -36,29 +37,22 @@ export interface StreamHandlers {
 }
 
 export async function streamChatAnswer(
-  spaceId: string,
   sessionId: string,
   question: string,
-  useGraph: boolean | undefined,
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
   const token = getStoredToken();
-  const resp = await fetch(
-    `/api/v1/spaces/${spaceId}/chat/sessions/${sessionId}/messages`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
-        question,
-        use_graph: useGraph,
-      }),
-      signal,
+  const resp = await fetch(`/api/v1/chat/sessions/${sessionId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Request-Id': crypto.randomUUID(),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-  );
+    body: JSON.stringify({ question }),
+    signal,
+  });
   if (!resp.ok || !resp.body) {
     let detail = `请求失败（${resp.status}）`;
     try {
@@ -86,6 +80,7 @@ export async function streamChatAnswer(
       handleFrame(frame, handlers);
     }
   }
+  buffer += decoder.decode(); // flush 多字节字符的尾部残片
   if (buffer.trim()) handleFrame(buffer, handlers);
 }
 

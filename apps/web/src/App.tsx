@@ -1,18 +1,18 @@
 import { Navigate, Route, Routes } from 'react-router';
 import { AppLayout } from '@/layouts/AppLayout';
+import { SpaceLayout } from '@/layouts/SpaceLayout';
 import { LoginPage } from '@/pages/Login';
-import { HomePage } from '@/pages/Home';
-import { SpacesPage } from '@/pages/Spaces';
+import { SpacesPage } from '@/pages/SpacesPage';
 import { SearchPage } from '@/pages/SearchPage';
-import { AssetsPage } from '@/pages/AssetsPage';
-import { AssetDetailPage } from '@/pages/AssetDetailPage';
-import { UploadPage } from '@/pages/UploadPage';
+import { AssetsPage } from '@/pages/assets/AssetsPage';
+import { AssetDetailPage } from '@/pages/asset-detail/AssetDetailPage';
 import { ReviewPage } from '@/pages/ReviewPage';
 import { SpaceSettingsPage } from '@/pages/SpaceSettingsPage';
 import { SpaceMembersPage } from '@/pages/SpaceMembersPage';
 import { ChatPage } from '@/pages/ChatPage';
 import { GraphPage } from '@/pages/GraphPage';
 import { ProfilePage } from '@/pages/ProfilePage';
+import { NotificationsPage } from '@/pages/NotificationsPage';
 import { useAuth } from '@/auth';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 
@@ -39,22 +39,26 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<HomePage />} />
+        {/* 工作台已移除（功能与其它条目重复），根路径直达对话 */}
+        <Route path="/" element={<Navigate to="/chat" replace />} />
+        {/* 对话：会话列表常驻侧栏上部，历史会话经 /chat/:sessionId 载入 */}
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/chat/:sessionId" element={<ChatPage />} />
+        {/* 空间管理：卡片列表 → 空间详情（页签：资产/检索/图谱/审核/成员/设置） */}
         <Route path="/spaces" element={<SpacesPage />} />
-        {/* 聚合模式：跨我的全部空间检索 / 资产 */}
         <Route path="/search" element={<SearchPage />} />
-        <Route path="/assets" element={<AssetsPage />} />
         <Route path="/a/:assetId" element={<AssetDetailPage />} />
         <Route path="/profile" element={<ProfilePage />} />
-        {/* 空间模式：空间切换 / 上传 / 检索 / 审核 / 成员 / 设置 */}
-        <Route path="/s/:spaceId/search" element={<SearchPage />} />
-        <Route path="/s/:spaceId/assets" element={<AssetsPage />} />
-        <Route path="/s/:spaceId/upload" element={<UploadPage />} />
-        <Route path="/s/:spaceId/review" element={<ReviewPage />} />
-        <Route path="/s/:spaceId/members" element={<SpaceMembersPage />} />
-        <Route path="/s/:spaceId/settings" element={<SpaceSettingsPage />} />
-        <Route path="/s/:spaceId/chat" element={<ChatPage />} />
-        <Route path="/s/:spaceId/graph" element={<GraphPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/s/:spaceId" element={<SpaceLayout />}>
+          <Route index element={<Navigate to="assets" replace />} />
+          <Route path="assets" element={<AssetsPage />} />
+          <Route path="search" element={<SearchPage />} />
+          <Route path="review" element={<ReviewPage />} />
+          <Route path="members" element={<SpaceMembersPage />} />
+          <Route path="settings" element={<SpaceSettingsPage />} />
+          <Route path="graph" element={<GraphPage />} />
+        </Route>
       </Route>
     </Routes>
   );

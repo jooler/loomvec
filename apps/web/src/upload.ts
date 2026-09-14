@@ -5,6 +5,45 @@
 import { api } from '@loomvec/sdk-ts';
 import { extractApiError, quotaReasonOf, sha256Hex, QUOTA_REASON_LABEL } from './utils';
 
+/**
+ * 后端 EXT_TO_MIME（services/core/pipeline/mime.py）的镜像：
+ * 预签名会把 Content-Type 纳入签名；file.type 为空时后端按扩展推断，
+ * 客户端 PUT 必须发送完全相同的值，否则对象存储校验签名不匹配（403）。
+ */
+const EXT_TO_MIME: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.markdown': 'text/markdown',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.bmp': 'image/bmp',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/x-wav',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+};
+
+function extOf(filename: string): string {
+  const i = filename.lastIndexOf('.');
+  return i >= 0 ? filename.slice(i).toLowerCase() : '';
+}
+
+/** 与后端 presign 相同口径的 Content-Type：浏览器探测值优先，扩展名兜底。 */
+function effectiveContentType(file: File): string {
+  return file.type || EXT_TO_MIME[extOf(file.name)] || 'application/octet-stream';
+}
+
 /** 用 XMLHttpRequest PUT 以获取上传进度。 */
 function putWithProgress(
   url: string,
@@ -47,7 +86,8 @@ export interface UploadResult {
  * 单文件完整上传。失败抛错（message 已用户可读）；用户放弃上传抛 Error('已跳过上传')。
  */
 export async function uploadFile(file: File, opts: UploadOptions = {}): Promise<UploadResult> {
-  const contentType = file.type || 'application/octet-stream';
+  // 预签名 / PUT / 登记三处必须使用同一个 Content-Type（签名一致性）
+  const contentType = effectiveContentType(file);
 
   // 1) 去重预检：同空间同 checksum 的现存资产
   try {
@@ -71,7 +111,7 @@ export async function uploadFile(file: File, opts: UploadOptions = {}): Promise<
     body: {
       filename: file.name,
       size: file.size,
-      content_type: file.type || undefined,
+      content_type: contentType,
       space_id: opts.spaceId ?? undefined,
     },
   });
@@ -88,7 +128,7 @@ export async function uploadFile(file: File, opts: UploadOptions = {}): Promise<
       key: presign.data.key,
       filename: file.name,
       size: file.size,
-      content_type: file.type || undefined,
+      content_type: contentType,
       space_id: opts.spaceId ?? undefined,
     },
   });

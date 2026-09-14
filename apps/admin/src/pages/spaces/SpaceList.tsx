@@ -34,7 +34,7 @@ export function SpaceListPage() {
   const limit = PAGE_SIZE;
   const offset = (page - 1) * PAGE_SIZE;
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['admin-spaces', q, spaceType, banned, limit, offset],
     queryFn: () =>
       unwrap<PagedResp<SpaceRow>>(
@@ -185,6 +185,7 @@ export function SpaceListPage() {
         columns={columns}
         data={data?.items}
         loading={isFetching}
+        error={isError ? error : undefined}
         total={data?.total}
         page={page}
         pageSize={PAGE_SIZE}

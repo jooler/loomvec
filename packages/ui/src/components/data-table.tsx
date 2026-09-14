@@ -5,7 +5,7 @@ import {
   useReactTable,
   type ColumnDef,
 } from '@tanstack/react-table';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
@@ -23,6 +23,7 @@ import { EmptyState } from './empty-state';
  * 通用数据表（@tanstack/react-table + shadcn Table）。
  * - 服务端分页：传 total/page/pageSize/onPageChange（react-query 按 limit/offset 查询的页面用这个）。
  * - 客户端分页：不传分页 props，数据超过 pageSize 时自动出分页条。
+ * - 查询失败：传 error，展示错误提示（避免失败被空态伪装成“无数据”）。
  */
 export function DataTable<TData>(props: {
   columns: ColumnDef<TData, unknown>[];
@@ -30,6 +31,8 @@ export function DataTable<TData>(props: {
   /** 覆盖行 key（默认尝试 row.id） */
   getRowId?: (row: TData, index: number) => string;
   loading?: boolean;
+  /** 查询失败信息（优先于空态展示） */
+  error?: Error | null;
   total?: number;
   page?: number;
   pageSize?: number;
@@ -111,6 +114,17 @@ export function DataTable<TData>(props: {
                   ))}
                 </TableRow>
               ))
+            ) : props.error ? (
+              <TableRow>
+                <TableCell colSpan={colCount} className="p-0">
+                  <EmptyState
+                    icon={TriangleAlert}
+                    title="加载失败"
+                    description={props.error.message || '请求出错，请稍后重试'}
+                    className="[&>div:first-child]:bg-destructive/10 [&_svg]:text-destructive"
+                  />
+                </TableCell>
+              </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={colCount} className="p-0">

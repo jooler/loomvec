@@ -31,7 +31,8 @@ describe('admin menu', () => {
   });
 
   it('has unique menu keys including parent group anchors', () => {
-    // ProLayout 以 path 作为 antd Menu 的 key,父级锚点与子路由撞车会报 Duplicated key
+    // 侧边栏以 path 作 key（SidebarMenuItem/SidebarMenuSubItem），
+    // 父级分组锚点与子路由 path 撞车会造成 React key 冲突
     const allPaths: string[] = [];
     const walk = (items: AdminMenuItem[]): void => {
       for (const m of items) {

@@ -10,7 +10,7 @@ import { usePerm } from '@/auth';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
-import { SecretModal } from '@/components/ReasonModal';
+import { SecretModal } from '@/components/SecretModal';
 import { Badge } from '@loomvec/ui/components/ui/badge';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Checkbox } from '@loomvec/ui/components/ui/checkbox';
@@ -53,7 +53,7 @@ export function ApiKeysPage() {
     defaultValues: { name: '', scopes: ['read'], rate_limit_per_min: 600 },
   });
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['api-keys'],
     queryFn: () => unwrap<ApiKeyRow[]>(api.GET('/api/v1/api-keys')),
   });
@@ -159,7 +159,12 @@ export function ApiKeysPage() {
         }
       />
 
-      <DataTable columns={columns} data={data} loading={isFetching} />
+      <DataTable
+        columns={columns}
+        data={data}
+        loading={isFetching}
+        error={isError ? error : undefined}
+      />
 
       <Dialog
         open={createOpen}

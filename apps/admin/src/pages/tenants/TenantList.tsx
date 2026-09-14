@@ -59,7 +59,7 @@ export function TenantListPage() {
   const limit = page.pageSize;
   const offset = (page.current - 1) * page.pageSize;
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['admin-tenants', q, limit, offset],
     queryFn: () =>
       unwrap<PagedResp<TenantRow>>(
@@ -240,6 +240,7 @@ export function TenantListPage() {
         columns={columns}
         data={data?.items}
         loading={isFetching}
+        error={isError ? error : undefined}
         total={data?.total}
         page={page.current}
         pageSize={page.pageSize}

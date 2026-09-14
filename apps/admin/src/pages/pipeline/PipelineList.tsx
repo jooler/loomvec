@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
+import { Search } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
@@ -8,7 +9,7 @@ import { usePerm } from '@/auth';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
-import { StatusBadge, type BadgeTone } from '@loomvec/ui/components/status-badge';
+import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Badge } from '@loomvec/ui/components/ui/badge';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -28,6 +29,7 @@ import {
   SelectValue,
 } from '@loomvec/ui/components/ui/select';
 import type { FailureItem, JobRow, PagedResp } from '@/types';
+import { JOB_STATUS_META, jobStatusMeta } from '@/constants';
 import { formatDateTime } from '@/utils';
 
 const PAGE_SIZE = 20;
@@ -35,13 +37,6 @@ const PAGE_SIZE = 20;
 /** 筛选/步骤 Select 的「不过滤/默认」哨兵值（shadcn Select 无 allowClear，语义等价映射）。 */
 const ALL = '__all__';
 const DEFAULT_STEP = '__default__';
-
-const JOB_STATUS_META: Record<string, { tone: BadgeTone; text: string }> = {
-  pending: { tone: 'gray', text: '排队' },
-  running: { tone: 'blue', text: '进行中' },
-  succeeded: { tone: 'green', text: '成功' },
-  failed: { tone: 'red', text: '失败' },
-};
 
 /** 管线监控：任务看板（状态/阶段/资产类型筛选）+ 失败原因聚合 + 单任务重试（docs/04 §5.6）。 */
 export function PipelineListPage() {
@@ -52,6 +47,8 @@ export function PipelineListPage() {
   const [status, setStatus] = useState<string | undefined>();
   const [jobType, setJobType] = useState<string | undefined>();
   const [mimeType, setMimeType] = useState<string | undefined>();
+  // 草稿态：MIME 输入按提交生效（Enter/搜索按钮），避免每键触发一次列表请求
+  const [mimeDraft, setMimeDraft] = useState('');
   const [page, setPage] = useState({ current: 1, pageSize: PAGE_SIZE });
   const [retryTarget, setRetryTarget] = useState<JobRow | null>(null);
   const [retryStep, setRetryStep] = useState<string | undefined>();
@@ -60,7 +57,7 @@ export function PipelineListPage() {
   const limit = page.pageSize;
   const offset = (page.current - 1) * page.pageSize;
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['admin-pipeline-jobs', status, jobType, mimeType, limit, offset],
     queryFn: () =>
       unwrap<PagedResp<JobRow>>(
@@ -140,10 +137,7 @@ export function PipelineListPage() {
       accessorKey: 'status',
       header: '状态',
       cell: ({ row }) => {
-        const m = JOB_STATUS_META[row.original.status] ?? {
-          tone: 'gray' as const,
-          text: row.original.status,
-        };
+        const m = jobStatusMeta(row.original.status);
         return <StatusBadge tone={m.tone}>{m.text}</StatusBadge>;
       },
     },
@@ -273,20 +267,31 @@ export function PipelineListPage() {
             ))}
           </SelectContent>
         </Select>
-        <Input
-          placeholder="资产 MIME 类型，如 application/pdf"
-          className="w-[240px]"
-          onChange={(e) => {
-            setMimeType(e.target.value || undefined);
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setMimeType(mimeDraft.trim() || undefined);
             setPage({ current: 1, pageSize: PAGE_SIZE });
           }}
-        />
+        >
+          <Input
+            placeholder="资产 MIME 类型，如 application/pdf"
+            className="w-[240px]"
+            value={mimeDraft}
+            onChange={(e) => setMimeDraft(e.target.value)}
+          />
+          <Button type="submit" variant="outline" size="icon" aria-label="按 MIME 过滤">
+            <Search />
+          </Button>
+        </form>
       </div>
 
       <DataTable
         columns={columns}
         data={data?.items}
         loading={isFetching}
+        error={isError ? error : undefined}
         total={data?.total}
         page={page.current}
         pageSize={PAGE_SIZE}

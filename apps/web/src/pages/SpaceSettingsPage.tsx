@@ -6,11 +6,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
-import { extractApiError, formatBytes, ROLE_META } from '@/utils';
+import {
+  CHUNK_PRESETS,
+  EMBEDDING_MODELS,
+  extractApiError,
+  formatBytes,
+  percentOf,
+} from '@/utils';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
-import { StatusBadge, type BadgeTone } from '@loomvec/ui/components/status-badge';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
@@ -32,24 +37,6 @@ import { Textarea } from '@loomvec/ui/components/ui/textarea';
  * 含用量与配额进度展示；owner 可删除空间（危险操作：级联清理资产、向量与对象存储）。
  */
 
-const EMBEDDING_MODELS = [
-  { value: 'mock', label: 'mock（测试用确定性向量）' },
-  { value: 'bge-m3', label: 'bge-m3' },
-];
-
-const CHUNK_PRESETS = [
-  { value: 'balanced', label: 'balanced（均衡）' },
-  { value: 'fine', label: 'fine（细粒度分片）' },
-  { value: 'long', label: 'long（长文分片）' },
-];
-
-/** ROLE_META 的 antd 色 → StatusBadge tone。 */
-const ROLE_COLOR_TONE: Record<string, BadgeTone> = {
-  gold: 'amber',
-  blue: 'blue',
-  default: 'gray',
-};
-
 const settingsSchema = z.object({
   name: z.string().min(1, '请输入名称'),
   description: z.string().optional(),
@@ -61,11 +48,6 @@ const settingsSchema = z.object({
 });
 
 type SettingsValues = z.infer<typeof settingsSchema>;
-
-function percentOf(used: number, quota: number): number {
-  if (quota <= 0) return 0; // 0 = 不限额
-  return Math.min(100, Math.round((used / quota) * 100));
-}
 
 export function SpaceSettingsPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
@@ -178,27 +160,12 @@ export function SpaceSettingsPage() {
   if (!s) return null;
 
   const isOwner = s.my_role === 'owner';
-  const roleMeta = ROLE_META[s.my_role ?? ''];
   const quotaProgressCls =
     '[&_[data-slot=progress-indicator]]:bg-destructive';
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title={
-          <span className="flex flex-wrap items-center gap-2">
-            空间设置 · {s.name}
-            <StatusBadge tone={roleMeta ? ROLE_COLOR_TONE[roleMeta.color] : undefined}>
-              {roleMeta?.text ?? s.my_role}
-            </StatusBadge>
-          </span>
-        }
-        actions={
-          <Button variant="outline" onClick={() => navigate(`/s/${s.id}/assets`)}>
-            返回资产
-          </Button>
-        }
-      />
+      <PageHeader title="空间设置" />
 
       <Card>
         <CardContent className="space-y-6">

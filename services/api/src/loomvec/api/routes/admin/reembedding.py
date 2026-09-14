@@ -34,6 +34,12 @@ class ReembedCreateRequest(BaseModel):
     target_model: str = Field(min_length=1, max_length=128)
 
 
+class ReembedCancelRequest(BaseModel):
+    """取消理由：运营端 UI 强制填写并记入审计（docs/04 §六.1）；API 层宽容可选。"""
+
+    reason: str | None = Field(default=None, max_length=500)
+
+
 def _task_out(t: ReembedTask) -> dict[str, Any]:
     return {
         "id": str(t.id),
@@ -143,6 +149,7 @@ async def get_reembed(
 @router.post("/reembed/{task_id}/cancel", status_code=202)
 async def cancel_reembed(
     task_id: uuid.UUID,
+    body: ReembedCancelRequest | None = None,
     identity: Identity = Depends(require_admin("admin:write")),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -162,6 +169,7 @@ async def cancel_reembed(
         action="admin.reembed.cancel",
         object_type="reembed_task",
         object_id=str(task_id),
+        reason=body.reason if body else None,
     )
     await session.commit()
     return _task_out(task)

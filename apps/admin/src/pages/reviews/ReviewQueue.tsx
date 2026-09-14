@@ -37,7 +37,7 @@ export function ReviewQueuePage() {
   const limit = PAGE_SIZE;
   const offset = (page - 1) * PAGE_SIZE;
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['admin-reviews', spaceId, limit, offset],
     queryFn: () =>
       unwrap<PagedResp<ReviewAsset>>(
@@ -67,6 +67,8 @@ export function ReviewQueuePage() {
         body: { action, reason: reason ?? null },
       }),
     );
+    // 决定成功即出队：同步从选中集移除，避免随后的批量操作携带已决定资产
+    setSelectedKeys((prev) => prev.filter((id) => id !== assetId));
     invalidate();
   };
 
@@ -82,6 +84,7 @@ export function ReviewQueuePage() {
         }),
       );
       toast.success('已下架（连带向量清理）');
+      setSelectedKeys((prev) => prev.filter((id) => id !== takedownTarget.id));
       setTakedownTarget(null);
       invalidate();
     } catch (e) {
@@ -290,6 +293,7 @@ export function ReviewQueuePage() {
         columns={columns}
         data={items}
         loading={isFetching}
+        error={isError ? error : undefined}
         total={data?.total}
         page={page}
         pageSize={PAGE_SIZE}

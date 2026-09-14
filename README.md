@@ -41,21 +41,22 @@ third_party/mineru/        MinerU 3.4.5 vendored 源码（compose 镜像构建�
 ## 快速开始（本地开发）
 
 ```bash
-./dev.sh            # 一键启动全部：基础设施栈 → 迁移 → api/worker/web/admin（幂等，已在跑的自动跳过）
-./dev.sh obs        # 可选：监控栈 Grafana/Prometheus/Loki（admin 首页「打开 Grafana」依赖；停止用 ./dev.sh obs stop）
+./dev.sh            # 一键启动全部：镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈 → 迁移 → api/worker/web/admin（幂等，已在跑的自动跳过）
 ./dev.sh status     # 查看各组件状态
-./dev.sh stop       # 停止四个应用进程（基础设施保留）
+./dev.sh stop       # 停止四个应用进程（基础设施与监控容器保留；需停止容器用 docker compose -f deploy/compose/compose.yaml --profile observability stop）
 ```
 
 前置：Python 3.12（uv 自动管理）、Node 20+、pnpm、Docker。首次运行会自动生成
 `deploy/compose/.env` 与根 `.env`；MinerU 镜像首次构建较慢、首次启动需下载模型约 1~2GB。
+监控栈随一键启动一起拉起：Grafana http://localhost:3002 （admin 首页「打开 Grafana」按钮依赖，
+密码见 `deploy/compose/.env` 的 `GRAFANA_ADMIN_PASSWORD`，默认 admin）、Prometheus http://localhost:9090。
 
 <details>
 <summary>手动分步启动（等价于 dev.sh）</summary>
 
 ```bash
-# 1) 基础设施栈
-cd deploy/compose && cp .env.example .env && docker compose up -d && cd ../..
+# 1) 基础设施栈 + 监控栈
+cd deploy/compose && cp .env.example .env && docker compose --profile observability up -d && cd ../..
 
 # 2) 后端（API 8080；MinerU 占 8000）+ 管线 worker
 uv sync && cp .env.example .env
@@ -101,7 +102,7 @@ AI 网关：默认 `LOOMVEC_AI__MOCK=true`（确定性本地实现，离线可�
 
 ## P1 阶段退出标准核对
 
-- [x] 演示：上传 → 数分钟内 ready → 检索命中并跳转正确页码（web /assets 与 /a/{id} 预览页码跳转）
+- [x] 演示：上传 → 数分钟内 ready → 检索命中并跳转正确页码（web 空间资产页与 /a/{id} 预览页码跳转）
 - [x] 混合召回可用，rerank 生效（`make evals` vs `uv run python evals/run_evals.py --no-rerank` A/B）
 - [x] evals 金标集 60 条，hit-rate@10 基线阈值 0.6（见 evals/README.md）
 - [x] API Key 可调用 search（`POST /api/v1/api-keys` 签发 → `X-API-Key` 头调用）

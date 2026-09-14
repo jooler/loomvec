@@ -1,7 +1,9 @@
 """P3-CORE-05 问答服务：检索 → 引用约束 prompt → LLM 流式生成 → 引用组装。
 
 设计要点（03 文档 §四 / 05 文档 §5.5）：
-- 作用域固定单空间；会话与消息落 PG（chat_session / chat_message），可续聊；
+- 会话为用户级（跨空间），召回范围 = 会话 scope_space_ids（空 = 我的全部空间）∩ 用户当前
+  可见空间；会话与消息落 PG（chat_session / chat_message），可续聊；
+- 图谱联合召回常态开启（L1/L2 与 L3/L4 同请求 RRF 融合），仅保留运维全局关停降级；
 - 引用契约：prompt 注入带 [n] 编号的来源片段，约束模型仅以 [n] 标注已给来源；
   检索命中带 locator（页码/时间）的可跳转定位，无定位引用前端不渲染编号跳转；
 - graph_evidence：把检索命中的图谱证据链去重后随答案下发（答案可解释）；
@@ -29,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loomvec.core.config import Settings
 from loomvec.core.db.models import ChatMessage, ChatRole, ChatSession
 from loomvec.core.errors import ValidationError
-from loomvec.core.retrieval import Retriever, SemanticHit
+from loomvec.core.retrieval import Retriever
 
 logger = structlog.get_logger("loomvec.qa")
 
@@ -38,10 +40,10 @@ _CITATION_RE = re.compile(r"\[(\d{1,3})\]")
 
 @dataclass
 class QaSource:
-    """送入 prompt 的来源（编号即答案引用编号）。"""
+    """送入 prompt 的来源（编号即答案引用编号）。hit 为 enrich_hits 的富集结果 dict。"""
 
     index: int
-    hit: SemanticHit
+    hit: dict[str, Any]
     text: str
 
 
@@ -81,8 +83,8 @@ def build_qa_messages(
     """引用约束 prompt：来源带 [n] 编号，答案仅允许引用已给编号。"""
     blocks = []
     for s in sources:
-        head = f"[{s.index}] {s.hit.title or ''}（{s.hit.asset_name}）".strip()
-        locator = s.hit.locator or {}
+        head = f"[{s.index}] {s.hit.get('title') or ''}（{s.hit.get('asset_name')}）".strip()
+        locator = s.hit.get("locator") or {}
         if locator.get("pages"):
             head += f" 第{','.join(str(p) for p in locator['pages'][:4])}页"
         if locator.get("time_start") is not None:
@@ -109,12 +111,12 @@ def build_qa_messages(
     return messages
 
 
-def dedupe_evidence(hits: list[SemanticHit], limit: int = 12) -> list[dict[str, Any]]:
+def dedupe_evidence(hits: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
     """汇总命中的图谱证据链（去重（head,tail,type），保序截断）。"""
     seen: set[tuple[str, str, str]] = set()
     out: list[dict[str, Any]] = []
     for h in hits:
-        for ev in h.graph_evidence or []:
+        for ev in h.get("graph_evidence") or []:
             key = (
                 (ev.get("head") or {}).get("key", ""),
                 (ev.get("tail") or {}).get("key", ""),
@@ -130,7 +132,7 @@ def dedupe_evidence(hits: list[SemanticHit], limit: int = 12) -> list[dict[str, 
 
 
 class QaService:
-    """问答编排（路由薄壳调用；检索复用 Retriever，图谱开关随请求）。"""
+    """问答编排（路由薄壳调用；检索复用 Retriever，图谱联合召回常态开启）。"""
 
     def __init__(self, session: AsyncSession, settings: Settings, retriever: Retriever) -> None:
         self._session = session
@@ -139,18 +141,17 @@ class QaService:
 
     # ---------- 会话管理 ----------
 
-    async def list_sessions(self, space_id: uuid.UUID, user_id: uuid.UUID) -> list[ChatSession]:
+    async def list_sessions(self, user_id: uuid.UUID) -> list[ChatSession]:
         return list(
             (
                 await self._session.execute(
                     select(ChatSession)
                     .where(
-                        ChatSession.space_id == space_id,
                         ChatSession.user_id == user_id,
                         ChatSession.deleted_at.is_(None),
                     )
                     .order_by(ChatSession.last_message_at.desc().nulls_last())
-                    .limit(100)
+                    .limit(200)
                 )
             )
             .scalars()
@@ -158,26 +159,26 @@ class QaService:
         )
 
     async def create_session(
-        self, space_id: uuid.UUID, user_id: uuid.UUID, title: str | None = None
+        self,
+        user_id: uuid.UUID,
+        title: str | None = None,
+        scope_space_ids: list[uuid.UUID] | None = None,
     ) -> ChatSession:
         s = ChatSession(
             tenant_id=None,
-            space_id=space_id,
             user_id=user_id,
             title=(title or "新会话")[:255],
+            scope_space_ids=[str(x) for x in scope_space_ids or []],
         )
         self._session.add(s)
         await self._session.flush()
         return s
 
-    async def get_session(
-        self, session_id: uuid.UUID, space_id: uuid.UUID, user_id: uuid.UUID
-    ) -> ChatSession:
+    async def get_session(self, session_id: uuid.UUID, user_id: uuid.UUID) -> ChatSession:
         s = (
             await self._session.execute(
                 select(ChatSession).where(
                     ChatSession.id == session_id,
-                    ChatSession.space_id == space_id,
                     ChatSession.user_id == user_id,
                     ChatSession.deleted_at.is_(None),
                 )
@@ -186,6 +187,24 @@ class QaService:
         if s is None:
             raise ValidationError("会话不存在", session_id=str(session_id))
         return s
+
+    async def update_session(
+        self,
+        session_row: ChatSession,
+        *,
+        title: str | None = None,
+        scope_space_ids: list[uuid.UUID] | None = None,
+    ) -> ChatSession:
+        if title is not None:
+            stripped = title.strip()
+            if not stripped:
+                # 空标题会破坏「首问自动命名」（仅在标题为"新会话"时触发），直接拒绝
+                raise ValidationError("会话标题不能为空")
+            session_row.title = stripped[:255]
+        if scope_space_ids is not None:
+            session_row.scope_space_ids = [str(x) for x in scope_space_ids]
+        await self._session.flush()
+        return session_row
 
     async def list_messages(self, session_id: uuid.UUID) -> list[ChatMessage]:
         return list(
@@ -212,7 +231,6 @@ class QaService:
     async def prepare(
         self,
         *,
-        space_id: uuid.UUID,
         tenant_id: uuid.UUID | None,
         session_row: ChatSession,
         question: str,
@@ -241,7 +259,7 @@ class QaService:
             QaSource(
                 index=i,
                 hit=h,
-                text=(h.text or "")[:1200],
+                text=(h.get("text") or "")[:1200],
             )
             for i, h in enumerate(hits, start=1)
         ]
@@ -249,14 +267,14 @@ class QaService:
         citations = [
             QaCitation(
                 index=s.index,
-                unit_id=str(s.hit.unit_id),
-                asset_id=str(s.hit.asset_id),
-                asset_name=s.hit.asset_name,
-                unit_type=s.hit.unit_type,
-                title=s.hit.title,
-                locator=s.hit.locator or {},
-                text_snippet=(s.hit.text or "")[:200],
-                locatable=bool(s.hit.locator),
+                unit_id=str(s.hit["unit_id"]),
+                asset_id=str(s.hit["asset_id"]),
+                asset_name=s.hit["asset_name"],
+                unit_type=s.hit["unit_type"],
+                title=s.hit.get("title"),
+                locator=s.hit.get("locator") or {},
+                text_snippet=(s.hit.get("text") or "")[:200],
+                locatable=bool(s.hit.get("locator")),
             ).to_dict()
             for s in sources
         ]
@@ -308,7 +326,7 @@ class QaService:
 
         answer = "".join(full_text_parts).strip()
         # 引用后处理：只保留答案实际引用的编号；越界编号剔除标注
-        cited_indices = sorted({int(m) for m in _CITATION_RE.findall(answer)})
+        cited_indices = {int(m) for m in _CITATION_RE.findall(answer)}
         valid = {c["index"] for c in prepared["citations"]}
         cited = [c for c in prepared["citations"] if c["index"] in cited_indices & valid]
 

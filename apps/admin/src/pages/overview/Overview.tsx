@@ -14,27 +14,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components
 import { Skeleton } from '@loomvec/ui/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@loomvec/ui/components/ui/tooltip';
 import type { SystemStatus } from '@/types';
+import { COMPONENT_LABEL, QUEUE_LABEL } from '@/constants';
 import { formatBytes, formatDateTime, formatSeconds } from '@/utils';
 import { cn } from 'cn';
 
 const GRAFANA_URL = import.meta.env.VITE_GRAFANA_URL ?? 'http://localhost:3002';
-
-/** 组件名 → 展示名（七组件，docs/04 §5.1）。 */
-const COMPONENT_LABEL: Record<string, string> = {
-  api: 'API',
-  worker: 'Worker',
-  postgres: 'PostgreSQL(+AGE)',
-  milvus: 'Milvus',
-  storage: 'RustFS',
-  redis: 'Redis',
-  mineru: 'MinerU',
-};
-
-/** 队列名 → 展示名。 */
-const QUEUE_LABEL: Record<string, string> = {
-  pipeline: '管线队列',
-  pipeline_high: '高优队列',
-};
 
 type StageLatencyRow = { stage: string; p50: number; p95: number };
 

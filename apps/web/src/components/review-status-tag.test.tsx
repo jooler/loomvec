@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { ReviewStatusTag } from './ReviewStatusTag';
+import { ReviewStatusTag } from './review-status-tag';
 
 describe('ReviewStatusTag', () => {
   it('渲染已知审核状态', () => {

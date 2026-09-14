@@ -1,4 +1,5 @@
 import { ChevronRight } from 'lucide-react';
+import { Fragment, Suspense } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import { LogOut, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
@@ -34,6 +35,7 @@ import {
   SidebarTrigger,
 } from '@loomvec/ui/components/ui/sidebar';
 import { cn } from 'cn';
+import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import { ThemeToggle } from '@loomvec/ui/components/mode-toggle';
 
 /** 侧边栏菜单：按 docs/04 §四 IA，super_admin 过滤 + 二级子菜单。 */
@@ -100,7 +102,8 @@ function AdminBreadcrumb() {
     <Breadcrumb>
       <BreadcrumbList>
         {trail.map((item, i) => (
-          <div key={item.path} className="flex items-center gap-1.5">
+          // Fragment 保证 ol 的直接子元素是 li（BreadcrumbItem/Separator 均为 li）
+          <Fragment key={item.path}>
             {i > 0 && <BreadcrumbSeparator className="[&>svg]:size-3.5" />}
             <BreadcrumbItem>
               {i === trail.length - 1 ? (
@@ -111,7 +114,7 @@ function AdminBreadcrumb() {
                 </Link>
               )}
             </BreadcrumbItem>
-          </div>
+          </Fragment>
         ))}
       </BreadcrumbList>
     </Breadcrumb>
@@ -171,7 +174,16 @@ export function AdminLayout() {
           </div>
         </header>
         <main className={cn('flex-1 p-6')}>
-          <Outlet />
+          {/* 懒加载页面的唯一 Suspense 边界：布局保持稳定，仅内容区出加载态 */}
+          <Suspense
+            fallback={
+              <div className="grid min-h-[50vh] place-items-center">
+                <Spinner className="size-5 text-muted-foreground" />
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </main>
       </SidebarInset>
     </SidebarProvider>

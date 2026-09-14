@@ -8,17 +8,8 @@ import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Badge } from '@loomvec/ui/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import type { SystemStatus } from '@/types';
+import { COMPONENT_LABEL } from '@/constants';
 import { formatBytes, formatDateTime, formatSeconds } from '@/utils';
-
-const COMPONENT_LABEL: Record<string, string> = {
-  api: 'API',
-  worker: 'Worker',
-  postgres: 'PostgreSQL(+AGE)',
-  milvus: 'Milvus',
-  storage: 'RustFS',
-  redis: 'Redis',
-  mineru: 'MinerU',
-};
 
 /** 组件 detail 中值得展示的键（version/error/age_seconds 等）。 */
 function detailText(detail: Record<string, unknown>): string {
@@ -54,7 +45,7 @@ const componentColumns: ColumnDef<ComponentRow, unknown>[] = [
 
 /** 系统状态：组件详情 / 队列深度 / worker 心跳 / 备份 / 平台版本（docs/04 §5.11）。 */
 export function SystemPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin-system-status'],
     queryFn: () => unwrap<SystemStatus>(api.GET('/api/v1/admin/system/status')),
     refetchInterval: 15_000,
@@ -78,6 +69,7 @@ export function SystemPage() {
               columns={componentColumns}
               data={data?.components}
               loading={isLoading}
+              error={isError ? error : undefined}
               getRowId={(r) => r.name}
             />
           </CardContent>

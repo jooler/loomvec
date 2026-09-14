@@ -48,7 +48,7 @@ export function ContentReviewPage() {
   const [busy, setBusy] = useState(false);
   const [unitsPage, setUnitsPage] = useState(1);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin-asset-units', assetId],
     enabled: !!assetId,
     queryFn: () =>
@@ -143,6 +143,7 @@ export function ContentReviewPage() {
             data={pagedUnits}
             getRowId={(u) => u.id}
             loading={isLoading}
+            error={isError ? error : undefined}
             total={units.length}
             page={unitsPage}
             pageSize={UNITS_PAGE_SIZE}

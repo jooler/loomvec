@@ -163,3 +163,91 @@ def test_matrix_settings_masking_and_admin_only(client: TestClient):
     # 检索组 operator 可改（即时生效组）
     resp = client.put("/api/v1/admin/settings/search.rrf_k", headers=op_headers, json={"value": 42})
     assert resp.status_code == 200
+
+
+def test_matrix_delete_with_reason_records_audit(client: TestClient):
+    """危险删除（OAuth 应用 / Webhook 订阅）携带理由入审计；无 body 的 DELETE 保持兼容。"""
+    headers = _auth(["super_admin"], username="matrix-del-reason")
+
+    # OAuth 应用：带理由删除 → 审计留痕
+    resp = client.post(
+        "/api/v1/admin/oauth/clients",
+        headers=headers,
+        json={"name": "待删除应用", "redirect_uris": ["https://app.example.com/cb"]},
+    )
+    assert resp.status_code == 201, resp.text
+    client_db_id = resp.json()["id"]
+    resp = client.request(
+        "DELETE",
+        f"/api/v1/admin/oauth/clients/{client_db_id}",
+        headers=headers,
+        json={"reason": "应用下线"},
+    )
+    assert resp.status_code == 204, resp.text
+    resp = client.get(
+        "/api/v1/admin/audit-logs",
+        headers=headers,
+        params={"action": "admin.oauth.client_delete", "limit": 5},
+    )
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert items and items[0]["reason"] == "应用下线"
+
+    # 无 body 的 DELETE 兼容（脚本/旧客户端不传 json 也可删除）
+    resp = client.post(
+        "/api/v1/admin/oauth/clients",
+        headers=headers,
+        json={"name": "无理由删除", "redirect_uris": ["https://app.example.com/cb2"]},
+    )
+    assert resp.status_code == 201, resp.text
+    client_db_id = resp.json()["id"]
+    resp = client.request(
+        "DELETE", f"/api/v1/admin/oauth/clients/{client_db_id}", headers=headers
+    )
+    assert resp.status_code == 204, resp.text
+
+    # Webhook 订阅：带理由删除 → 审计留痕
+    resp = client.post(
+        "/api/v1/admin/webhooks/subscriptions",
+        headers=headers,
+        json={
+            "name": "待删除订阅",
+            "url": "https://hooks.example.com/loomvec",
+            "event_types": ["asset.ready"],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    sub_id = resp.json()["id"]
+    resp = client.request(
+        "DELETE",
+        f"/api/v1/admin/webhooks/subscriptions/{sub_id}",
+        headers=headers,
+        json={"reason": "接收方迁移"},
+    )
+    assert resp.status_code == 204, resp.text
+    resp = client.get(
+        "/api/v1/admin/audit-logs",
+        headers=headers,
+        params={"action": "admin.webhook.subscription_delete", "limit": 5},
+    )
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert items and items[0]["reason"] == "接收方迁移"
+
+
+def test_matrix_reembed_cancel_reason_contract(client: TestClient):
+    """取消理由模型生效：超长 reason 422；任务不存在 404（不经 celery/DB 状态）。"""
+    headers = _auth(["super_admin"], username="matrix-reembed-cancel")
+    missing = f"{('0' * 31)}1"
+    resp = client.post(
+        f"/api/v1/admin/reembed/{missing}/cancel",
+        headers=headers,
+        json={"reason": "x" * 501},
+    )
+    assert resp.status_code == 422  # reason 超长（max_length=500）
+    resp = client.post(
+        f"/api/v1/admin/reembed/{missing}/cancel",
+        headers=headers,
+        json={"reason": "仅测试"},
+    )
+    assert resp.status_code == 404  # 不存在 → NotFoundError，body 合法性先通过

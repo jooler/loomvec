@@ -1,28 +1,68 @@
 import { ShieldAlert } from 'lucide-react';
+import { lazy } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router';
 import { AdminLayout } from '@/layouts/AdminLayout';
-import { LoginPage } from '@/pages/Login';
-import { OverviewPage } from '@/pages/Overview';
-import { SystemPage } from '@/pages/System';
-import { TenantListPage } from '@/pages/tenants/TenantList';
-import { TenantDetailPage } from '@/pages/tenants/TenantDetail';
-import { UserListPage } from '@/pages/UserList';
-import { SpaceListPage } from '@/pages/spaces/SpaceList';
-import { SpaceDetailPage } from '@/pages/spaces/SpaceDetail';
-import { ReviewQueuePage } from '@/pages/ReviewQueue';
-import { ContentReviewPage } from '@/pages/ContentReview';
-import { PipelineListPage } from '@/pages/pipeline/PipelineList';
-import { PipelineDetailPage } from '@/pages/pipeline/PipelineDetail';
-import { ModelsPage } from '@/pages/Models';
-import { RetrievalPage } from '@/pages/Retrieval';
-import { ApiKeysPage } from '@/pages/open/ApiKeys';
-import { OauthClientsPage } from '@/pages/open/OauthClients';
-import { WebhooksPage } from '@/pages/open/Webhooks';
-import { SettingsPage } from '@/pages/SettingsPage';
-import { AuditLogsPage } from '@/pages/AuditLogs';
+import { LoginPage } from '@/pages/login/Login';
 import { PLATFORM_ROLES, useAuth, usePerm } from '@/auth';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
+
+// 路由级代码分割：业务页面按需加载（登录页保持同步，保证首屏直出）。
+// Suspense 边界统一放在 AdminLayout 的内容区 Outlet 处，路由元素无需各自包裹。
+const OverviewPage = lazy(() =>
+  import('@/pages/overview/Overview').then((m) => ({ default: m.OverviewPage })),
+);
+const SystemPage = lazy(() =>
+  import('@/pages/system/System').then((m) => ({ default: m.SystemPage })),
+);
+const TenantListPage = lazy(() =>
+  import('@/pages/tenants/TenantList').then((m) => ({ default: m.TenantListPage })),
+);
+const TenantDetailPage = lazy(() =>
+  import('@/pages/tenants/TenantDetail').then((m) => ({ default: m.TenantDetailPage })),
+);
+const UserListPage = lazy(() =>
+  import('@/pages/users/UserList').then((m) => ({ default: m.UserListPage })),
+);
+const SpaceListPage = lazy(() =>
+  import('@/pages/spaces/SpaceList').then((m) => ({ default: m.SpaceListPage })),
+);
+const SpaceDetailPage = lazy(() =>
+  import('@/pages/spaces/SpaceDetail').then((m) => ({ default: m.SpaceDetailPage })),
+);
+const ReviewQueuePage = lazy(() =>
+  import('@/pages/reviews/ReviewQueue').then((m) => ({ default: m.ReviewQueuePage })),
+);
+const ContentReviewPage = lazy(() =>
+  import('@/pages/reviews/ContentReview').then((m) => ({ default: m.ContentReviewPage })),
+);
+const PipelineListPage = lazy(() =>
+  import('@/pages/pipeline/PipelineList').then((m) => ({ default: m.PipelineListPage })),
+);
+const PipelineDetailPage = lazy(() =>
+  import('@/pages/pipeline/PipelineDetail').then((m) => ({ default: m.PipelineDetailPage })),
+);
+const ModelsPage = lazy(() =>
+  import('@/pages/models/Models').then((m) => ({ default: m.ModelsPage })),
+);
+const RetrievalPage = lazy(() =>
+  import('@/pages/models/Retrieval').then((m) => ({ default: m.RetrievalPage })),
+);
+const ApiKeysPage = lazy(() =>
+  import('@/pages/open/ApiKeys').then((m) => ({ default: m.ApiKeysPage })),
+);
+const OauthClientsPage = lazy(() =>
+  import('@/pages/open/OauthClients').then((m) => ({ default: m.OauthClientsPage })),
+);
+const WebhooksPage = lazy(() =>
+  import('@/pages/open/Webhooks').then((m) => ({ default: m.WebhooksPage })),
+);
+const SettingsPage = lazy(() =>
+  import('@/pages/settings/Settings').then((m) => ({ default: m.SettingsPage })),
+);
+const AuditLogsPage = lazy(() =>
+  import('@/pages/audit/AuditLogs').then((m) => ({ default: m.AuditLogsPage })),
+);
 
 function FullPageLoading() {
   return (
@@ -32,9 +72,10 @@ function FullPageLoading() {
   );
 }
 
-/** 403 展示（替代 antd Result）。 */
+/** 403 展示（替代 antd Result）。附带“重新登录”出口，避免无权限账号被困在本页。 */
 function AccessDenied(props: { title: string; description: string }) {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   return (
     <div className="grid min-h-svh place-items-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-3 text-center">
@@ -43,9 +84,20 @@ function AccessDenied(props: { title: string; description: string }) {
         </div>
         <h2 className="text-lg font-semibold">{props.title}</h2>
         <p className="text-sm text-muted-foreground">{props.description}</p>
-        <Button variant="outline" onClick={() => navigate('/overview')}>
-          返回总览
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/overview')}>
+            返回总览
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              logout();
+              navigate('/login', { replace: true });
+            }}
+          >
+            重新登录
+          </Button>
+        </div>
       </div>
     </div>
   );
