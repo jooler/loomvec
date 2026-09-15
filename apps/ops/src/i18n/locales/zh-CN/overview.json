@@ -1,0 +1,20 @@
+{
+  "title": "公共空间总览",
+  "description": "维护公共知识库空间：上传与管理内容、配置分组可见性。点击空间进入管理界面。",
+  "createSpace": "创建公共空间",
+  "creating": "创建中…",
+  "spaceCreated": "公共空间已创建",
+  "createDesc": "公共空间由运营端创建与维护；创建后通过「可见性」勾选用户分组，用户端即可选择链接。",
+  "nameLabel": "空间名称",
+  "namePlaceholder": "如：公司公共知识库",
+  "nameRequired": "请输入空间名称",
+  "reviewLabel": "先审后见",
+  "reviewHint": "开启后新资产审核通过才可见、才参与检索",
+  "reviewBadge": "需审核",
+  "emptyTitle": "还没有公共空间",
+  "emptyDesc": "创建第一个公共空间，勾选可见分组后即可对用户端开放链接。",
+  "assetCount": "{{count}} 个资产",
+  "visibleGroupCount": "{{count}} 个可见分组",
+  "memberCount": "{{count}} 名成员",
+  "createdAtSuffix": "{{date}} 创建"
+}

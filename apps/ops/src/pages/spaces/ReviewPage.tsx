@@ -6,6 +6,8 @@ import { Check, File, RefreshCw, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
+import { t } from '@/i18n';
 import { api, unwrap } from '@/api';
 import { extractApiError, formatBytes } from '@/utils';
 import { PageHeader } from '@loomvec/ui/components/page-header';
@@ -29,11 +31,12 @@ import { Textarea } from '@loomvec/ui/components/ui/textarea';
  * 与用户端审核页同链路（POST /assets/{id}/review），运营者以 owner 成员身份操作。
  */
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const rejectSchema = z.object({
   reason: z
     .string()
-    .min(1, '请填写驳回理由')
-    .refine((v) => v.trim().length > 0, { message: '理由不能为空白' }),
+    .min(1, t('spaces:review.reasonRequired'))
+    .refine((v) => v.trim().length > 0, { message: t('spaces:review.reasonBlank') }),
 });
 
 type RejectValues = z.infer<typeof rejectSchema>;
@@ -51,6 +54,7 @@ interface QueueItem {
 export function ReviewPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('spaces');
   const [rejecting, setRejecting] = useState<{ assetId: string; name: string } | null>(null);
   const form = useForm<RejectValues>({
     resolver: zodResolver(rejectSchema),
@@ -78,10 +82,10 @@ export function ReviewPage() {
         params: { path: { asset_id: vars.assetId } },
         body: { action: vars.action, reason: vars.reason || undefined },
       });
-      if (error) throw new Error(extractApiError(error, '审核操作失败'));
+      if (error) throw new Error(extractApiError(error, t('review.actionFailed')));
     },
     onSuccess: (_, vars) => {
-      toast.success(vars.action === 'approve' ? '已通过' : '已驳回');
+      toast.success(vars.action === 'approve' ? t('reviewStatus.approved') : t('reviewStatus.rejected'));
       setRejecting(null);
       form.reset();
       invalidate();
@@ -97,10 +101,10 @@ export function ReviewPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="审核队列"
+        title={t('review.title')}
         actions={
           <Button variant="outline" onClick={() => queue.refetch()}>
-            <RefreshCw /> 刷新
+            <RefreshCw /> {t('action.refresh')}
           </Button>
         }
       />
@@ -114,7 +118,7 @@ export function ReviewPage() {
           ) : queue.isError ? (
             <p className="text-sm text-destructive">{(queue.error as Error).message}</p>
           ) : (queue.data?.length ?? 0) === 0 ? (
-            <EmptyState title="没有待审核的资产" />
+            <EmptyState title={t('review.emptyQueue')} />
           ) : (
             <div className="divide-y">
               {queue.data?.map((item) => (
@@ -132,7 +136,9 @@ export function ReviewPage() {
                           {new Date(item.created_at).toLocaleString()}
                         </span>
                         {item.review_reason && (
-                          <span className="text-sm text-amber-600">备注：{item.review_reason}</span>
+                          <span className="text-sm text-amber-600">
+                            {t('review.remark', { reason: item.review_reason })}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -143,7 +149,7 @@ export function ReviewPage() {
                       disabled={decide.isPending && decide.variables?.assetId === item.id}
                       onClick={() => decide.mutate({ assetId: item.id, action: 'approve' })}
                     >
-                      <Check /> 通过
+                      <Check /> {t('review.approve')}
                     </Button>
                     <Button
                       size="sm"
@@ -153,7 +159,7 @@ export function ReviewPage() {
                         setRejecting({ assetId: item.id, name: item.name });
                       }}
                     >
-                      <X /> 驳回
+                      <X /> {t('review.reject')}
                     </Button>
                   </div>
                 </div>
@@ -171,11 +177,11 @@ export function ReviewPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>驳回「{rejecting?.name}」</DialogTitle>
+            <DialogTitle>{t('review.rejectTitle', { name: rejecting?.name ?? '' })}</DialogTitle>
           </DialogHeader>
           <form onSubmit={submitReject} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="reason">驳回理由（必填，将通知上传者）</Label>
+              <Label htmlFor="reason">{t('review.reasonLabel')}</Label>
               <Textarea id="reason" rows={3} {...form.register('reason')} />
               {form.formState.errors.reason && (
                 <p className="text-sm text-destructive">{form.formState.errors.reason.message}</p>
@@ -183,10 +189,10 @@ export function ReviewPage() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setRejecting(null)}>
-                取消
+                {t('action.cancel')}
               </Button>
               <Button type="submit" variant="destructive" disabled={decide.isPending}>
-                {decide.isPending ? '提交中…' : '确认驳回'}
+                {decide.isPending ? t('action.submitting') : t('review.confirmReject')}
               </Button>
             </DialogFooter>
           </form>

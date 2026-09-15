@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import {
   Dialog,
@@ -15,6 +16,7 @@ import type { AssetDetailData } from './use-asset-queries';
  */
 export function ImagePanel(props: { asset: AssetDetailData; mainImageUrl: string | null }) {
   const { asset: a } = props;
+  const { t } = useTranslation('assetDetail');
   const [viewing, setViewing] = useState<string | null>(null);
 
   const exif = (a.version_meta?.parse as Record<string, unknown> | undefined)?.exif as
@@ -28,7 +30,7 @@ export function ImagePanel(props: { asset: AssetDetailData; mainImageUrl: string
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">图片</CardTitle>
+        <CardTitle className="text-base">{t('image.title')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap gap-3">
@@ -56,14 +58,19 @@ export function ImagePanel(props: { asset: AssetDetailData; mainImageUrl: string
             </button>
           ))}
           {!props.mainImageUrl && thumbnails.length === 0 && (
-            <p className="text-sm text-muted-foreground">暂无可用图片。</p>
+            <p className="text-sm text-muted-foreground">{t('image.noImages')}</p>
           )}
         </div>
-        {caption ? <p className="text-sm text-muted-foreground">图片描述：{String(caption)}</p> : null}
+        {caption ? (
+          <p className="text-sm text-muted-foreground">
+            {t('image.captionLabel')}
+            {String(caption)}
+          </p>
+        ) : null}
         {exif && Object.keys(exif).length > 0 && (
           <>
             <div className="flex items-center gap-3 pt-2">
-              <span className="text-sm text-muted-foreground">EXIF 信息</span>
+              <span className="text-sm text-muted-foreground">{t('image.exifTitle')}</span>
               <Separator className="flex-1" />
             </div>
             <DescriptionList cols={3}>
@@ -77,7 +84,7 @@ export function ImagePanel(props: { asset: AssetDetailData; mainImageUrl: string
         )}
         {thumbnails.some((r) => r.width || r.height) && (
           <p className="text-sm text-muted-foreground">
-            缩略图尺寸：
+            {t('image.thumbSizesLabel')}
             {thumbnails.map((r) => `${r.width ?? '?'}×${r.height ?? '?'}`).join('、')}
           </p>
         )}

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api, clearToken, getStoredToken, storeToken } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { extractApiError } from './utils';
 
 export interface MeInfo {
@@ -26,6 +27,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [me, setMe] = useState<MeInfo | null>(null);
   const [ready, setReady] = useState(false);
+  const { t } = useTranslation('auth');
 
   useEffect(() => {
     const existing = getStoredToken();
@@ -65,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => null);
-      throw new Error(extractApiError(err, '登录失败'));
+      throw new Error(extractApiError(err, t('loginFailed')));
     }
     const data = (await resp.json()) as { access_token: string };
     storeToken(data.access_token);

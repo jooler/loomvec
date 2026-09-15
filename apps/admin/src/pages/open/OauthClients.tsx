@@ -4,9 +4,11 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
+import { t as tt } from '@/i18n';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
@@ -36,10 +38,11 @@ const SCOPE_OPTIONS = [
   { value: 'write', label: 'write' },
 ];
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const createSchema = z.object({
-  name: z.string().min(1, '请输入应用名称'),
-  redirect_uris: z.string().min(1, '至少填写一个回调地址'),
-  scopes: z.array(z.string()).min(1, '至少选择一个 scope'),
+  name: z.string().min(1, tt('open:oauth.nameRequired')),
+  redirect_uris: z.string().min(1, tt('open:oauth.redirectRequired')),
+  scopes: z.array(z.string()).min(1, tt('open:oauth.scopesRequired')),
   homepage_url: z.string().optional(),
   description: z.string().optional(),
 });
@@ -50,6 +53,7 @@ type CreateValues = z.infer<typeof createSchema>;
 export function OauthClientsPage() {
   const { canWrite } = usePerm();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('open');
 
   const [page, setPage] = useState({ current: 1, pageSize: PAGE_SIZE });
   const [createOpen, setCreateOpen] = useState(false);
@@ -93,7 +97,7 @@ export function OauthClientsPage() {
           },
         }),
       );
-      toast.success('OAuth 应用已创建（secret 仅此一次展示）');
+      toast.success(t('oauth.createdToast'));
       closeCreate();
       setSecretFields([
         { label: 'client_id', value: created.client_id },
@@ -101,7 +105,7 @@ export function OauthClientsPage() {
       ]);
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '创建失败');
+      toast.error(e instanceof Error ? e.message : t('oauth.createFailed'));
     } finally {
       setBusy(false);
     }
@@ -115,10 +119,10 @@ export function OauthClientsPage() {
           body: { status },
         }),
       );
-      toast.success(status === 'active' ? '已启用' : '已停用');
+      toast.success(status === 'active' ? t('oauth.activatedToast') : t('oauth.suspendedToast'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
@@ -132,10 +136,10 @@ export function OauthClientsPage() {
           body: { reason },
         }),
       );
-      toast.success('已删除');
+      toast.success(t('feedback.deleted'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setBusy(false);
     }
@@ -153,12 +157,12 @@ export function OauthClientsPage() {
         { label: 'client_secret', value: resp.client_secret },
       ]);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
   const columns: ColumnDef<OauthClient, unknown>[] = [
-    { accessorKey: 'name', header: '名称' },
+    { accessorKey: 'name', header: t('field.name') },
     {
       accessorKey: 'client_id',
       header: 'client_id',
@@ -194,47 +198,47 @@ export function OauthClientsPage() {
     },
     {
       accessorKey: 'status',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) =>
         row.original.status === 'active' ? (
-          <StatusBadge tone="green">启用</StatusBadge>
+          <StatusBadge tone="green">{t('oauth.status.active')}</StatusBadge>
         ) : (
-          <StatusBadge tone="red">停用</StatusBadge>
+          <StatusBadge tone="red">{t('oauth.status.suspended')}</StatusBadge>
         ),
     },
     {
       accessorKey: 'created_at',
-      header: '创建时间',
+      header: t('field.createdAt'),
       cell: ({ row }) => formatDateTime(row.original.created_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => {
         const c = row.original;
         return (
           <div className="flex flex-wrap gap-1">
             {c.status === 'active' ? (
               <ConfirmAction
-                title="确认停用该应用？"
+                title={t('oauth.suspendConfirm')}
                 trigger={
                   <Button variant="link" size="sm" disabled={!canWrite}>
-                    停用
+                    {t('oauth.status.suspended')}
                   </Button>
                 }
                 onConfirm={() => patchStatus(c, 'suspended')}
               />
             ) : (
               <Button variant="link" size="sm" disabled={!canWrite} onClick={() => void patchStatus(c, 'active')}>
-                启用
+                {t('action.enable')}
               </Button>
             )}
             <ConfirmAction
-              title="确认重置 client secret？"
-              description="旧 secret 立即失效，新 secret 仅此一次展示。"
+              title={t('oauth.resetSecretConfirm')}
+              description={t('oauth.resetSecretDescription')}
               trigger={
                 <Button variant="link" size="sm" disabled={!canWrite}>
-                  重置 secret
+                  {t('oauth.resetSecret')}
                 </Button>
               }
               onConfirm={() => resetSecret(c)}
@@ -246,7 +250,7 @@ export function OauthClientsPage() {
               disabled={!canWrite}
               onClick={() => setDeleteTarget(c)}
             >
-              删除
+              {t('action.delete')}
             </Button>
           </div>
         );
@@ -257,10 +261,10 @@ export function OauthClientsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="OAuth 应用"
+        title={t('oauth.title')}
         actions={
           <Button disabled={!canWrite} onClick={() => setCreateOpen(true)}>
-            创建应用
+            {t('oauth.create')}
           </Button>
         }
       />
@@ -279,7 +283,7 @@ export function OauthClientsPage() {
       <Dialog open={createOpen} onOpenChange={(o) => !o && closeCreate()}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>创建 OAuth 应用</DialogTitle>
+            <DialogTitle>{t('oauth.createTitle')}</DialogTitle>
           </DialogHeader>
           <form
             onSubmit={(e) => {
@@ -289,14 +293,14 @@ export function OauthClientsPage() {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="oauth-name">应用名称</Label>
+              <Label htmlFor="oauth-name">{t('oauth.nameLabel')}</Label>
               <Input id="oauth-name" maxLength={255} {...form.register('name')} />
               {form.formState.errors.name && (
                 <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="oauth-uris">Redirect URIs（每行一个）</Label>
+              <Label htmlFor="oauth-uris">{t('oauth.redirectLabel')}</Label>
               <Textarea
                 id="oauth-uris"
                 rows={3}
@@ -310,7 +314,7 @@ export function OauthClientsPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>Scopes（OAuth 仅用户级读写）</Label>
+              <Label>{t('oauth.scopesLabel')}</Label>
               <div className="flex gap-4">
                 {SCOPE_OPTIONS.map((opt) => (
                   <label key={opt.value} className="flex items-center gap-2 text-sm">
@@ -334,19 +338,19 @@ export function OauthClientsPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="oauth-homepage">主页地址（可选）</Label>
+              <Label htmlFor="oauth-homepage">{t('oauth.homepageLabel')}</Label>
               <Input id="oauth-homepage" {...form.register('homepage_url')} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="oauth-desc">描述（可选）</Label>
+              <Label htmlFor="oauth-desc">{t('oauth.descriptionLabel')}</Label>
               <Textarea id="oauth-desc" rows={2} {...form.register('description')} />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={closeCreate} disabled={busy}>
-                取消
+                {t('action.cancel')}
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy ? '保存中…' : '创建'}
+                {busy ? t('action.saving') : t('action.create')}
               </Button>
             </DialogFooter>
           </form>
@@ -356,9 +360,9 @@ export function OauthClientsPage() {
       {/* 删除应用（危险操作）：理由入审计 */}
       <ReasonModal
         open={deleteTarget !== null}
-        title={`删除 OAuth 应用「${deleteTarget?.name ?? ''}」`}
-        description="删除后该应用立即不可用，操作不可逆。"
-        okText="确认删除"
+        title={t('oauth.deleteTitle', { name: deleteTarget?.name ?? '' })}
+        description={t('oauth.deleteDescription')}
+        okText={t('oauth.confirmDelete')}
         danger
         confirmLoading={busy}
         onCancel={() => setDeleteTarget(null)}
@@ -368,7 +372,7 @@ export function OauthClientsPage() {
       {/* 一次性 secret 展示 */}
       <SecretModal
         open={secretFields !== null}
-        title="凭证（仅此一次展示）"
+        title={t('oauth.secretTitle')}
         fields={secretFields ?? []}
         onClose={() => setSecretFields(null)}
       />

@@ -6,6 +6,7 @@
  * 固定导航项（总览 / 用户分组）与面包屑工具。
  */
 import { LayoutDashboard, Users, type LucideIcon } from 'lucide-react';
+import { t } from '@/i18n';
 
 export interface OpsMenuItem {
   path: string;
@@ -13,17 +14,18 @@ export interface OpsMenuItem {
   icon?: LucideIcon;
 }
 
+// 模块级文案（菜单名）：main.tsx 已先初始化 i18n，import 阶段取值安全
 export const OPS_MENU: OpsMenuItem[] = [
-  { path: '/overview', name: '总览', icon: LayoutDashboard },
-  { path: '/groups', name: '用户分组', icon: Users },
+  { path: '/overview', name: t('layout:menu.overview'), icon: LayoutDashboard },
+  { path: '/groups', name: t('layout:menu.groups'), icon: Users },
 ];
 
 /** 面包屑展示名（空间路由由 OpsLayout 动态注入空间名）。 */
 export function staticMenuName(pathname: string): string | null {
   const item = OPS_MENU.find((m) => m.path === pathname);
   if (item) return item.name;
-  if (pathname.startsWith('/s/')) return '公共空间';
-  if (pathname.startsWith('/groups')) return '用户分组';
+  if (pathname.startsWith('/s/')) return t('layout:breadcrumb.publicSpace');
+  if (pathname.startsWith('/groups')) return t('layout:menu.groups');
   return null;
 }
 

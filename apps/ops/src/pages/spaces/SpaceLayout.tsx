@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
@@ -13,15 +14,15 @@ import { cn } from 'cn';
  */
 
 const MAIN_TABS = [
-  { to: 'assets', label: '资产' },
-  { to: 'review', label: '审核' },
-  { to: 'graph', label: '图谱' },
-];
+  { to: 'assets', label: 'tab.assets' },
+  { to: 'review', label: 'tab.review' },
+  { to: 'graph', label: 'tab.graph' },
+] as const;
 
 const ADMIN_TABS = [
-  { to: 'visibility', label: '可见性' },
-  { to: 'settings', label: '设置' },
-];
+  { to: 'visibility', label: 'tab.visibility' },
+  { to: 'settings', label: 'tab.settings' },
+] as const;
 
 interface OpsSpaceDetail {
   id: string;
@@ -33,6 +34,7 @@ interface OpsSpaceDetail {
 export function SpaceLayout() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const location = useLocation();
+  const { t } = useTranslation('spaces');
   const current = location.pathname.split('/').pop() ?? '';
 
   const space = useQuery({
@@ -58,21 +60,23 @@ export function SpaceLayout() {
         {space.isLoading ? (
           <Spinner className="size-5 text-muted-foreground" />
         ) : (
-          <h1 className="truncate text-lg font-semibold">{space.data?.name ?? '公共空间'}</h1>
+          <h1 className="truncate text-lg font-semibold">{space.data?.name ?? t('publicSpace')}</h1>
         )}
-        {space.data && <StatusBadge tone="purple">公共空间</StatusBadge>}
-        {space.data?.review_required && <StatusBadge tone="amber">需审核</StatusBadge>}
+        {space.data && <StatusBadge tone="purple">{t('publicSpace')}</StatusBadge>}
+        {space.data?.review_required && (
+          <StatusBadge tone="amber">{t('reviewRequired')}</StatusBadge>
+        )}
       </div>
       <nav className="flex items-center gap-1 border-b">
-        {MAIN_TABS.map((t) => (
-          <NavLink key={t.to} to={t.to} className={() => tabClass(t.to)}>
-            {t.label}
+        {MAIN_TABS.map((tab) => (
+          <NavLink key={tab.to} to={tab.to} className={() => tabClass(tab.to)}>
+            {t(tab.label)}
           </NavLink>
         ))}
         <div className="ml-auto flex items-center gap-1">
-          {ADMIN_TABS.map((t) => (
-            <NavLink key={t.to} to={t.to} className={() => tabClass(t.to)}>
-              {t.label}
+          {ADMIN_TABS.map((tab) => (
+            <NavLink key={tab.to} to={tab.to} className={() => tabClass(tab.to)}>
+              {t(tab.label)}
             </NavLink>
           ))}
         </div>

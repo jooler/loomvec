@@ -13,6 +13,7 @@ import {
   Folder,
 } from 'lucide-react';
 import { cn } from 'cn';
+import { useTranslation } from 'react-i18next';
 import { Input } from '../ui/input';
 import { Spinner } from '../ui/spinner';
 import { StatusBadge } from '../status-badge';
@@ -22,12 +23,12 @@ import { formatBytes } from '../../lib/format';
 import { FINDER_DRAG_MIME } from './types';
 import type { FinderAsset, FinderFolder } from './types';
 
-/** 资产状态 → 徽标色调（Finder 视图与两端资产页共用口径）。 */
-export const STATUS_TONE: Record<string, { tone: 'gray' | 'blue' | 'green' | 'red'; text: string }> = {
-  pending: { tone: 'gray', text: '排队中' },
-  processing: { tone: 'blue', text: '处理中' },
-  ready: { tone: 'green', text: '就绪' },
-  failed: { tone: 'red', text: '失败' },
+/** 资产状态 → 徽标色调（Finder 视图与两端资产页共用口径；文案见 ui:assetStatus.*）。 */
+export const STATUS_TONE: Record<string, { tone: 'gray' | 'blue' | 'green' | 'red' }> = {
+  pending: { tone: 'gray' },
+  processing: { tone: 'blue' },
+  ready: { tone: 'green' },
+  failed: { tone: 'red' },
 };
 
 /** 视图公共 props（由 Finder 主容器注入）。 */
@@ -68,11 +69,14 @@ export function FileGlyph({
 }
 
 function StatusBits({ asset, compact }: { asset: FinderAsset; compact?: boolean }) {
+  const { t } = useTranslation();
   const meta = STATUS_TONE[asset.status];
   return (
     <span className={cn('flex items-center gap-1', compact && 'flex-wrap')}>
       {asset.status !== 'ready' && (
-        <StatusBadge tone={meta?.tone}>{meta?.text ?? asset.status}</StatusBadge>
+        <StatusBadge tone={meta?.tone}>
+          {t(`assetStatus.${asset.status}`, { defaultValue: asset.status })}
+        </StatusBadge>
       )}
       {!compact && asset.review_status && <ReviewStatusTag status={asset.review_status} />}
     </span>
@@ -172,6 +176,7 @@ function WithMenu({
 // ---------------------------------------------------------------------------
 
 export function FinderListView(props: FinderViewProps) {
+  const { t } = useTranslation();
   const rows: React.ReactNode[] = [];
   for (const f of props.folders) {
     const selected = props.selectedFolders.has(f.id);
@@ -200,7 +205,7 @@ export function FinderListView(props: FinderViewProps) {
             </span>
           </td>
           <td className="px-3 py-1.5 text-muted-foreground">--</td>
-          <td className="px-3 py-1.5 text-muted-foreground">文件夹</td>
+          <td className="px-3 py-1.5 text-muted-foreground">{t('finder.folderKind')}</td>
           <td className="px-3 py-1.5 text-muted-foreground">
             {new Date(f.created_at).toLocaleDateString()}
           </td>
@@ -250,10 +255,10 @@ export function FinderListView(props: FinderViewProps) {
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
           <tr className="text-left text-xs text-muted-foreground">
-            <th className="px-3 py-2 font-medium">名称</th>
-            <th className="w-24 px-3 py-2 font-medium">大小</th>
-            <th className="w-28 px-3 py-2 font-medium">状态</th>
-            <th className="w-40 px-3 py-2 font-medium">修改日期</th>
+            <th className="px-3 py-2 font-medium">{t('finder.colName')}</th>
+            <th className="w-24 px-3 py-2 font-medium">{t('finder.colSize')}</th>
+            <th className="w-28 px-3 py-2 font-medium">{t('finder.colStatus')}</th>
+            <th className="w-40 px-3 py-2 font-medium">{t('finder.colModified')}</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
@@ -411,6 +416,7 @@ function Column({
   const folders = props.foldersOf(folderId);
   const assets = props.assetsOf(folderId);
   const onPath = (id: string) => props.path.includes(id);
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
@@ -478,7 +484,7 @@ function Column({
         );
       })}
       {folders.length === 0 && assets.length === 0 && (
-        <p className="px-2 py-3 text-xs text-muted-foreground">空文件夹</p>
+        <p className="px-2 py-3 text-xs text-muted-foreground">{t('finder.emptyFolder')}</p>
       )}
     </div>
   );

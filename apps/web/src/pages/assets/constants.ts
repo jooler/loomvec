@@ -1,10 +1,11 @@
 /** 资产列表页共享字典。 */
 
-export const STATUS_TONE: Record<string, { tone: 'gray' | 'blue' | 'green' | 'red'; text: string }> = {
-  pending: { tone: 'gray', text: '排队中' },
-  processing: { tone: 'blue', text: '处理中' },
-  ready: { tone: 'green', text: '就绪' },
-  failed: { tone: 'red', text: '失败' },
+/** 资产状态 → 徽标 tone（文案走 ui 命名空间 assetStatus.*）。 */
+export const STATUS_TONE: Record<string, { tone: 'gray' | 'blue' | 'green' | 'red' }> = {
+  pending: { tone: 'gray' },
+  processing: { tone: 'blue' },
+  ready: { tone: 'green' },
+  failed: { tone: 'red' },
 };
 
 /** 筛选下拉的“不过滤”哨兵值（Radix Select 不允许空串 value）。 */

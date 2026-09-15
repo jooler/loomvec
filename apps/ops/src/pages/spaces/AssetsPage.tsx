@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import {
   AssetViewerOverlay,
@@ -50,6 +51,7 @@ interface OpsSpaceDetail {
 
 export function AssetsPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
+  const { t } = useTranslation('spaces');
   const [filters, setFilters] = useState<FinderAssetFilters>({});
   // 目录链受控（app 持有：当前文件夹取数 + 分栏每列取数都依赖它）
   const [path, setPath] = useState<string[]>([]);
@@ -108,7 +110,7 @@ export function AssetsPage() {
         for (const aid of assetIds)
           await m.copyAsset.mutateAsync({ assetId: aid, folderId: target });
         m.invalidateAll();
-        toast.success('复制任务已开始（资产重新走解析管线）');
+        toast.success(t('assets.copyStarted'));
       },
       deleteFolders: async (folderIds) => {
         for (const fid of folderIds) await m.deleteFolder.mutateAsync(fid);
@@ -116,13 +118,13 @@ export function AssetsPage() {
       deleteAssets: async (assetIds) => {
         for (const aid of assetIds) await m.deleteAsset.mutateAsync(aid);
         m.invalidateAll();
-        toast.success(`已删除 ${assetIds.length} 个资产（含向量清理）`);
+        toast.success(t('finder.deletedAssets', { count: assetIds.length }));
       },
       retryAssets: async (assetIds) => {
         for (const aid of assetIds) await m.retryAsset.mutateAsync(aid);
       },
     }),
-    [m],
+    [m, t],
   );
 
   const onUploadFiles = async (files: File[]) => {
@@ -146,8 +148,10 @@ export function AssetsPage() {
 
   return (
     <>
-      {/* Finder 高度上下文：视口减去 Finder 之外的页头（顶栏 56 + p-6 上 24 + 标题 28 +
-          间距 32 + 页签 37 + 底部 p-6 24 ≈ 201px），工具栏/筛选/内容区都在容器内 */}
+      {/*
+       * Finder 高度上下文：视口减去 Finder 之外的页头（顶栏 56 + p-6 上 24 + 标题 28 +
+       * 间距 32 + 页签 37 + 底部 p-6 24 ≈ 201px），工具栏/筛选/内容区都在容器内
+       */}
       <div className="flex h-[calc(100dvh-201px)] min-h-96 flex-col">
       <Finder
         key={spaceId}
@@ -182,10 +186,10 @@ export function AssetsPage() {
                 onValueChange={(v) => setFilters((f) => ({ ...f, ext: v === ALL ? undefined : v }))}
               >
                 <SelectTrigger className="w-32">
-                  <SelectValue placeholder="全部类型" />
+                  <SelectValue placeholder={t('chunks.allTypes')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL}>全部类型</SelectItem>
+                  <SelectItem value={ALL}>{t('chunks.allTypes')}</SelectItem>
                   <SelectItem value=".pdf">PDF</SelectItem>
                   <SelectItem value=".docx">DOCX</SelectItem>
                   <SelectItem value=".md">MD</SelectItem>
@@ -200,14 +204,14 @@ export function AssetsPage() {
                 }
               >
                 <SelectTrigger className="w-32">
-                  <SelectValue placeholder="全部状态" />
+                  <SelectValue placeholder={t('assets.allStatuses')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL}>全部状态</SelectItem>
-                  <SelectItem value="pending">排队中</SelectItem>
-                  <SelectItem value="processing">处理中</SelectItem>
-                  <SelectItem value="ready">就绪</SelectItem>
-                  <SelectItem value="failed">失败</SelectItem>
+                  <SelectItem value={ALL}>{t('assets.allStatuses')}</SelectItem>
+                  <SelectItem value="pending">{t('assetStatus.pending')}</SelectItem>
+                  <SelectItem value="processing">{t('assetStatus.processing')}</SelectItem>
+                  <SelectItem value="ready">{t('assetStatus.ready')}</SelectItem>
+                  <SelectItem value="failed">{t('assetStatus.failed')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -230,7 +234,9 @@ export function AssetsPage() {
       />
       </div>
 
-      {/* 去重确认：仍要上传 / 放弃 */}
+      {/*
+       * 去重确认：仍要上传 / 放弃
+       */}
       <Dialog
         open={dupConfirm !== null}
         onOpenChange={(open) => {
@@ -242,9 +248,9 @@ export function AssetsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>发现疑似重复文件</DialogTitle>
+            <DialogTitle>{t('assets.dupTitle')}</DialogTitle>
             <DialogDescription>
-              本空间已存在相同内容：{dupConfirm?.names.join('、')}。仍要上传这份副本吗？
+              {t('assets.dupDesc', { names: dupConfirm?.names.join('、') ?? '' })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -255,7 +261,7 @@ export function AssetsPage() {
                 setDupConfirm(null);
               }}
             >
-              放弃
+              {t('assets.abandon')}
             </Button>
             <Button
               onClick={() => {
@@ -263,7 +269,7 @@ export function AssetsPage() {
                 setDupConfirm(null);
               }}
             >
-              仍要上传
+              {t('assets.uploadAnyway')}
             </Button>
           </DialogFooter>
         </DialogContent>

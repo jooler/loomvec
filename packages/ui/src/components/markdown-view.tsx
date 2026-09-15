@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -20,6 +21,7 @@ export const MarkdownView = memo(function MarkdownView({
   content: string;
   className?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
@@ -33,7 +35,7 @@ export const MarkdownView = memo(function MarkdownView({
         components={{
           img: ({ alt }) => (
             <span className="mx-1 inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 align-middle text-xs text-muted-foreground">
-              🖼 {alt || '图片（原始文件中查看）'}
+              🖼 {alt || t('markdown.imageFallback')}
             </span>
           ),
           a: ({ href, children }) => (

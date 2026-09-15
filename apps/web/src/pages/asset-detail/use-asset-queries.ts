@@ -4,6 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@loomvec/sdk-ts';
 import { extractApiError } from '@/utils';
+import { t } from '@/i18n';
 
 export function useAssetDetail(assetId?: string) {
   return useQuery({
@@ -13,7 +14,7 @@ export function useAssetDetail(assetId?: string) {
       const { data, error } = await api.GET('/api/v1/assets/{asset_id}', {
         params: { path: { asset_id: assetId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载资产失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:viewer.loadAssetFailed')));
       return data;
     },
     refetchInterval: (q) =>
@@ -29,7 +30,7 @@ export function useAssetJobs(assetId?: string) {
       const { data, error } = await api.GET('/api/v1/assets/{asset_id}/jobs', {
         params: { path: { asset_id: assetId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载任务失败'));
+      if (error) throw new Error(extractApiError(error, t('assetDetail:loadJobsFailed')));
       return data;
     },
   });
@@ -43,7 +44,7 @@ export function useAssetPreview(assetId?: string) {
       const { data, error } = await api.GET('/api/v1/assets/{asset_id}/preview', {
         params: { path: { asset_id: assetId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载预览失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:viewer.loadPreviewFailed')));
       return data;
     },
   });

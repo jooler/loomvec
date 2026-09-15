@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { GitMerge, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { extractApiError } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -49,6 +50,7 @@ interface MergeItem {
 export function GraphPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('spaces');
   // 输入即时受控，防抖 300ms 后才发起检索（逐键打接口会造成请求风暴与列表闪烁）
   const [entityInput, setEntityInput] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -77,7 +79,8 @@ export function GraphPage() {
         }),
       ),
     enabled: !!spaceId,
-    placeholderData: (prev) => prev, // 击键间隙保持旧列表，避免闪回加载态
+    // 击键间隙保持旧列表，避免闪回加载态
+    placeholderData: (prev) => prev,
   });
 
   const merges = useQuery({
@@ -102,10 +105,10 @@ export function GraphPage() {
       const { error } = await api.POST('/api/v1/spaces/{space_id}/graph/merges/{log_id}/rollback', {
         params: { path: { space_id: spaceId!, log_id: logId } },
       });
-      if (error) throw new Error(extractApiError(error, '回滚失败'));
+      if (error) throw new Error(extractApiError(error, t('graph.rollbackFailed')));
     },
     onSuccess: () => {
-      toast.success('已回滚该次合并');
+      toast.success(t('graph.rolledBack'));
       invalidateGraph();
     },
     onError: (e) => toast.error(e.message),
@@ -121,7 +124,7 @@ export function GraphPage() {
       );
     },
     onSuccess: () => {
-      toast.success('合并任务已入队（异步执行）');
+      toast.success(t('graph.mergeEnqueued'));
       void queryClient.invalidateQueries({ queryKey: ['ops-graph-merges', spaceId] });
     },
     onError: (e) => toast.error(e.message),
@@ -137,7 +140,7 @@ export function GraphPage() {
       );
     },
     onSuccess: () => {
-      toast.success('图谱重建已入队，将逐资产重跑图谱步骤');
+      toast.success(t('graph.rebuildEnqueued'));
       void queryClient.invalidateQueries({ queryKey: ['ops-graph-stats', spaceId] });
     },
     onError: (e) => toast.error(e.message),
@@ -147,9 +150,9 @@ export function GraphPage() {
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-3">
         {[
-          { label: '实体', value: stats.data?.entities },
-          { label: '关系', value: stats.data?.edges },
-          { label: '合并记录', value: stats.data?.merges },
+          { label: t('graph.statEntities'), value: stats.data?.entities },
+          { label: t('graph.statEdges'), value: stats.data?.edges },
+          { label: t('graph.statMerges'), value: stats.data?.merges },
         ].map((card) => (
           <Card key={card.label}>
             <CardHeader>
@@ -164,12 +167,12 @@ export function GraphPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">实体检索</CardTitle>
+          <CardTitle className="text-base">{t('graph.searchTitle')}</CardTitle>
           <CardAction className="flex gap-2">
             <Input
               value={entityInput}
               onChange={(e) => setEntityInput(e.target.value)}
-              placeholder="按名称搜索实体"
+              placeholder={t('graph.searchPlaceholder')}
               className="w-56"
             />
           </CardAction>
@@ -180,15 +183,15 @@ export function GraphPage() {
               <Spinner className="size-4 text-muted-foreground" />
             </div>
           ) : (entities.data?.items.length ?? 0) === 0 ? (
-            <EmptyState title="没有实体（上传资产并抽取后生成）" />
+            <EmptyState title={t('graph.emptyEntities')} />
           ) : (
             <div className="max-h-72 overflow-y-auto rounded-lg border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>名称</TableHead>
-                    <TableHead>类型</TableHead>
-                    <TableHead>描述</TableHead>
+                    <TableHead>{t('field.name')}</TableHead>
+                    <TableHead>{t('graph.colType')}</TableHead>
+                    <TableHead>{t('field.description')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -212,7 +215,7 @@ export function GraphPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">实体合并</CardTitle>
+          <CardTitle className="text-base">{t('graph.mergeTitle')}</CardTitle>
           <CardAction className="flex gap-2">
             <Button
               variant="outline"
@@ -220,7 +223,7 @@ export function GraphPage() {
               disabled={runMerge.isPending}
               onClick={() => runMerge.mutate()}
             >
-              <GitMerge /> 运行合并
+              <GitMerge /> {t('graph.runMerge')}
             </Button>
             <Button
               variant="outline"
@@ -228,13 +231,13 @@ export function GraphPage() {
               disabled={rebuild.isPending}
               onClick={() => rebuild.mutate()}
             >
-              <RotateCcw /> 重建图谱
+              <RotateCcw /> {t('graph.rebuildGraph')}
             </Button>
           </CardAction>
         </CardHeader>
         <CardContent>
           {(merges.data?.items.length ?? 0) === 0 ? (
-            <EmptyState title="暂无合并记录" />
+            <EmptyState title={t('graph.emptyMerges')} />
           ) : (
             <div className="divide-y rounded-lg border">
               {merges.data?.items.map((m) => (
@@ -263,7 +266,7 @@ export function GraphPage() {
                         disabled={rollback.isPending}
                         onClick={() => rollback.mutate(m.log_id)}
                       >
-                        回滚
+                        {t('graph.rollback')}
                       </Button>
                     )}
                   </div>

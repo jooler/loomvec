@@ -1,0 +1,70 @@
+{
+  "nameRequired": "请输入名称",
+  "loadSpaceFailed": "加载空间失败",
+  "loadMetadataFailed": "加载元数据 schema 失败",
+  "loadJobsFailed": "加载任务失败",
+  "deletedCleaned": "已删除（含向量清理）",
+  "notFound": "资产不存在",
+  "rerunFromFailed": "从失败步骤重跑",
+  "deleteTitle": "删除资产？",
+  "deleteDesc": "将级联清理语义单元与向量，不可恢复。",
+  "typeLabel": "类型",
+  "sizeLabel": "大小",
+  "pagesLabel": "页数",
+  "reviewLabel": "审核",
+  "chunkMethodLabel": "分片方式",
+  "tagsLabel": "标签",
+  "uploaderLabel": "上传者",
+  "failReasonLabel": "失败原因：",
+  "contentTitle": "内容查看",
+  "previewPending": "解析完成后可预览。",
+  "noParseHint": "该类型不走文档解析（图片/音视频/纯文本），解析结果与原始内容一致或见上方播放器。",
+  "jobType": {
+    "parse": "解析",
+    "chunk": "LLM 分片+抽取",
+    "graph": "图谱写入",
+    "embed": "嵌入",
+    "index": "索引",
+    "transcode": "懒转码"
+  },
+  "jobs": {
+    "title": "任务记录",
+    "step": "步骤",
+    "progress": "进度",
+    "attempts": "尝试",
+    "duration": "耗时",
+    "error": "错误",
+    "retryStep": "重跑此步"
+  },
+  "editor": {
+    "saveFailed": "保存失败",
+    "saved": "资产已更新",
+    "metaRequired": "请填写 {{name}}",
+    "viewerReadonly": "viewer 只读",
+    "tagsPlaceholder": "如：合同 / 2026 / 重要",
+    "removeTag": "移除标签 {{name}}",
+    "tagsHint": "输入后回车创建，保存时整体替换标签",
+    "categoryLabel": "分类",
+    "selectCategoryPlaceholder": "选择分类",
+    "noCategory": "无分类",
+    "metadataLabel": "元数据",
+    "selectPlaceholder": "请选择",
+    "unsetOption": "未设置",
+    "saveChanges": "保存修改"
+  },
+  "image": {
+    "title": "图片",
+    "noImages": "暂无可用图片。",
+    "captionLabel": "图片描述：",
+    "exifTitle": "EXIF 信息",
+    "thumbSizesLabel": "缩略图尺寸："
+  },
+  "media": {
+    "unsupported": "该资产暂不支持在线播放。",
+    "transcoding": "首次播放触发转码中（{{percent}}%），完成后即可流畅播放。",
+    "trackLabel": "转写",
+    "keyframeAt": "场景 {{time}}",
+    "sceneIndex": "场景 {{index}}",
+    "keyframesTitle": "场景关键帧"
+  }
+}

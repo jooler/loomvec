@@ -4,6 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@loomvec/sdk-ts';
 import { extractApiError } from '@/utils';
+import { t } from '@/i18n';
 
 export interface AssetFilters {
   ext?: string;
@@ -32,7 +33,7 @@ export function useAssetsList(spaceId?: string, filters: AssetFilters = EMPTY_FI
           },
         },
       });
-      if (error) throw new Error(extractApiError(error, '加载资产列表失败'));
+      if (error) throw new Error(extractApiError(error, t('assets:loadListFailed')));
       return data;
     },
     // 处理中轮询（P1 用轮询，SSE/Webhook 后置）

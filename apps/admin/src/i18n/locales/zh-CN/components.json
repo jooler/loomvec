@@ -1,0 +1,16 @@
+{
+  "reason": {
+    "label": "操作理由",
+    "required": "请填写操作理由（将记入审计日志）",
+    "confirm": "确认执行"
+  },
+  "secret": {
+    "warning": "以下凭证仅此一次展示，请立即复制保存；关闭后无法再次查看。",
+    "saved": "我已保存，关闭",
+    "copyFailed": "复制失败，请手动选择复制"
+  },
+  "queue": {
+    "pipeline": "管线队列",
+    "pipelineHigh": "高优队列"
+  }
+}

@@ -1,8 +1,8 @@
 import { RefreshCw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loomvec/ui/components/ui/select';
 import { MultiSelect } from '@/components/multi-select';
-import { REVIEW_STATUS_META } from '@/utils';
 import { ALL, EXT_OPTIONS, STATUS_TONE } from './constants';
 import type { AssetFilters } from './use-assets-list';
 
@@ -16,9 +16,17 @@ export function AssetsFiltersBar(props: {
   categories: { id: string; name: string }[];
   onRefresh: () => void;
 }) {
+  const { t } = useTranslation('assets');
   const { filters, onFilterChange } = props;
-  const reviewOptions = Object.entries(REVIEW_STATUS_META).map(([v, m]) => ({ value: v, label: m.text }));
-  const statusOptions = Object.entries(STATUS_TONE).map(([v, s]) => ({ value: v, label: s.text }));
+  // 审核状态文案复用 ui 命名空间 reviewStatus.*；资产状态复用 assetStatus.*
+  const reviewOptions = (['pending_review', 'approved', 'rejected'] as const).map((v) => ({
+    value: v,
+    label: t(`reviewStatus.${v}`, { defaultValue: v }),
+  }));
+  const statusOptions = Object.entries(STATUS_TONE).map(([v]) => ({
+    value: v,
+    label: t(`assetStatus.${v}`, { defaultValue: v }),
+  }));
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -27,10 +35,10 @@ export function AssetsFiltersBar(props: {
         onValueChange={(v) => onFilterChange({ ext: v === ALL ? undefined : v })}
       >
         <SelectTrigger className="w-[110px]">
-          <SelectValue placeholder="类型" />
+          <SelectValue placeholder={t('typePlaceholder')} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={ALL}>全部</SelectItem>
+          <SelectItem value={ALL}>{t('action.all')}</SelectItem>
           {EXT_OPTIONS.map(([v, label]) => (
             <SelectItem key={v} value={v}>
               {label}
@@ -43,10 +51,10 @@ export function AssetsFiltersBar(props: {
         onValueChange={(v) => onFilterChange({ status: v === ALL ? undefined : v })}
       >
         <SelectTrigger className="w-[110px]">
-          <SelectValue placeholder="状态" />
+          <SelectValue placeholder={t('field.status')} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={ALL}>全部</SelectItem>
+          <SelectItem value={ALL}>{t('action.all')}</SelectItem>
           {statusOptions.map((o) => (
             <SelectItem key={o.value} value={o.value}>
               {o.label}
@@ -59,10 +67,10 @@ export function AssetsFiltersBar(props: {
         onValueChange={(v) => onFilterChange({ review_status: v === ALL ? undefined : v })}
       >
         <SelectTrigger className="w-[120px]">
-          <SelectValue placeholder="审核状态" />
+          <SelectValue placeholder={t('reviewStatusPlaceholder')} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={ALL}>全部</SelectItem>
+          <SelectItem value={ALL}>{t('action.all')}</SelectItem>
           {reviewOptions.map((o) => (
             <SelectItem key={o.value} value={o.value}>
               {o.label}
@@ -73,10 +81,10 @@ export function AssetsFiltersBar(props: {
       {props.spaceId && (
         <MultiSelect
           className="min-w-40"
-          placeholder="标签"
+          placeholder={t('tagPlaceholder')}
           loading={props.tagsLoading}
           value={filters.tagIds}
-          options={props.tags.map((t) => ({ value: t.id, label: t.name }))}
+          options={props.tags.map((tag) => ({ value: tag.id, label: tag.name }))}
           onChange={(v) => onFilterChange({ tagIds: v })}
         />
       )}
@@ -86,10 +94,10 @@ export function AssetsFiltersBar(props: {
           onValueChange={(v) => onFilterChange({ categoryId: v === ALL ? undefined : v })}
         >
           <SelectTrigger className="w-[140px]">
-            <SelectValue placeholder="分类" />
+            <SelectValue placeholder={t('categoryPlaceholder')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>全部</SelectItem>
+            <SelectItem value={ALL}>{t('action.all')}</SelectItem>
             {props.categories.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.name}
@@ -99,7 +107,7 @@ export function AssetsFiltersBar(props: {
         </Select>
       )}
       <Button variant="outline" onClick={props.onRefresh}>
-        <RefreshCw /> 刷新
+        <RefreshCw /> {t('action.refresh')}
       </Button>
     </div>
   );

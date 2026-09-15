@@ -4,9 +4,11 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
+import { t as tt } from '@/i18n';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
@@ -26,16 +28,20 @@ import { Label } from '@loomvec/ui/components/ui/label';
 import type { ApiKeyRow } from '@/types';
 import { formatDateTime } from '@/utils';
 
+// 模块级文案（scope 选项）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const SCOPE_OPTIONS = [
-  { value: 'read', label: 'read（读）' },
-  { value: 'write', label: 'write（写）' },
+  { value: 'read', label: tt('open:apiKey.scopeOption.read') },
+  { value: 'write', label: tt('open:apiKey.scopeOption.write') },
 ];
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const createSchema = z.object({
-  name: z.string().min(1, '请输入名称'),
-  scopes: z.array(z.string()).min(1, '至少选择一个 scope'),
-  rate_limit_per_min: z.number({ message: '请输入限流（次/分钟）' }).min(1, '限流至少为 1'),
-  expires_in_seconds: z.number().min(60, '有效期至少 60 秒').optional(),
+  name: z.string().min(1, tt('open:apiKey.nameRequired')),
+  scopes: z.array(z.string()).min(1, tt('open:apiKey.scopesRequired')),
+  rate_limit_per_min: z
+    .number({ message: tt('open:apiKey.rateRequired') })
+    .min(1, tt('open:apiKey.rateMin')),
+  expires_in_seconds: z.number().min(60, tt('open:apiKey.expiresMin')).optional(),
 });
 
 type CreateValues = z.infer<typeof createSchema>;
@@ -44,6 +50,7 @@ type CreateValues = z.infer<typeof createSchema>;
 export function ApiKeysPage() {
   const { canWrite } = usePerm();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('open');
 
   const [createOpen, setCreateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -73,13 +80,13 @@ export function ApiKeysPage() {
           },
         }),
       );
-      toast.success('API Key 已签发（明文仅此一次展示）');
+      toast.success(t('apiKey.issuedToast'));
       setCreateOpen(false);
       form.reset();
       setCreatedKey(created);
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '签发失败');
+      toast.error(e instanceof Error ? e.message : t('apiKey.issueFailed'));
     } finally {
       setBusy(false);
     }
@@ -90,18 +97,18 @@ export function ApiKeysPage() {
       await unwrap(
         api.DELETE('/api/v1/api-keys/{key_id}', { params: { path: { key_id: key.id } } }),
       );
-      toast.success('已吊销');
+      toast.success(t('apiKey.revokedToast'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
   const columns: ColumnDef<ApiKeyRow, unknown>[] = [
-    { accessorKey: 'name', header: '名称' },
+    { accessorKey: 'name', header: t('field.name') },
     {
       accessorKey: 'scopes',
-      header: 'Scopes',
+      header: t('apiKey.col.scopes'),
       cell: ({ row }) => (
         <div className="flex flex-wrap gap-1">
           {row.original.scopes.map((s) => (
@@ -112,33 +119,33 @@ export function ApiKeysPage() {
         </div>
       ),
     },
-    { accessorKey: 'rate_limit_per_min', header: '限流（次/分）' },
+    { accessorKey: 'rate_limit_per_min', header: t('apiKey.col.rateLimit') },
     {
       accessorKey: 'created_at',
-      header: '创建时间',
+      header: t('field.createdAt'),
       cell: ({ row }) => formatDateTime(row.original.created_at),
     },
     {
       accessorKey: 'expires_at',
-      header: '过期时间',
+      header: t('apiKey.col.expiresAt'),
       cell: ({ row }) =>
-        row.original.expires_at ? formatDateTime(row.original.expires_at) : '永不过期',
+        row.original.expires_at ? formatDateTime(row.original.expires_at) : t('apiKey.neverExpires'),
     },
     {
       accessorKey: 'last_used_at',
-      header: '最近使用',
+      header: t('apiKey.col.lastUsedAt'),
       cell: ({ row }) =>
-        row.original.last_used_at ? formatDateTime(row.original.last_used_at) : '从未使用',
+        row.original.last_used_at ? formatDateTime(row.original.last_used_at) : t('apiKey.neverUsed'),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => (
         <ConfirmAction
-          title="确认吊销该 API Key？"
+          title={t('apiKey.revokeConfirm')}
           trigger={
             <Button variant="link" size="sm" className="text-destructive hover:text-destructive" disabled={!canWrite}>
-              吊销
+              {t('apiKey.revoke')}
             </Button>
           }
           danger
@@ -151,10 +158,10 @@ export function ApiKeysPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="API Key"
+        title={t('apiKey.title')}
         actions={
           <Button disabled={!canWrite} onClick={() => setCreateOpen(true)}>
-            签发 API Key
+            {t('apiKey.issue')}
           </Button>
         }
       />
@@ -177,7 +184,7 @@ export function ApiKeysPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>签发 API Key</DialogTitle>
+            <DialogTitle>{t('apiKey.issueTitle')}</DialogTitle>
           </DialogHeader>
           <form
             onSubmit={(e) => {
@@ -187,14 +194,14 @@ export function ApiKeysPage() {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="api-key-name">名称</Label>
+              <Label htmlFor="api-key-name">{t('field.name')}</Label>
               <Input id="api-key-name" maxLength={255} {...form.register('name')} />
               {form.formState.errors.name && (
                 <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
               )}
             </div>
             <div className="space-y-2">
-              <Label>权限点（scopes）</Label>
+              <Label>{t('apiKey.scopeLabel')}</Label>
               <div className="flex gap-4">
                 {SCOPE_OPTIONS.map((opt) => (
                   <label key={opt.value} className="flex items-center gap-2 text-sm">
@@ -218,7 +225,7 @@ export function ApiKeysPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="api-key-rate">限流（次/分钟）</Label>
+              <Label htmlFor="api-key-rate">{t('apiKey.rateLabel')}</Label>
               <Input
                 id="api-key-rate"
                 type="number"
@@ -232,7 +239,7 @@ export function ApiKeysPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="api-key-expires">有效期（秒，留空永不过期）</Label>
+              <Label htmlFor="api-key-expires">{t('apiKey.expiresLabel')}</Label>
               <Input
                 id="api-key-expires"
                 type="number"
@@ -257,10 +264,10 @@ export function ApiKeysPage() {
                 }}
                 disabled={busy}
               >
-                取消
+                {t('action.cancel')}
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy ? '保存中…' : '签发'}
+                {busy ? t('action.saving') : t('apiKey.issueButton')}
               </Button>
             </DialogFooter>
           </form>
@@ -269,8 +276,8 @@ export function ApiKeysPage() {
 
       <SecretModal
         open={createdKey !== null}
-        title="API Key 签发成功"
-        fields={createdKey?.key ? [{ label: 'API Key', value: createdKey.key }] : []}
+        title={t('apiKey.issuedTitle')}
+        fields={createdKey?.key ? [{ label: t('apiKey.keyLabel'), value: createdKey.key }] : []}
         onClose={() => setCreatedKey(null)}
       />
     </div>

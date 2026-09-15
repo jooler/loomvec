@@ -7,7 +7,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
-import { extractApiError, ROLE_META, ROLE_TONE } from '@/utils';
+import { useTranslation } from 'react-i18next';
+import { t } from '@/i18n';
+import { extractApiError, ROLE_TONE } from '@/utils';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
@@ -29,20 +31,19 @@ import {
  * P2-WEB-01 成员管理：成员列表 + 邀请（按用户名）+ 角色变更 + 移除（仅 owner 可操作）。
  */
 
-const ROLE_OPTIONS = [
-  { value: 'viewer', label: '查看者（viewer）' },
-  { value: 'editor', label: '编辑者（editor）' },
-  { value: 'owner', label: '所有者（owner）' },
-];
+/** 角色下拉选项（文案走 i18n member.roleOption.*）。 */
+const ROLE_OPTIONS = ['viewer', 'editor', 'owner'] as const;
 
 function RoleBadge({ role }: { role: string }) {
+  const { t } = useTranslation('spaces');
   return (
-    <StatusBadge tone={ROLE_TONE[role]}>{ROLE_META[role]?.text ?? role}</StatusBadge>
+    <StatusBadge tone={ROLE_TONE[role]}>{t(`role.${role}`, { defaultValue: role })}</StatusBadge>
   );
 }
 
+// 模块级文案（zod 校验消息）：复用 auth 命名空间的同名文案
 const inviteSchema = z.object({
-  username: z.string().min(1, '请输入用户名'),
+  username: z.string().min(1, t('auth:usernameRequired')),
   role: z.enum(['viewer', 'editor']),
 });
 
@@ -50,6 +51,7 @@ type InviteValues = z.infer<typeof inviteSchema>;
 
 export function SpaceMembersPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
+  const { t } = useTranslation('spaces');
   const queryClient = useQueryClient();
   const form = useForm<InviteValues>({
     resolver: zodResolver(inviteSchema),
@@ -62,7 +64,7 @@ export function SpaceMembersPage() {
       const { data, error } = await api.GET('/api/v1/spaces/{space_id}', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载空间失败'));
+      if (error) throw new Error(extractApiError(error, t('member.loadSpaceFailed')));
       return data;
     },
   });
@@ -73,7 +75,7 @@ export function SpaceMembersPage() {
       const { data, error } = await api.GET('/api/v1/spaces/{space_id}/members', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载成员失败'));
+      if (error) throw new Error(extractApiError(error, t('member.loadMembersFailed')));
       return data.items;
     },
   });
@@ -89,10 +91,10 @@ export function SpaceMembersPage() {
         params: { path: { space_id: spaceId! } },
         body: { username: values.username, role: values.role },
       });
-      if (error) throw new Error(extractApiError(error, '邀请失败'));
+      if (error) throw new Error(extractApiError(error, t('member.inviteFailed')));
     },
     onSuccess: () => {
-      toast.success('成员已加入');
+      toast.success(t('member.added'));
       form.reset();
       invalidate();
     },
@@ -105,10 +107,10 @@ export function SpaceMembersPage() {
         params: { path: { space_id: spaceId!, user_id: vars.userId } },
         body: { role: vars.role as 'owner' | 'editor' | 'viewer' },
       });
-      if (error) throw new Error(extractApiError(error, '角色变更失败'));
+      if (error) throw new Error(extractApiError(error, t('member.changeRoleFailed')));
     },
     onSuccess: () => {
-      toast.success('角色已更新');
+      toast.success(t('member.roleUpdated'));
       invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -119,10 +121,10 @@ export function SpaceMembersPage() {
       const { error } = await api.DELETE('/api/v1/spaces/{space_id}/members/{user_id}', {
         params: { path: { space_id: spaceId!, user_id: userId } },
       });
-      if (error) throw new Error(extractApiError(error, '移除失败'));
+      if (error) throw new Error(extractApiError(error, t('member.removeFailed')));
     },
     onSuccess: () => {
-      toast.success('成员已移除');
+      toast.success(t('member.removed'));
       invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -135,7 +137,7 @@ export function SpaceMembersPage() {
   const columns: ColumnDef<MemberRow, unknown>[] = [
     {
       id: 'member',
-      header: '成员',
+      header: t('member.column'),
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <Avatar size="sm">
@@ -156,7 +158,7 @@ export function SpaceMembersPage() {
     },
     {
       accessorKey: 'role',
-      header: '角色',
+      header: t('member.roleColumn'),
       cell: ({ row }) =>
         isOwner ? (
           <Select
@@ -171,8 +173,8 @@ export function SpaceMembersPage() {
             </SelectTrigger>
             <SelectContent>
               {ROLE_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
+                <SelectItem key={o} value={o}>
+                  {t(`member.roleOption.${o}`, { defaultValue: o })}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -183,10 +185,10 @@ export function SpaceMembersPage() {
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) =>
         row.original.role === 'owner' ? (
-          <span className="text-sm text-muted-foreground">owner 不可被移除</span>
+          <span className="text-sm text-muted-foreground">{t('member.ownerImmovable')}</span>
         ) : isOwner ? (
           <ConfirmAction
             trigger={
@@ -195,11 +197,13 @@ export function SpaceMembersPage() {
                 size="sm"
                 disabled={removeMember.isPending}
               >
-                移除
+                {t('member.remove')}
               </Button>
             }
-            title={`移除成员 ${row.original.username ?? row.original.user_id}？`}
-            description="移除后其将失去本空间的访问权限。"
+            title={t('member.removeTitle', {
+              name: row.original.username ?? row.original.user_id,
+            })}
+            description={t('member.removeDesc')}
             onConfirm={() => removeMember.mutate(row.original.user_id)}
           />
         ) : (
@@ -210,16 +214,14 @@ export function SpaceMembersPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="成员管理" />
+      <PageHeader title={t('member.title')} />
 
       <Card>
         <CardContent className="space-y-4">
           {!space.isLoading && !isOwner && (
             <Alert>
               <Info />
-              <AlertDescription>
-                仅空间所有者可邀请成员与变更角色，以下为只读视图。
-              </AlertDescription>
+              <AlertDescription>{t('member.readOnlyHint')}</AlertDescription>
             </Alert>
           )}
 
@@ -227,7 +229,7 @@ export function SpaceMembersPage() {
             <Card className="py-4">
               <CardHeader className="px-4">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <UserPlus className="size-4" /> 邀请成员
+                  <UserPlus className="size-4" /> {t('member.inviteTitle')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-4">
@@ -237,7 +239,7 @@ export function SpaceMembersPage() {
                 >
                   <div className="space-y-1">
                     <Input
-                      placeholder="用户名（如 bob）"
+                      placeholder={t('member.usernamePlaceholder')}
                       className="w-[200px]"
                       {...form.register('username')}
                     />
@@ -255,15 +257,15 @@ export function SpaceMembersPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {ROLE_OPTIONS.filter((o) => o.value !== 'owner').map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
+                      {ROLE_OPTIONS.filter((o) => o !== 'owner').map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {t(`member.roleOption.${o}`, { defaultValue: o })}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <Button type="submit" disabled={invite.isPending}>
-                    邀请
+                    {t('member.invite')}
                   </Button>
                 </form>
               </CardContent>

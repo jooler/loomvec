@@ -3,6 +3,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { Download } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import {
@@ -22,6 +23,7 @@ const PAGE_SIZE = 20;
 
 /** 审计日志（/audit）：全量写操作 + 登录事件，按操作者/对象/时间/租户筛选，JSONL 导出（docs/04 §5.10）。 */
 export function AuditLogsPage() {
+  const { t } = useTranslation('audit');
   // 筛选草稿态：输入过程不发请求，点「查询」（或回车）一次性提交，避免每键触发列表请求
   const [draft, setDraft] = useState({
     actor: '',
@@ -94,7 +96,7 @@ export function AuditLogsPage() {
         parseAs: 'text',
         params: { query: { ...exportFilters(), limit: 10000 } },
       });
-      if (error != null) throw new Error(extractApiError(error, '导出失败'));
+      if (error != null) throw new Error(extractApiError(error, t('exportFailed')));
       const blob = new Blob([String(text ?? '')], { type: 'application/x-ndjson' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -103,38 +105,38 @@ export function AuditLogsPage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '导出失败');
+      toast.error(e instanceof Error ? e.message : t('exportFailed'));
     }
   };
 
   const columns: ColumnDef<AuditLogRow, unknown>[] = [
     {
       accessorKey: 'created_at',
-      header: '时间',
+      header: t('col.time'),
       cell: ({ row }) => formatDateTime(row.original.created_at),
     },
     {
       accessorKey: 'actor_user_id',
-      header: '操作者',
+      header: t('col.actor'),
       cell: ({ row }) =>
         row.original.actor_user_id ? `${row.original.actor_user_id.slice(0, 8)}…` : '-',
     },
     {
       accessorKey: 'action',
-      header: '操作',
+      header: t('col.action'),
       cell: ({ row }) => (
         <StatusBadge tone="blue">{row.original.action}</StatusBadge>
       ),
     },
-    { accessorKey: 'object_type', header: '对象类型' },
+    { accessorKey: 'object_type', header: t('col.objectType') },
     {
       accessorKey: 'object_id',
-      header: '对象 ID',
+      header: t('col.objectId'),
       cell: ({ row }) => (row.original.object_id ? `${row.original.object_id.slice(0, 8)}…` : '-'),
     },
     {
       accessorKey: 'reason',
-      header: '理由',
+      header: t('col.reason'),
       cell: ({ row }) => (
         <span className="block max-w-48 truncate" title={row.original.reason ?? undefined}>
           {row.original.reason ?? '-'}
@@ -149,10 +151,10 @@ export function AuditLogsPage() {
     },
     {
       id: 'actions',
-      header: '详情',
+      header: t('col.detail'),
       cell: ({ row }) => (
         <Button variant="link" size="sm" onClick={() => setDetail(row.original)}>
-          变更前后
+          {t('beforeAfter')}
         </Button>
       ),
     },
@@ -161,11 +163,11 @@ export function AuditLogsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="审计日志"
+        title={t('title')}
         actions={
           <Button variant="outline" onClick={() => void exportLogs()}>
             <Download />
-            导出 JSONL（≤10000 条）
+            {t('exportButton')}
           </Button>
         }
       />
@@ -178,45 +180,45 @@ export function AuditLogsPage() {
         }}
       >
         <Input
-          placeholder="操作者 user_id（UUID）"
+          placeholder={t('actorPlaceholder')}
           className="w-60"
           value={draft.actor}
           onChange={(e) => setDraft((d) => ({ ...d, actor: e.target.value }))}
         />
         <Input
-          placeholder="操作（前缀匹配，如 admin.tenant）"
+          placeholder={t('actionPlaceholder')}
           className="w-56"
           value={draft.action}
           onChange={(e) => setDraft((d) => ({ ...d, action: e.target.value }))}
         />
         <Input
-          placeholder="对象类型，如 tenant / space"
+          placeholder={t('objectTypePlaceholder')}
           className="w-44"
           value={draft.objectType}
           onChange={(e) => setDraft((d) => ({ ...d, objectType: e.target.value }))}
         />
         <Input
-          placeholder="租户 ID（UUID）"
+          placeholder={t('tenantIdPlaceholder')}
           className="w-60"
           value={draft.tenantId}
           onChange={(e) => setDraft((d) => ({ ...d, tenantId: e.target.value }))}
         />
         <Input
           type="date"
-          aria-label="起始时间"
+          aria-label={t('sinceLabel')}
           className="w-40"
           value={draft.since}
           onChange={(e) => setDraft((d) => ({ ...d, since: e.target.value }))}
         />
         <Input
           type="date"
-          aria-label="截止时间"
+          aria-label={t('untilLabel')}
           className="w-40"
           value={draft.until}
           onChange={(e) => setDraft((d) => ({ ...d, until: e.target.value }))}
         />
         <Button type="submit" variant="outline">
-          查询
+          {t('query')}
         </Button>
       </form>
 
@@ -235,32 +237,32 @@ export function AuditLogsPage() {
       <Dialog open={detail !== null} onOpenChange={(o) => !o && setDetail(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>审计详情：{detail?.action ?? ''}</DialogTitle>
+            <DialogTitle>{t('detailTitle', { action: detail?.action ?? '' })}</DialogTitle>
           </DialogHeader>
           {detail && (
             <div className="space-y-3 text-sm">
               <p>
-                <span className="font-medium">对象：</span>
+                <span className="font-medium">{t('objectLabel')}</span>
                 {detail.object_type} / {detail.object_id ?? '-'}
               </p>
               <p>
-                <span className="font-medium">理由：</span>
+                <span className="font-medium">{t('reasonLabel')}</span>
                 {detail.reason ?? '-'}
               </p>
               <div>
-                <p className="font-medium">变更前：</p>
+                <p className="font-medium">{t('beforeLabel')}</p>
                 <pre className="mt-1 max-h-60 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">
                   {detail.before_value ? JSON.stringify(detail.before_value, null, 2) : '-'}
                 </pre>
               </div>
               <div>
-                <p className="font-medium">变更后：</p>
+                <p className="font-medium">{t('afterLabel')}</p>
                 <pre className="mt-1 max-h-60 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">
                   {detail.after_value ? JSON.stringify(detail.after_value, null, 2) : '-'}
                 </pre>
               </div>
               <p>
-                <span className="font-medium">IP：</span>
+                <span className="font-medium">{t('ipLabel')}</span>
                 {detail.ip ?? '-'}
               </p>
             </div>

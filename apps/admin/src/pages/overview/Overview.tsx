@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
@@ -22,15 +23,17 @@ const GRAFANA_URL = import.meta.env.VITE_GRAFANA_URL ?? 'http://localhost:3002';
 
 type StageLatencyRow = { stage: string; p50: number; p95: number };
 
-const stageColumns: ColumnDef<StageLatencyRow, unknown>[] = [
-  { accessorKey: 'stage', header: '阶段' },
-  { accessorKey: 'p50', header: 'P50', cell: ({ row }) => formatSeconds(row.original.p50) },
-  { accessorKey: 'p95', header: 'P95', cell: ({ row }) => formatSeconds(row.original.p95) },
-];
-
 /** 总览：健康卡片 / 管线态势 / 平台规模 / 待办聚合 / 备份状态 / Grafana 外链（docs/04 §5.1）。 */
 export function OverviewPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation('overview');
+
+  const stageColumns: ColumnDef<StageLatencyRow, unknown>[] = [
+    { accessorKey: 'stage', header: t('colStage') },
+    { accessorKey: 'p50', header: 'P50', cell: ({ row }) => formatSeconds(row.original.p50) },
+    { accessorKey: 'p95', header: 'P95', cell: ({ row }) => formatSeconds(row.original.p95) },
+  ];
+
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin-system-status'],
     queryFn: () => unwrap<SystemStatus>(api.GET('/api/v1/admin/system/status')),
@@ -42,13 +45,13 @@ export function OverviewPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="总览"
+        title={t('title')}
         description={
-          data ? `数据生成于 ${formatDateTime(data.generated_at)}` : undefined
+          data ? t('generatedAt', { time: formatDateTime(data.generated_at) }) : undefined
         }
         actions={
           <Button onClick={() => window.open(GRAFANA_URL, '_blank')}>
-            <ExternalLink /> 打开 Grafana
+            <ExternalLink /> {t('openGrafana')}
           </Button>
         }
       />
@@ -61,8 +64,8 @@ export function OverviewPage() {
             ))
           : (data?.components ?? []).map((c) => {
               const detailText = c.ok
-                ? '运行正常'
-                : String(c.detail.error ?? '探测失败').slice(0, 80);
+                ? t('componentOk')
+                : String(c.detail.error ?? t('probeFailed')).slice(0, 80);
               return (
                 <Card key={c.name} className="py-4">
                   <CardContent className="space-y-2 px-4">
@@ -95,14 +98,14 @@ export function OverviewPage() {
         {/* 管线态势 */}
         <Card>
           <CardHeader>
-            <CardTitle>管线态势（24h）</CardTitle>
+            <CardTitle>{t('pipelineTitle')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-3 gap-3">
-              <StatCard title="24h 总任务" value={data?.pipeline.last_24h.total ?? 0} />
-              <StatCard title="成功" value={data?.pipeline.last_24h.succeeded ?? 0} />
+              <StatCard title={t('totalTasks24h')} value={data?.pipeline.last_24h.total ?? 0} />
+              <StatCard title={t('succeeded')} value={data?.pipeline.last_24h.succeeded ?? 0} />
               <StatCard
-                title="失败率"
+                title={t('failureRate')}
                 value={`${((data?.pipeline.last_24h.failure_rate ?? 0) * 100).toFixed(1)}%`}
               />
             </div>
@@ -113,7 +116,7 @@ export function OverviewPage() {
                 </Badge>
               ))}
               <StatusBadge tone={data?.pipeline.dead_letter ? 'red' : 'gray'}>
-                死信：{data?.pipeline.dead_letter ?? 0}
+                {t('deadLetter', { count: data?.pipeline.dead_letter ?? 0 })}
               </StatusBadge>
             </div>
             <DataTable
@@ -132,16 +135,22 @@ export function OverviewPage() {
           {/* 平台规模 */}
           <Card>
             <CardHeader>
-              <CardTitle>平台规模</CardTitle>
+              <CardTitle>{t('scaleTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <StatCard title="租户" value={data?.scale.tenants ?? 0} />
-                <StatCard title="用户" value={data?.scale.users ?? 0} />
-                <StatCard title="空间" value={data?.scale.spaces ?? 0} />
-                <StatCard title="资产" value={data?.scale.assets ?? 0} />
-                <StatCard title="语义单元" value={data?.scale.semantic_units ?? 0} />
-                <StatCard title="存储用量" value={formatBytes(data?.scale.storage_bytes ?? 0)} />
+                <StatCard title={t('scale.tenants')} value={data?.scale.tenants ?? 0} />
+                <StatCard title={t('scale.users')} value={data?.scale.users ?? 0} />
+                <StatCard title={t('scale.spaces')} value={data?.scale.spaces ?? 0} />
+                <StatCard title={t('scale.assets')} value={data?.scale.assets ?? 0} />
+                <StatCard
+                  title={t('scale.semanticUnits')}
+                  value={data?.scale.semantic_units ?? 0}
+                />
+                <StatCard
+                  title={t('scale.storage')}
+                  value={formatBytes(data?.scale.storage_bytes ?? 0)}
+                />
               </div>
             </CardContent>
           </Card>
@@ -149,7 +158,7 @@ export function OverviewPage() {
           {/* 备份状态 */}
           <Card>
             <CardHeader>
-              <CardTitle>备份状态</CardTitle>
+              <CardTitle>{t('backupTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
               {Object.entries(data?.backup ?? {}).length ? (
@@ -161,9 +170,7 @@ export function OverviewPage() {
                   ))}
                 </DescriptionList>
               ) : (
-                <p className="text-sm text-muted-foreground">
-                  暂无备份状态记录（scripts/backup.sh 回写）
-                </p>
+                <p className="text-sm text-muted-foreground">{t('backupEmpty')}</p>
               )}
             </CardContent>
           </Card>
@@ -171,12 +178,12 @@ export function OverviewPage() {
           {/* 待办聚合：点击直达 */}
           <Card>
             <CardHeader>
-              <CardTitle>待办聚合</CardTitle>
+              <CardTitle>{t('todoTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <StatCard
-                  title="待审资产"
+                  title={t('todo.pendingReview')}
                   value={todo?.pending_review_assets ?? 0}
                   valueClassName={(todo?.pending_review_assets ?? 0) > 0 ? 'text-amber-600' : undefined}
                   hint={
@@ -184,12 +191,12 @@ export function OverviewPage() {
                       className="hover:underline"
                       onClick={() => navigate('/reviews')}
                     >
-                      去审核 →
+                      {t('todo.goReview')}
                     </button>
                   }
                 />
                 <StatCard
-                  title="失败任务"
+                  title={t('todo.failedJobs')}
                   value={todo?.failed_jobs ?? 0}
                   valueClassName={(todo?.failed_jobs ?? 0) > 0 ? 'text-red-600' : undefined}
                   hint={
@@ -197,12 +204,12 @@ export function OverviewPage() {
                       className="hover:underline"
                       onClick={() => navigate('/pipeline')}
                     >
-                      去处理 →
+                      {t('todo.goProcess')}
                     </button>
                   }
                 />
                 <StatCard
-                  title="死信"
+                  title={t('todo.deadLetter')}
                   value={todo?.dead_letter ?? 0}
                   valueClassName={(todo?.dead_letter ?? 0) > 0 ? 'text-red-600' : undefined}
                   hint={
@@ -210,7 +217,7 @@ export function OverviewPage() {
                       className="hover:underline"
                       onClick={() => navigate('/pipeline')}
                     >
-                      去查看 →
+                      {t('todo.goView')}
                     </button>
                   }
                 />

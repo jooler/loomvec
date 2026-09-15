@@ -5,9 +5,11 @@ import { Search, X } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
+import { t as tt } from '@/i18n';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
@@ -37,15 +39,17 @@ import type { PagedResp, UserRow } from '@/types';
 import { formatDateTime } from '@/utils';
 
 const PAGE_SIZE = 20;
+// 模块级文案（角色下拉选项）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const PLATFORM_ROLE_OPTIONS = [
-  { value: 'super_admin', label: 'super_admin（全部功能）' },
-  { value: 'operator', label: 'operator（日常运营）' },
-  { value: 'auditor', label: 'auditor（只读+审计导出）' },
+  { value: 'super_admin', label: tt('users:roleOption.superAdmin') },
+  { value: 'operator', label: tt('users:roleOption.operator') },
+  { value: 'auditor', label: tt('users:roleOption.auditor') },
 ];
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const roleSchema = z.object({
-  role: z.string().min(1, '请选择平台角色'),
-  reason: z.string().min(1, '请填写操作理由（将记入审计日志）'),
+  role: z.string().min(1, tt('users:roleRequired')),
+  reason: z.string().min(1, tt('users:reasonRequired')),
 });
 
 type RoleValues = z.infer<typeof roleSchema>;
@@ -54,6 +58,7 @@ type RoleValues = z.infer<typeof roleSchema>;
 export function UserListPage() {
   const { canWrite, isSuperAdmin } = usePerm();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('users');
 
   const [searchText, setSearchText] = useState('');
   const [q, setQ] = useState('');
@@ -89,10 +94,10 @@ export function UserListPage() {
           params: { path: { user_id: u.id } },
         }),
       );
-      toast.success('已启用');
+      toast.success(t('enabled'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
@@ -106,12 +111,12 @@ export function UserListPage() {
           body: { role: values.role, reason: values.reason },
         }),
       );
-      toast.success('平台角色已更新');
+      toast.success(t('roleUpdated'));
       setRoleTarget(null);
       roleForm.reset();
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setBusy(false);
     }
@@ -120,7 +125,7 @@ export function UserListPage() {
   const columns: ColumnDef<UserRow, unknown>[] = [
     {
       accessorKey: 'username',
-      header: '用户名',
+      header: t('col.username'),
       cell: ({ row }) =>
         row.original.display_name
           ? `${row.original.username}（${row.original.display_name}）`
@@ -128,34 +133,36 @@ export function UserListPage() {
     },
     {
       accessorKey: 'email',
-      header: '邮箱',
+      header: t('col.email'),
       cell: ({ row }) => row.original.email ?? '-',
     },
     {
       accessorKey: 'tenant_name',
-      header: '所属租户',
+      header: t('col.tenant'),
       cell: ({ row }) => row.original.tenant_name ?? '-',
     },
     {
       accessorKey: 'auth_source',
-      header: '来源',
+      header: t('col.source'),
       cell: ({ row }) => (
-        <Badge variant="outline">{row.original.auth_source === 'oidc' ? 'OIDC' : '本地'}</Badge>
+        <Badge variant="outline">
+          {row.original.auth_source === 'oidc' ? t('source.oidc') : t('source.local')}
+        </Badge>
       ),
     },
     {
       accessorKey: 'status',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) =>
         row.original.status === 'active' ? (
-          <StatusBadge tone="green">正常</StatusBadge>
+          <StatusBadge tone="green">{t('status.active')}</StatusBadge>
         ) : (
-          <StatusBadge tone="red">已禁用</StatusBadge>
+          <StatusBadge tone="red">{t('status.disabled')}</StatusBadge>
         ),
     },
     {
       accessorKey: 'platform_roles',
-      header: '平台角色',
+      header: t('col.platformRole'),
       cell: ({ row }) => {
         const roles = row.original.platform_roles;
         return roles.length ? (
@@ -173,12 +180,12 @@ export function UserListPage() {
     },
     {
       accessorKey: 'last_active_at',
-      header: '最近活跃',
+      header: t('col.lastActive'),
       cell: ({ row }) => formatDateTime(row.original.last_active_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => {
         const r = row.original;
         return (
@@ -191,14 +198,14 @@ export function UserListPage() {
                 disabled={!canWrite}
                 onClick={() => setDisableTarget(r)}
               >
-                禁用
+                {t('action.disable')}
               </Button>
             ) : (
               <ConfirmAction
-                title="确认启用该用户？"
+                title={t('enableConfirm')}
                 trigger={
                   <Button variant="link" size="sm" disabled={!canWrite}>
-                    启用
+                    {t('action.enable')}
                   </Button>
                 }
                 onConfirm={() => enable(r)}
@@ -208,13 +215,13 @@ export function UserListPage() {
               variant="link"
               size="sm"
               disabled={!isSuperAdmin}
-              title={isSuperAdmin ? undefined : '仅 super_admin 可分配平台角色'}
+              title={isSuperAdmin ? undefined : t('roleAssignOnly')}
               onClick={() => {
                 setRoleTarget(r);
                 roleForm.reset({ role: r.platform_roles[0] ?? '', reason: '' });
               }}
             >
-              角色分配
+              {t('roleAssign')}
             </Button>
           </div>
         );
@@ -224,7 +231,7 @@ export function UserListPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="用户与权限" />
+      <PageHeader title={t('title')} />
 
       <div className="flex flex-wrap items-center gap-2">
         <form
@@ -238,10 +245,10 @@ export function UserListPage() {
           <Input
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
-            placeholder="按用户名/邮箱搜索"
+            placeholder={t('searchPlaceholder')}
             className="w-64"
           />
-          <Button type="submit" variant="outline" size="icon" aria-label="搜索">
+          <Button type="submit" variant="outline" size="icon" aria-label={t('action.search')}>
             <Search />
           </Button>
         </form>
@@ -254,19 +261,19 @@ export function UserListPage() {
             }}
           >
             <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="状态" />
+              <SelectValue placeholder={t('field.status')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="active">正常</SelectItem>
-              <SelectItem value="disabled">已禁用</SelectItem>
+              <SelectItem value="active">{t('status.active')}</SelectItem>
+              <SelectItem value="disabled">{t('status.disabled')}</SelectItem>
             </SelectContent>
           </Select>
           {status && (
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="清除筛选"
-              title="清除筛选"
+              aria-label={t('clearFilter')}
+              title={t('clearFilter')}
               onClick={() => {
                 setStatus(undefined);
                 setPage({ current: 1, pageSize: PAGE_SIZE });
@@ -292,9 +299,9 @@ export function UserListPage() {
       {/* 禁用（危险操作）：必填理由 */}
       <ReasonModal
         open={disableTarget !== null}
-        title={`禁用用户「${disableTarget?.username ?? ''}」`}
-        description="禁用后该用户无法登录与访问 API。"
-        okText="确认禁用"
+        title={t('disableTitle', { name: disableTarget?.username ?? '' })}
+        description={t('disableDescription')}
+        okText={t('confirmDisable')}
         danger
         confirmLoading={busy}
         onCancel={() => setDisableTarget(null)}
@@ -308,11 +315,11 @@ export function UserListPage() {
                 body: { reason },
               }),
             );
-            toast.success('已禁用');
+            toast.success(t('disabledToast'));
             setDisableTarget(null);
             invalidate();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }
@@ -331,8 +338,8 @@ export function UserListPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>平台角色分配：{roleTarget?.username ?? ''}</DialogTitle>
-            <DialogDescription>操作理由将记入审计日志。</DialogDescription>
+            <DialogTitle>{t('roleTitle', { name: roleTarget?.username ?? '' })}</DialogTitle>
+            <DialogDescription>{t('roleDescription')}</DialogDescription>
           </DialogHeader>
           <form
             onSubmit={(e) => {
@@ -342,13 +349,13 @@ export function UserListPage() {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="role-assign">平台角色</Label>
+              <Label htmlFor="role-assign">{t('roleLabel')}</Label>
               <Select
                 value={roleForm.watch('role') || undefined}
                 onValueChange={(v) => roleForm.setValue('role', v)}
               >
                 <SelectTrigger className="w-full" id="role-assign">
-                  <SelectValue placeholder="选择平台角色" />
+                  <SelectValue placeholder={t('rolePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {PLATFORM_ROLE_OPTIONS.map((opt) => (
@@ -363,7 +370,7 @@ export function UserListPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="role-reason">操作理由</Label>
+              <Label htmlFor="role-reason">{t('reasonLabel')}</Label>
               <Textarea
                 id="role-reason"
                 rows={3}
@@ -391,10 +398,10 @@ export function UserListPage() {
                 }}
                 disabled={busy}
               >
-                取消
+                {t('action.cancel')}
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy ? '保存中…' : '确认分配'}
+                {busy ? t('action.saving') : t('confirmAssign')}
               </Button>
             </DialogFooter>
           </form>

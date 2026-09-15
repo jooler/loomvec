@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -27,6 +28,7 @@ interface VisibilityItem {
 export function VisibilityPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('spaces');
   const [checked, setChecked] = useState<Set<string> | null>(null);
 
   const visibility = useQuery({
@@ -67,7 +69,7 @@ export function VisibilityPage() {
       );
     },
     onSuccess: () => {
-      toast.success('可见性已更新');
+      toast.success(t('visibility.saved'));
       void queryClient.invalidateQueries({ queryKey: ['ops-visibility', spaceId] });
       void queryClient.invalidateQueries({ queryKey: ['ops-spaces'] });
       void queryClient.invalidateQueries({ queryKey: ['ops-space', spaceId] });
@@ -101,20 +103,17 @@ export function VisibilityPage() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>分组可见性</CardTitle>
-        <CardDescription>
-          勾选的分组可让所属用户在用户端看到该公共空间并选择「链接」；链接后仅作为问答检索源，
-          用户不能浏览空间内容。未勾选任何分组 = 不对任何人公开。
-        </CardDescription>
+        <CardTitle>{t('visibility.title')}</CardTitle>
+        <CardDescription>{t('visibility.description')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {(visibility.data?.length ?? 0) === 0 ? (
           <EmptyState
-            title="还没有用户分组"
-            description="先到「用户分组」创建分组并添加成员，再回到这里勾选。"
+            title={t('visibility.emptyTitle')}
+            description={t('visibility.emptyDesc')}
             action={
               <Button asChild variant="outline" size="sm">
-                <Link to="/groups">前往用户分组</Link>
+                <Link to="/groups">{t('visibility.goGroups')}</Link>
               </Button>
             }
           />
@@ -141,7 +140,7 @@ export function VisibilityPage() {
                   </div>
                 </div>
                 <span className="shrink-0 text-xs text-muted-foreground">
-                  {item.member_count} 名成员
+                  {t('visibility.memberCount', { count: item.member_count })}
                 </span>
               </div>
             ))}
@@ -159,7 +158,7 @@ export function VisibilityPage() {
                 )
               }
             >
-              放弃更改
+              {t('visibility.discard')}
             </Button>
           )}
           <Button
@@ -167,7 +166,7 @@ export function VisibilityPage() {
             disabled={!dirty || save.isPending}
             onClick={() => save.mutate()}
           >
-            {save.isPending ? '保存中…' : '保存可见性'}
+            {save.isPending ? t('action.saving') : t('visibility.save')}
           </Button>
         </div>
       </CardContent>

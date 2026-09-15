@@ -6,9 +6,11 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
+import { t as tt } from '@/i18n';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
@@ -29,11 +31,12 @@ import { formatDateTime, formatQuota } from '@/utils';
 
 const PAGE_SIZE = 20;
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const createSchema = z.object({
-  name: z.string().min(1, '请输入租户名称').max(255),
-  plan: z.string().min(1, '请输入套餐'),
-  quota_storage_bytes: z.number({ error: '请输入存储配额' }).min(0),
-  quota_file_count: z.number({ error: '请输入文件数配额' }).min(0),
+  name: z.string().min(1, tt('tenants:form.nameRequired')).max(255),
+  plan: z.string().min(1, tt('tenants:form.planRequired')),
+  quota_storage_bytes: z.number({ error: tt('tenants:form.quotaStorageRequired') }).min(0),
+  quota_file_count: z.number({ error: tt('tenants:form.quotaFilesRequired') }).min(0),
 });
 
 type CreateValues = z.infer<typeof createSchema>;
@@ -43,6 +46,7 @@ export function TenantListPage() {
   const { canWrite } = usePerm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('tenants');
 
   const [searchText, setSearchText] = useState('');
   const [q, setQ] = useState('');
@@ -78,12 +82,12 @@ export function TenantListPage() {
     setCreating(true);
     try {
       await unwrap(api.POST('/api/v1/admin/tenants', { body: values }));
-      toast.success('租户已创建');
+      toast.success(t('created'));
       setCreateOpen(false);
       createForm.reset();
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '创建失败');
+      toast.error(e instanceof Error ? e.message : t('createFailed'));
     } finally {
       setCreating(false);
     }
@@ -100,34 +104,34 @@ export function TenantListPage() {
           body: { reason },
         }),
       );
-      toast.success('租户已停用（冻结登录与 API 访问，数据保留）');
+      toast.success(t('suspendToast'));
       setSuspendTarget(null);
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setSuspending(false);
     }
   };
 
-  const activate = async (t: TenantRow) => {
+  const activate = async (tenant: TenantRow) => {
     try {
       await unwrap(
         api.POST('/api/v1/admin/tenants/{tenant_id}/activate', {
-          params: { path: { tenant_id: t.id } },
+          params: { path: { tenant_id: tenant.id } },
         }),
       );
-      toast.success('租户已启用');
+      toast.success(t('activated'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
   const columns: ColumnDef<TenantRow, unknown>[] = [
     {
       accessorKey: 'name',
-      header: '名称',
+      header: t('field.name'),
       cell: ({ row }) => (
         <button
           className="text-sm font-medium hover:underline"
@@ -139,45 +143,45 @@ export function TenantListPage() {
     },
     {
       accessorKey: 'status',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) =>
         row.original.status === 'active' ? (
-          <StatusBadge tone="green">正常</StatusBadge>
+          <StatusBadge tone="green">{t('status.active')}</StatusBadge>
         ) : (
-          <StatusBadge tone="red">已停用</StatusBadge>
+          <StatusBadge tone="red">{t('status.suspended')}</StatusBadge>
         ),
     },
-    { accessorKey: 'plan', header: '套餐' },
+    { accessorKey: 'plan', header: t('col.plan') },
     {
       id: 'storage_usage',
-      header: '存储用量',
+      header: t('col.storageUsage'),
       cell: ({ row }) =>
         formatQuota(row.original.used_storage_bytes, row.original.quota_storage_bytes),
     },
     {
       id: 'file_usage',
-      header: '文件数',
+      header: t('col.fileCount'),
       cell: ({ row }) =>
         row.original.quota_file_count
           ? `${row.original.used_file_count} / ${row.original.quota_file_count}`
-          : `${row.original.used_file_count} / 不限`,
+          : `${row.original.used_file_count} / ${t('unlimited')}`,
     },
-    { accessorKey: 'space_count', header: '空间数' },
-    { accessorKey: 'user_count', header: '用户数' },
+    { accessorKey: 'space_count', header: t('col.spaceCount') },
+    { accessorKey: 'user_count', header: t('col.userCount') },
     {
       accessorKey: 'created_at',
-      header: '创建时间',
+      header: t('field.createdAt'),
       cell: ({ row }) => formatDateTime(row.original.created_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => {
         const r = row.original;
         return (
           <div className="flex gap-1">
             <Button variant="link" size="sm" onClick={() => navigate(`/tenants/${r.id}`)}>
-              详情
+              {t('viewDetail')}
             </Button>
             {r.status === 'active' ? (
               <Button
@@ -187,14 +191,14 @@ export function TenantListPage() {
                 disabled={!canWrite}
                 onClick={() => setSuspendTarget(r)}
               >
-                停用
+                {t('suspend')}
               </Button>
             ) : (
               <ConfirmAction
-                title="确认启用该租户？"
+                title={t('activateConfirm')}
                 trigger={
                   <Button variant="link" size="sm" disabled={!canWrite}>
-                    启用
+                    {t('action.enable')}
                   </Button>
                 }
                 onConfirm={() => activate(r)}
@@ -209,10 +213,10 @@ export function TenantListPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="租户管理"
+        title={t('title')}
         actions={
           <Button disabled={!canWrite} onClick={() => setCreateOpen(true)}>
-            创建租户
+            {t('createTenant')}
           </Button>
         }
       />
@@ -228,10 +232,10 @@ export function TenantListPage() {
         <Input
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          placeholder="按租户名称搜索"
+          placeholder={t('searchPlaceholder')}
           className="w-72"
         />
-        <Button type="submit" variant="outline" size="icon" aria-label="搜索">
+        <Button type="submit" variant="outline" size="icon" aria-label={t('action.search')}>
           <Search />
         </Button>
       </form>
@@ -256,7 +260,7 @@ export function TenantListPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>创建租户</DialogTitle>
+            <DialogTitle>{t('createTenant')}</DialogTitle>
           </DialogHeader>
           <form
             onSubmit={(e) => {
@@ -266,7 +270,7 @@ export function TenantListPage() {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="tenant-name">租户名称</Label>
+              <Label htmlFor="tenant-name">{t('form.nameLabel')}</Label>
               <Input id="tenant-name" maxLength={255} {...createForm.register('name')} />
               {createForm.formState.errors.name && (
                 <p className="text-sm text-destructive">
@@ -275,7 +279,7 @@ export function TenantListPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="tenant-plan">套餐</Label>
+              <Label htmlFor="tenant-plan">{t('form.planLabel')}</Label>
               <Input
                 id="tenant-plan"
                 placeholder="free / pro / enterprise"
@@ -288,7 +292,7 @@ export function TenantListPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="tenant-quota-storage">存储配额（字节，0 不限）</Label>
+              <Label htmlFor="tenant-quota-storage">{t('form.quotaStorageLabel')}</Label>
               <Input
                 id="tenant-quota-storage"
                 type="number"
@@ -302,7 +306,7 @@ export function TenantListPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="tenant-quota-files">文件数配额（0 不限）</Label>
+              <Label htmlFor="tenant-quota-files">{t('form.quotaFilesLabel')}</Label>
               <Input
                 id="tenant-quota-files"
                 type="number"
@@ -322,10 +326,10 @@ export function TenantListPage() {
                 onClick={() => setCreateOpen(false)}
                 disabled={creating}
               >
-                取消
+                {t('action.cancel')}
               </Button>
               <Button type="submit" disabled={creating}>
-                {creating ? '创建中…' : '创建'}
+                {creating ? t('creating') : t('action.create')}
               </Button>
             </DialogFooter>
           </form>
@@ -334,9 +338,9 @@ export function TenantListPage() {
 
       <ReasonModal
         open={suspendTarget !== null}
-        title={`停用租户「${suspendTarget?.name ?? ''}」`}
-        description="停用后该租户所有用户登录与 API 访问被冻结，数据保留。此为危险操作，需二次确认并填写理由。"
-        okText="确认停用"
+        title={t('suspendTitle', { name: suspendTarget?.name ?? '' })}
+        description={t('suspendDescription')}
+        okText={t('confirmSuspend')}
         danger
         confirmLoading={suspending}
         onOk={suspend}

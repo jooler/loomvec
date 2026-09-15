@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import type { MeInfo } from '../auth';
 import { extractApiError } from '../utils';
+import { t } from '@/i18n';
 
 /** 当前用户信息（个人中心 / 通知未读数共用缓存）。 */
 export function useMe() {
@@ -14,7 +15,7 @@ export function useMe() {
     queryKey: ['me'],
     queryFn: async () => {
       const { data, error } = await api.GET('/api/v1/me');
-      if (error) throw new Error(extractApiError(error, '加载用户信息失败'));
+      if (error) throw new Error(extractApiError(error, t('profile:loadMeFailed')));
       return data as unknown as MeInfo;
     },
     staleTime: 30_000,
@@ -27,7 +28,7 @@ export function useMySpaces() {
     queryKey: ['spaces'],
     queryFn: async () => {
       const { data, error } = await api.GET('/api/v1/spaces');
-      if (error) throw new Error(extractApiError(error, '加载空间列表失败'));
+      if (error) throw new Error(extractApiError(error, t('spaces:loadListFailed')));
       return data.items;
     },
   });
@@ -48,7 +49,7 @@ export function usePublicSpaces() {
     queryKey: ['public-spaces'],
     queryFn: async () => {
       const { data, error } = await api.GET('/api/v1/public-spaces');
-      if (error) throw new Error(extractApiError(error, '加载公共空间失败'));
+      if (error) throw new Error(extractApiError(error, t('spaces:loadPublicFailed')));
       return data.items as unknown as PublicSpaceItem[];
     },
   });
@@ -63,7 +64,10 @@ export function useSpaceLinkToggle() {
         params: { path: { space_id: vars.spaceId } },
         body: { linked: vars.linked },
       });
-      if (error) throw new Error(extractApiError(error, vars.linked ? '链接失败' : '断开失败'));
+      if (error)
+        throw new Error(
+          extractApiError(error, vars.linked ? t('spaces:linkFailed') : t('spaces:unlinkFailed')),
+        );
       return data;
     },
     onSuccess: () => {
@@ -86,7 +90,7 @@ export function useChatSessions() {
     queryKey: ['chat-sessions'],
     queryFn: async () => {
       const { data, error } = await api.GET('/api/v1/chat/sessions', {});
-      if (error) throw new Error(extractApiError(error, '加载会话列表失败'));
+      if (error) throw new Error(extractApiError(error, t('chat:loadSessionsFailed')));
       return data as unknown as { items: ChatSessionItem[]; total: number };
     },
   });
@@ -101,7 +105,7 @@ export function useSpaceCategories(spaceId?: string | null) {
       const { data, error } = await api.GET('/api/v1/spaces/{space_id}/categories', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载分类失败'));
+      if (error) throw new Error(extractApiError(error, t('assets:loadCategoriesFailed')));
       return data;
     },
   });
@@ -116,7 +120,7 @@ export function useSpaceTags(spaceId?: string | null) {
       const r = await api.GET('/api/v1/spaces/{space_id}/tags', {
         params: { path: { space_id: spaceId! } },
       });
-      if (r.error) throw new Error(extractApiError(r.error, '加载标签失败'));
+      if (r.error) throw new Error(extractApiError(r.error, t('assets:loadTagsFailed')));
       return r.data.map((t) => ({ id: t.id, name: t.name }));
     },
     staleTime: 60_000,
@@ -131,7 +135,7 @@ export function useNotifications() {
       const { data, error } = await api.GET('/api/v1/notifications', {
         params: { query: { limit: 200 } },
       });
-      if (error) throw new Error(extractApiError(error, '加载通知失败'));
+      if (error) throw new Error(extractApiError(error, t('notifications:loadFailed')));
       return data;
     },
     refetchInterval: 30_000,
@@ -151,7 +155,7 @@ export function useNotificationActions() {
       const { error } = await api.POST('/api/v1/notifications/{notification_id}/read', {
         params: { path: { notification_id: id } },
       });
-      if (error) throw new Error(extractApiError(error, '标记已读失败'));
+      if (error) throw new Error(extractApiError(error, t('notifications:markReadFailed')));
     },
     onSuccess: invalidate,
     onError: (e) => toast.error(e.message),
@@ -160,7 +164,7 @@ export function useNotificationActions() {
   const markAllRead = useMutation({
     mutationFn: async () => {
       const { error } = await api.POST('/api/v1/notifications/read-all');
-      if (error) throw new Error(extractApiError(error, '全部已读失败'));
+      if (error) throw new Error(extractApiError(error, t('notifications:markAllReadFailed')));
     },
     onSuccess: invalidate,
     onError: (e) => toast.error(e.message),

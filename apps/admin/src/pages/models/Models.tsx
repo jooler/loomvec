@@ -4,10 +4,12 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { cn } from 'cn';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
+import { t as tt } from '@/i18n';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ReasonModal } from '@/components/ReasonModal';
@@ -39,16 +41,18 @@ const PAGE_SIZE = 20;
 /** 筛选 Select 的「不过滤」哨兵值（shadcn Select 无 allowClear，语义等价映射）。 */
 const ALL = '__all__';
 
-const TASK_STATUS_META: Record<string, { tone: BadgeTone; text: string }> = {
-  pending: { tone: 'gray', text: '排队中' },
-  running: { tone: 'blue', text: '进行中' },
-  succeeded: { tone: 'green', text: '完成' },
-  failed: { tone: 'red', text: '失败' },
+/** 任务状态 → 徽章色调（文案经 status.* 翻译）。 */
+const TASK_STATUS_TONE: Record<string, BadgeTone> = {
+  pending: 'gray',
+  running: 'blue',
+  succeeded: 'green',
+  failed: 'red',
 };
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const createSchema = z.object({
-  space_id: z.string().min(1, '请输入空间 ID（UUID）'),
-  target_model: z.string().min(1, '请选择目标模型（白名单）'),
+  space_id: z.string().min(1, tt('models:spaceIdRequired')),
+  target_model: z.string().min(1, tt('models:targetModelRequired')),
 });
 
 type CreateValues = z.infer<typeof createSchema>;
@@ -57,6 +61,7 @@ type CreateValues = z.infer<typeof createSchema>;
 export function ModelsPage() {
   const { canWrite } = usePerm();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('models');
 
   const [status, setStatus] = useState<string | undefined>();
   const [page, setPage] = useState({ current: 1, pageSize: PAGE_SIZE });
@@ -81,7 +86,7 @@ export function ModelsPage() {
       ),
     // 进行中的任务轮询刷新进度
     refetchInterval: (q) =>
-      (q.state.data?.items ?? []).some((t) => t.status === 'running' || t.status === 'pending')
+      (q.state.data?.items ?? []).some((task) => task.status === 'running' || task.status === 'pending')
         ? 5_000
         : false,
   });
@@ -92,12 +97,12 @@ export function ModelsPage() {
     setBusy(true);
     try {
       await unwrap(api.POST('/api/v1/admin/reembed', { body: values }));
-      toast.success('重嵌入任务已创建（检索期间按空间旧版本继续服务，完成后原子切换）');
+      toast.success(t('createdToast'));
       setCreateOpen(false);
       form.reset();
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '创建失败');
+      toast.error(e instanceof Error ? e.message : t('createFailed'));
     } finally {
       setBusy(false);
     }
@@ -113,10 +118,10 @@ export function ModelsPage() {
           body: { reason },
         }),
       );
-      toast.success('已取消（running 状态由 worker 协作停止）');
+      toast.success(t('cancelToast'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setBusy(false);
     }
@@ -125,33 +130,34 @@ export function ModelsPage() {
   const columns: ColumnDef<ReembedTask, unknown>[] = [
     {
       accessorKey: 'id',
-      header: '任务 ID',
+      header: t('col.taskId'),
       cell: ({ row }) => `${row.original.id.slice(0, 8)}…`,
     },
     {
       accessorKey: 'space_id',
-      header: '空间',
+      header: t('col.space'),
       cell: ({ row }) => row.original.space_id ?? '-',
     },
     {
       accessorKey: 'target_model',
-      header: '目标模型',
+      header: t('col.targetModel'),
       cell: ({ row }) => <StatusBadge tone="purple">{row.original.target_model}</StatusBadge>,
     },
     {
       accessorKey: 'status',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) => {
-        const m = TASK_STATUS_META[row.original.status] ?? {
-          tone: 'gray' as const,
-          text: row.original.status,
-        };
-        return <StatusBadge tone={m.tone}>{m.text}</StatusBadge>;
+        const s = row.original.status;
+        return (
+          <StatusBadge tone={TASK_STATUS_TONE[s] ?? 'gray'}>
+            {t(`status.${s}`, { defaultValue: s })}
+          </StatusBadge>
+        );
       },
     },
     {
       id: 'progress',
-      header: '进度',
+      header: t('col.progress'),
       cell: ({ row }) => {
         const r = row.original;
         const pct = r.total_assets ? Math.round((r.done_assets / r.total_assets) * 100) : 0;
@@ -172,7 +178,7 @@ export function ModelsPage() {
     },
     {
       id: 'assets',
-      header: '资产（完成/失败/总数）',
+      header: t('col.assets'),
       cell: ({ row }) => {
         const r = row.original;
         return `${r.done_assets} / ${r.failed_assets} / ${r.total_assets}`;
@@ -180,17 +186,17 @@ export function ModelsPage() {
     },
     {
       accessorKey: 'error',
-      header: '错误',
+      header: t('col.error'),
       cell: ({ row }) => row.original.error ?? '-',
     },
     {
       accessorKey: 'updated_at',
-      header: '更新时间',
+      header: t('col.updatedAt'),
       cell: ({ row }) => formatDateTime(row.original.updated_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) =>
         row.original.status === 'pending' || row.original.status === 'running' ? (
           <Button
@@ -200,7 +206,7 @@ export function ModelsPage() {
             disabled={!canWrite}
             onClick={() => setCancelTarget(row.original)}
           >
-            取消
+            {t('action.cancel')}
           </Button>
         ) : (
           '-'
@@ -211,11 +217,11 @@ export function ModelsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="重嵌入任务"
-        description="模型切换后的空间级重嵌入；向量携带 model_version，过渡期检索按旧版本继续服务"
+        title={t('title')}
+        description={t('description')}
         actions={
           <Button disabled={!canWrite} onClick={() => setCreateOpen(true)}>
-            新建重嵌入任务
+            {t('createTask')}
           </Button>
         }
       />
@@ -229,13 +235,13 @@ export function ModelsPage() {
           }}
         >
           <SelectTrigger className="w-[140px]">
-            <SelectValue placeholder="状态" />
+            <SelectValue placeholder={t('field.status')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>全部</SelectItem>
-            {Object.entries(TASK_STATUS_META).map(([value, m]) => (
+            <SelectItem value={ALL}>{t('action.all')}</SelectItem>
+            {Object.keys(TASK_STATUS_TONE).map((value) => (
               <SelectItem key={value} value={value}>
-                {m.text}
+                {t(`status.${value}`, { defaultValue: value })}
               </SelectItem>
             ))}
           </SelectContent>
@@ -264,14 +270,14 @@ export function ModelsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>新建重嵌入任务</DialogTitle>
+            <DialogTitle>{t('createTask')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={create} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="reembed-space-id">空间 ID</Label>
+              <Label htmlFor="reembed-space-id">{t('spaceIdLabel')}</Label>
               <Input
                 id="reembed-space-id"
-                placeholder="目标空间 UUID"
+                placeholder={t('spaceIdPlaceholder')}
                 {...form.register('space_id')}
               />
               {form.formState.errors.space_id && (
@@ -281,13 +287,13 @@ export function ModelsPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>目标模型（白名单）</Label>
+              <Label>{t('targetModelLabel')}</Label>
               <Select
                 value={form.watch('target_model') || undefined}
                 onValueChange={(v) => form.setValue('target_model', v, { shouldValidate: true })}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="请选择目标模型（白名单）" />
+                  <SelectValue placeholder={t('targetModelPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {EMBEDDING_MODEL_OPTIONS.map((m) => (
@@ -310,10 +316,10 @@ export function ModelsPage() {
                 disabled={busy}
                 onClick={() => setCreateOpen(false)}
               >
-                取消
+                {t('action.cancel')}
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy ? '创建中…' : '创建'}
+                {busy ? t('creating') : t('action.create')}
               </Button>
             </DialogFooter>
           </form>
@@ -323,9 +329,9 @@ export function ModelsPage() {
       {/* 取消任务（危险操作）：理由入审计 */}
       <ReasonModal
         open={cancelTarget !== null}
-        title={`取消重嵌入任务 ${cancelTarget?.id.slice(0, 8) ?? ''}`}
-        description="取消后该任务不再继续执行（running 状态由 worker 协作停止）。"
-        okText="确认取消任务"
+        title={t('cancelTitle', { id: cancelTarget?.id.slice(0, 8) ?? '' })}
+        description={t('cancelDescription')}
+        okText={t('confirmCancelTask')}
         danger
         confirmLoading={busy}
         onCancel={() => setCancelTarget(null)}

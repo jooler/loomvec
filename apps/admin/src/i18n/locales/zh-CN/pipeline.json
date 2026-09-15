@@ -1,0 +1,43 @@
+{
+  "title": "管线监控",
+  "viewDetail": "详情",
+  "failuresTitle": "失败原因聚合 Top 10",
+  "noFailures": "近 24h 无失败记录",
+  "filterStagePlaceholder": "管线阶段",
+  "mimePlaceholder": "资产 MIME 类型，如 application/pdf",
+  "mimeFilter": "按 MIME 过滤",
+  "retryAccepted": "重试已受理",
+  "retryConfirmTitle": "确认重试该任务？",
+  "retryConfirmDescription": "将从指定步骤（默认 parse）重新派发管线任务。",
+  "retryTitle": "重试任务 {{id}}（{{jobType}}）",
+  "stepPlaceholder": "起始步骤（默认 parse）",
+  "defaultStep": "默认（parse）",
+  "retrying": "重试中…",
+  "confirmRetry": "确认重试",
+  "retryTask": "重试任务",
+  "taskTitle": "任务 {{id}}…",
+  "stepsTitle": "同资产各阶段（耗时分解）",
+  "jobStatus": {
+    "pending": "排队",
+    "running": "进行中",
+    "succeeded": "成功",
+    "failed": "失败"
+  },
+  "col": {
+    "taskId": "任务 ID",
+    "asset": "资产",
+    "stage": "阶段",
+    "progress": "进度",
+    "attempts": "尝试",
+    "error": "错误",
+    "startedAt": "开始",
+    "finishedAt": "结束",
+    "duration": "耗时"
+  },
+  "detailLabel": {
+    "assetId": "资产 ID",
+    "attemptCount": "尝试次数",
+    "startedAt": "开始时间",
+    "finishedAt": "结束时间"
+  }
+}

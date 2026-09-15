@@ -4,6 +4,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DataTable } from '@loomvec/ui/components/data-table';
@@ -28,15 +29,17 @@ import { formatDateTime } from '@/utils';
 
 const DELIVERY_PAGE_SIZE = 10;
 
-const DELIVERY_STATUS_META: Record<string, { tone: BadgeTone; text: string }> = {
-  pending: { tone: 'gray', text: '待投递' },
-  delivered: { tone: 'green', text: '已投递' },
-  failed: { tone: 'red', text: '失败' },
-  dead: { tone: 'red', text: '死信' },
+/** 投递状态 → 徽章色调（文案经 delivery.status.* 翻译）。 */
+const DELIVERY_STATUS_TONE: Record<string, BadgeTone> = {
+  pending: 'gray',
+  delivered: 'green',
+  failed: 'red',
+  dead: 'red',
 };
 
 export function DeliverySheet(props: { sub: Subscription; canWrite: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation('open');
   const [status, setStatus] = useState<string | undefined>();
   const [page, setPage] = useState({ current: 1, pageSize: DELIVERY_PAGE_SIZE });
 
@@ -64,39 +67,40 @@ export function DeliverySheet(props: { sub: Subscription; canWrite: boolean; onC
           params: { path: { delivery_id: d.id } },
         }),
       );
-      toast.success('重放已受理');
+      toast.success(t('delivery.replayAccepted'));
       void queryClient.invalidateQueries({ queryKey: ['admin-webhook-deliveries'] });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
   const columns: ColumnDef<Delivery, unknown>[] = [
     {
       accessorKey: 'event_type',
-      header: '事件',
+      header: t('webhook.col.events'),
       cell: ({ row }) => <Badge variant="outline">{row.original.event_type}</Badge>,
     },
     {
       accessorKey: 'status',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) => {
-        const m = DELIVERY_STATUS_META[row.original.status] ?? {
-          tone: 'gray' as BadgeTone,
-          text: row.original.status,
-        };
-        return <StatusBadge tone={m.tone}>{m.text}</StatusBadge>;
+        const s = row.original.status;
+        return (
+          <StatusBadge tone={DELIVERY_STATUS_TONE[s] ?? 'gray'}>
+            {t(`delivery.status.${s}`, { defaultValue: s })}
+          </StatusBadge>
+        );
       },
     },
-    { accessorKey: 'attempt', header: '尝试' },
+    { accessorKey: 'attempt', header: t('delivery.col.attempts') },
     {
       accessorKey: 'response_status',
-      header: '响应码',
+      header: t('delivery.col.responseStatus'),
       cell: ({ row }) => row.original.response_status ?? '-',
     },
     {
       accessorKey: 'error',
-      header: '错误',
+      header: t('delivery.col.error'),
       cell: ({ row }) => (
         <span className="block max-w-40 truncate" title={row.original.error ?? undefined}>
           {row.original.error ?? '-'}
@@ -105,25 +109,25 @@ export function DeliverySheet(props: { sub: Subscription; canWrite: boolean; onC
     },
     {
       accessorKey: 'delivered_at',
-      header: '投递时间',
+      header: t('delivery.col.deliveredAt'),
       cell: ({ row }) => (row.original.delivered_at ? formatDateTime(row.original.delivered_at) : '-'),
     },
     {
       accessorKey: 'created_at',
-      header: '创建时间',
+      header: t('field.createdAt'),
       cell: ({ row }) => formatDateTime(row.original.created_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => {
         const d = row.original;
         return d.status === 'failed' || d.status === 'dead' ? (
           <ConfirmAction
-            title="确认重放该投递？"
+            title={t('delivery.replayConfirm')}
             trigger={
               <Button variant="link" size="sm" disabled={!props.canWrite}>
-                重放
+                {t('delivery.replay')}
               </Button>
             }
             onConfirm={() => replay(d)}
@@ -139,7 +143,7 @@ export function DeliverySheet(props: { sub: Subscription; canWrite: boolean; onC
     <Sheet open onOpenChange={(o) => !o && props.onClose()}>
       <SheetContent className="w-full gap-4 sm:max-w-[880px]">
         <SheetHeader className="flex-row flex-wrap items-center justify-between gap-2">
-          <SheetTitle>投递日志：{props.sub.name}</SheetTitle>
+          <SheetTitle>{t('delivery.title', { name: props.sub.name })}</SheetTitle>
           <div className="flex items-center gap-1">
             <Select
               value={status}
@@ -149,12 +153,12 @@ export function DeliverySheet(props: { sub: Subscription; canWrite: boolean; onC
               }}
             >
               <SelectTrigger className="w-[130px]">
-                <SelectValue placeholder="投递状态" />
+                <SelectValue placeholder={t('delivery.statusPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(DELIVERY_STATUS_META).map(([value, m]) => (
+                {Object.keys(DELIVERY_STATUS_TONE).map((value) => (
                   <SelectItem key={value} value={value}>
-                    {m.text}
+                    {t(`delivery.status.${value}`, { defaultValue: value })}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -163,8 +167,8 @@ export function DeliverySheet(props: { sub: Subscription; canWrite: boolean; onC
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label="清除筛选"
-                title="清除筛选"
+                aria-label={t('clearFilter')}
+                title={t('clearFilter')}
                 onClick={() => {
                   setStatus(undefined);
                   setPage({ current: 1, pageSize: DELIVERY_PAGE_SIZE });

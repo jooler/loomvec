@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useParams } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useMySpaces } from '@/hooks';
-import { ROLE_META, ROLE_TONE } from '@/utils';
+import { ROLE_TONE } from '@/utils';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { cn } from 'cn';
@@ -12,21 +13,22 @@ import { cn } from 'cn';
 export function SpaceLayout() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const spaces = useMySpaces();
+  const { t } = useTranslation('layout');
   const space = (spaces.data ?? []).find((s) => s.id === spaceId);
   const role = space?.my_role ?? '';
 
   const mainTabs = [
-    { to: 'assets', label: '资产' },
-    { to: 'search', label: '检索' },
-    { to: 'graph', label: '图谱' },
-    ...(role === 'owner' || role === 'editor' ? [{ to: 'review', label: '审核' }] : []),
+    { to: 'assets', label: t('tab.assets') },
+    { to: 'search', label: t('tab.search') },
+    { to: 'graph', label: t('tab.graph') },
+    ...(role === 'owner' || role === 'editor' ? [{ to: 'review', label: t('tab.review') }] : []),
   ];
   // 成员 / 设置：管理向页签，固定在页签栏右侧
   const adminTabs =
     role === 'owner'
       ? [
-          { to: 'members', label: '成员' },
-          { to: 'settings', label: '设置' },
+          { to: 'members', label: t('tab.members') },
+          { to: 'settings', label: t('tab.settings') },
         ]
       : [];
 
@@ -44,12 +46,14 @@ export function SpaceLayout() {
         {spaces.isLoading ? (
           <Spinner className="size-5 text-muted-foreground" />
         ) : (
-          <h1 className="truncate text-lg font-semibold">{space?.name ?? '空间'}</h1>
+          <h1 className="truncate text-lg font-semibold">{space?.name ?? t('spaceFallback')}</h1>
         )}
         {space && (
-          <StatusBadge tone={ROLE_TONE[role]}>{ROLE_META[role]?.text ?? role}</StatusBadge>
+          <StatusBadge tone={ROLE_TONE[role]}>
+            {t(`role.${role}`, { defaultValue: role })}
+          </StatusBadge>
         )}
-        {space?.review_required && <StatusBadge tone="amber">需审核</StatusBadge>}
+        {space?.review_required && <StatusBadge tone="amber">{t('reviewRequired')}</StatusBadge>}
       </div>
       <nav className="flex items-center gap-1 border-b">
         {mainTabs.map((t) => (

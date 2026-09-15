@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import type { ApiClient } from '@loomvec/sdk-ts';
 
 import { cn } from 'cn';
+import { useTranslation } from 'react-i18next';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
@@ -44,16 +45,17 @@ import { extractApiError } from '../lib/format';
 const PAGE_SIZE = 20;
 const ALL = '__all__';
 
-const UNIT_TYPE_TEXT: Record<string, string> = {
-  text: '文本',
-  table: '表格',
-  image: '图片',
+/** 语义单元类型 / 分片方式 → ui:chunks 下的文案 key；未知值回退原值。 */
+const UNIT_TYPE_KEY: Record<string, string> = {
+  text: 'typeText',
+  table: 'typeTable',
+  image: 'typeImage',
 };
 
-const CHUNK_METHOD_TEXT: Record<string, string> = {
-  llm_markers: 'LLM 分片',
-  structural_fallback: '结构化兜底',
-  manual: '手动',
+const CHUNK_METHOD_KEY: Record<string, string> = {
+  llm_markers: 'sourceLlmMarkers',
+  structural_fallback: 'sourceStructuralFallback',
+  manual: 'sourceManual',
 };
 
 interface UnitRow {
@@ -105,6 +107,7 @@ function UnitDialog({
   submitting: boolean;
 }) {
   const [values, setValues] = useState(initial);
+  const { t } = useTranslation();
   useEffect(() => {
     if (open) setValues(initial);
   }, [open, initial]);
@@ -118,35 +121,35 @@ function UnitDialog({
     >
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{mode === 'create' ? '新增 chunk' : '编辑 chunk'}</DialogTitle>
+          <DialogTitle>
+            {mode === 'create' ? t('chunks.dialogCreateTitle') : t('chunks.dialogEditTitle')}
+          </DialogTitle>
           <DialogDescription>
-            {mode === 'create'
-              ? '追加为本资产的最后一个分片，保存后立即向量化并进入检索索引。'
-              : '修改标题或内容保存后，将立即重新向量化。'}
+            {mode === 'create' ? t('chunks.dialogCreateDesc') : t('chunks.dialogEditDesc')}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label>标题（可选）</Label>
+            <Label>{t('chunks.fieldTitle')}</Label>
             <Input
               value={values.title}
               maxLength={512}
-              placeholder="chunk 标题"
+              placeholder={t('chunks.titlePlaceholder')}
               onChange={(e) => setValues((v) => ({ ...v, title: e.target.value }))}
             />
           </div>
           <div className="space-y-1.5">
-            <Label>内容</Label>
+            <Label>{t('chunks.fieldContent')}</Label>
             <Textarea
               value={values.content}
               rows={8}
-              placeholder="chunk 正文（表格类可粘贴 HTML 片段）"
+              placeholder={t('chunks.contentPlaceholder')}
               onChange={(e) => setValues((v) => ({ ...v, content: e.target.value }))}
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>关键词（逗号分隔，可选）</Label>
+              <Label>{t('chunks.fieldKeywords')}</Label>
               <Input
                 value={values.keywords}
                 placeholder="kw1, kw2"
@@ -155,7 +158,7 @@ function UnitDialog({
             </div>
             {mode === 'create' && (
               <div className="space-y-1.5">
-                <Label>类型</Label>
+                <Label>{t('chunks.fieldType')}</Label>
                 <Select
                   value={values.unit_type}
                   onValueChange={(v) => setValues((prev) => ({ ...prev, unit_type: v }))}
@@ -164,8 +167,8 @@ function UnitDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="text">文本</SelectItem>
-                    <SelectItem value="table">表格</SelectItem>
+                    <SelectItem value="text">{t('chunks.typeText')}</SelectItem>
+                    <SelectItem value="table">{t('chunks.typeTable')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -174,10 +177,10 @@ function UnitDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            取消
+            {t('action.cancel')}
           </Button>
           <Button disabled={!valid || submitting} onClick={() => onSubmit(values)}>
-            {submitting ? '保存中…' : '保存'}
+            {submitting ? t('action.saving') : t('action.save')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -197,6 +200,7 @@ function RetrievalTest({
 }) {
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
+  const { t } = useTranslation();
   const test = useQuery({
     queryKey: ['asset-units-test', assetId, submitted],
     enabled: submitted.trim().length > 0,
@@ -209,7 +213,7 @@ function RetrievalTest({
           top_k: 5,
         },
       });
-      if (error) throw new Error(extractApiError(error, '检索测试失败'));
+      if (error) throw new Error(extractApiError(error, t('chunks.retrieveTestFailed')));
       return data;
     },
   });
@@ -218,8 +222,8 @@ function RetrievalTest({
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <FlaskConical className="size-4 text-muted-foreground" />
-        <p className="text-sm font-medium">检索测试</p>
-        <p className="text-xs text-muted-foreground">输入查询验证本资产的 chunk 是否可被召回</p>
+        <p className="text-sm font-medium">{t('chunks.testTitle')}</p>
+        <p className="text-xs text-muted-foreground">{t('chunks.testDesc')}</p>
       </div>
       <form
         className="flex gap-2"
@@ -231,10 +235,10 @@ function RetrievalTest({
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="例如：核心结论是什么？"
+          placeholder={t('chunks.testPlaceholder')}
         />
         <Button type="submit" size="sm" disabled={query.trim().length === 0}>
-          测试
+          {t('chunks.testButton')}
         </Button>
       </form>
       {test.isFetching && (
@@ -246,18 +250,18 @@ function RetrievalTest({
         <p className="text-sm text-destructive">{(test.error as Error).message}</p>
       )}
       {test.data && test.data.items.length === 0 && (
-        <p className="py-2 text-sm text-muted-foreground">没有召回任何 chunk——可尝试调整分片内容。</p>
+        <p className="py-2 text-sm text-muted-foreground">{t('chunks.testEmpty')}</p>
       )}
       {(test.data?.items ?? []).map((hit) => (
         <div key={hit.unit_id} className="rounded-md border p-2.5">
           <div className="mb-1 flex items-center gap-2">
             <Badge variant="secondary">{(hit.score * 100).toFixed(0)}</Badge>
             <span className="text-xs text-muted-foreground">
-              {UNIT_TYPE_TEXT[hit.unit_type] ?? hit.unit_type}
+              {t(`chunks.${UNIT_TYPE_KEY[hit.unit_type] ?? ''}`, { defaultValue: hit.unit_type })}
               {(() => {
                 const pages = (hit.locator ?? {}) as { pages?: number[] };
                 return pages.pages?.length
-                  ? ` · 第 ${pages.pages.map((p) => p + 1).join(',')} 页`
+                  ? ` · ${t('chunks.pageLocator', { pages: pages.pages.map((p) => p + 1).join(',') })}`
                   : '';
               })()}
             </span>
@@ -293,6 +297,7 @@ export function AssetChunksPanel({
   className?: string;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const [input, setInput] = useState('');
   const [q, setQ] = useState('');
   const [unitType, setUnitType] = useState('');
@@ -304,11 +309,11 @@ export function AssetChunksPanel({
 
   // 关键词防抖（300ms），变化时回到第一页
   useEffect(() => {
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       setQ(input);
       setPage(1);
     }, 300);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [input]);
 
   const units = useQuery({
@@ -325,7 +330,7 @@ export function AssetChunksPanel({
           },
         },
       });
-      if (error) throw new Error(extractApiError(error, '加载 chunk 列表失败'));
+      if (error) throw new Error(extractApiError(error, t('chunks.loadFailed')));
       return data;
     },
   });
@@ -349,7 +354,7 @@ export function AssetChunksPanel({
             keywords,
           },
         });
-        if (error) throw new Error(extractApiError(error, '保存失败'));
+        if (error) throw new Error(extractApiError(error, t('chunks.saveFailed')));
       } else {
         const { error } = await client.POST('/api/v1/assets/{asset_id}/units', {
           params: { path: { asset_id: assetId } },
@@ -360,11 +365,13 @@ export function AssetChunksPanel({
             unit_type: values.unit_type,
           },
         });
-        if (error) throw new Error(extractApiError(error, '新增失败'));
+        if (error) throw new Error(extractApiError(error, t('chunks.createFailed')));
       }
     },
     onSuccess: () => {
-      toast.success(dialog?.mode === 'edit' ? '已保存并重新向量化' : '已新增 chunk 并向量化');
+      toast.success(
+        dialog?.mode === 'edit' ? t('chunks.savedRevectorized') : t('chunks.createdRevectorized'),
+      );
       setDialog(null);
       invalidate();
     },
@@ -376,10 +383,10 @@ export function AssetChunksPanel({
         params: { path: { asset_id: assetId } },
         body: { unit_ids: ids },
       });
-      if (error) throw new Error(extractApiError(error, '删除失败'));
+      if (error) throw new Error(extractApiError(error, t('chunks.deleteFailed')));
     },
     onSuccess: (_data, ids) => {
-      toast.success(`已删除 ${ids.length} 个 chunk（含向量清理）`);
+      toast.success(t('chunks.deletedChunks', { count: ids.length }));
       setSelected(new Set());
       invalidate();
     },
@@ -406,7 +413,7 @@ export function AssetChunksPanel({
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="搜索内容/标题…"
+            placeholder={t('chunks.searchPlaceholder')}
             className="h-8 w-48"
           />
           <Select value={unitType || ALL} onValueChange={(v) => { setUnitType(v === ALL ? '' : v); setPage(1); }}>
@@ -414,18 +421,18 @@ export function AssetChunksPanel({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL}>全部类型</SelectItem>
-              <SelectItem value="text">文本</SelectItem>
-              <SelectItem value="table">表格</SelectItem>
-              <SelectItem value="image">图片</SelectItem>
+              <SelectItem value={ALL}>{t('chunks.allTypes')}</SelectItem>
+              <SelectItem value="text">{t('chunks.typeText')}</SelectItem>
+              <SelectItem value="table">{t('chunks.typeTable')}</SelectItem>
+              <SelectItem value="image">{t('chunks.typeImage')}</SelectItem>
             </SelectContent>
           </Select>
           <Button variant="outline" size="sm" onClick={() => void units.refetch()}>
-            <RefreshCw /> 刷新
+            <RefreshCw /> {t('action.refresh')}
           </Button>
           {canManage && (
             <Button size="sm" onClick={() => setDialog({ mode: 'create' })}>
-              <Plus /> 新增 chunk
+              <Plus /> {t('chunks.newChunk')}
             </Button>
           )}
         </div>
@@ -433,17 +440,17 @@ export function AssetChunksPanel({
         {/* 批量操作条 */}
         {canManage && selected.size > 0 && (
           <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-1.5">
-            <span className="text-sm">已选 {selected.size} 项</span>
+            <span className="text-sm">{t('chunks.selectedCount', { count: selected.size })}</span>
             <div className="flex-1" />
             <ConfirmAction
               trigger={
                 <Button variant="destructive" size="sm" disabled={bulkDelete.isPending}>
-                  <Trash2 /> 批量删除
+                  <Trash2 /> {t('chunks.batchDelete')}
                 </Button>
               }
-              title="删除选中的 chunk？"
-              description="将同步清理向量与索引，不可恢复。"
-              confirmText="删除"
+              title={t('chunks.deleteSelectedTitle')}
+              description={t('chunks.deleteDesc')}
+              confirmText={t('action.delete')}
               danger
               onConfirm={() => bulkDelete.mutate([...selected])}
             />
@@ -459,7 +466,7 @@ export function AssetChunksPanel({
           </div>
         ) : rows.length === 0 ? (
           <EmptyState
-            title={q || unitType ? '没有符合筛选条件的 chunk' : '解析完成后这里会展示切分结果'}
+            title={q || unitType ? t('chunks.emptyFiltered') : t('chunks.emptyInitial')}
             className="py-8"
           />
         ) : (
@@ -472,7 +479,7 @@ export function AssetChunksPanel({
                     setSelected(v === true ? new Set(pageIds) : new Set())
                   }
                 />
-                全选本页
+                {t('chunks.selectAllPage')}
               </label>
             )}
             {rows.map((u) => {
@@ -500,20 +507,28 @@ export function AssetChunksPanel({
                         <span className="font-mono text-xs text-muted-foreground">
                           #{u.order_index + 1}
                         </span>
-                        <Badge variant="outline">{UNIT_TYPE_TEXT[u.unit_type] ?? u.unit_type}</Badge>
+                        <Badge variant="outline">
+                          {t(`chunks.${UNIT_TYPE_KEY[u.unit_type] ?? ''}`, { defaultValue: u.unit_type })}
+                        </Badge>
                         <Badge variant="secondary">
-                          {CHUNK_METHOD_TEXT[u.chunk_method] ?? u.chunk_method}
+                          {t(`chunks.${CHUNK_METHOD_KEY[u.chunk_method] ?? ''}`, {
+                            defaultValue: u.chunk_method,
+                          })}
                         </Badge>
                         {u.embed_model_version ? (
-                          <StatusBadge tone="green">已向量化</StatusBadge>
+                          <StatusBadge tone="green">{t('chunks.vectorized')}</StatusBadge>
                         ) : (
-                          <StatusBadge tone="gray">未向量化</StatusBadge>
+                          <StatusBadge tone="gray">{t('chunks.notVectorized')}</StatusBadge>
                         )}
                         <span className="text-xs text-muted-foreground">
-                          {u.char_count} 字
-                          {pages.length > 0 && ` · 第 ${pages.map((p) => p + 1).join(',')} 页`}
+                          {t('chunks.charCount', { count: u.char_count })}
+                          {pages.length > 0 &&
+                            ` · ${t('chunks.pageLocator', { pages: pages.map((p) => p + 1).join(',') })}`}
                           {u.locator?.start_line !== undefined &&
-                            ` · 行 ${u.locator.start_line}-${u.locator.end_line}`}
+                            ` · ${t('chunks.lineLocator', {
+                              start: u.locator.start_line,
+                              end: u.locator.end_line,
+                            })}`}
                         </span>
                       </div>
                       {u.title && <p className="text-sm font-medium">{u.title}</p>}
@@ -567,9 +582,9 @@ export function AssetChunksPanel({
                               <Trash2 />
                             </Button>
                           }
-                          title="删除该 chunk？"
-                          description="将同步清理向量与索引，不可恢复。"
-                          confirmText="删除"
+                          title={t('chunks.deleteOneTitle')}
+                          description={t('chunks.deleteDesc')}
+                          confirmText={t('action.delete')}
                           danger
                           onConfirm={() => bulkDelete.mutate([u.id])}
                         />
@@ -591,7 +606,7 @@ export function AssetChunksPanel({
               disabled={page <= 1}
               onClick={() => setPage((p) => p - 1)}
             >
-              上一页
+              {t('pagination.prev')}
             </Button>
             <span className="text-xs text-muted-foreground">
               {page} / {pageCount}
@@ -602,7 +617,7 @@ export function AssetChunksPanel({
               disabled={page >= pageCount}
               onClick={() => setPage((p) => p + 1)}
             >
-              下一页
+              {t('pagination.next')}
             </Button>
           </div>
         )}
@@ -612,7 +627,7 @@ export function AssetChunksPanel({
           className="text-sm text-muted-foreground hover:text-foreground"
           onClick={() => setShowTest((v) => !v)}
         >
-          {showTest ? '收起检索测试 ▾' : '展开检索测试 ▸'}
+          {showTest ? t('chunks.hideTest') : t('chunks.showTest')}
         </button>
         {showTest && <RetrievalTest client={client} assetId={assetId} spaceId={spaceId} />}
       </CardContent>

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitMerge, RotateCcw, ShieldAlert, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { useMySpaces } from '@/hooks';
 import { extractApiError } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -28,12 +29,6 @@ import {
  * P3-WEB-05 图谱管理（空间 owner 视角）：实体列表 / 合并日志审阅与回滚 /
  * 重建触发。merge_log 回滚为高危操作，二次确认后执行。
  */
-
-const REASON_LABEL: Record<string, string> = {
-  auto_vector: '向量近邻',
-  auto_name: '名称相似',
-  manual: '人工',
-};
 
 interface GraphStats {
   entities: number;
@@ -62,6 +57,7 @@ interface MergeItem {
 export function GraphPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('graph');
   const [entityQuery, setEntityQuery] = useState('');
 
   const spaces = useMySpaces();
@@ -74,7 +70,7 @@ export function GraphPage() {
       const resp = await api.GET('/api/v1/spaces/{space_id}/graph/stats', {
         params: { path: { space_id: spaceId! } },
       });
-      if (resp.error) throw new Error(extractApiError(resp.error, '加载图谱统计失败'));
+      if (resp.error) throw new Error(extractApiError(resp.error, t('loadStatsFailed')));
       return resp.data as unknown as GraphStats;
     },
     enabled: !!spaceId,
@@ -86,7 +82,7 @@ export function GraphPage() {
       const resp = await api.GET('/api/v1/spaces/{space_id}/graph/entities', {
         params: { path: { space_id: spaceId! }, query: { q: entityQuery || undefined, limit: 100 } },
       });
-      if (resp.error) throw new Error(extractApiError(resp.error, '加载实体失败'));
+      if (resp.error) throw new Error(extractApiError(resp.error, t('loadEntitiesFailed')));
       return resp.data as unknown as { items: EntityItem[]; total: number };
     },
     enabled: !!spaceId,
@@ -98,7 +94,7 @@ export function GraphPage() {
       const resp = await api.GET('/api/v1/spaces/{space_id}/graph/merges', {
         params: { path: { space_id: spaceId! }, query: { limit: 50 } },
       });
-      if (resp.error) throw new Error(extractApiError(resp.error, '加载合并日志失败'));
+      if (resp.error) throw new Error(extractApiError(resp.error, t('loadMergesFailed')));
       return resp.data as unknown as { items: MergeItem[]; total: number };
     },
     enabled: !!spaceId,
@@ -110,10 +106,10 @@ export function GraphPage() {
         '/api/v1/spaces/{space_id}/graph/merges/{log_id}/rollback',
         { params: { path: { space_id: spaceId!, log_id: logId } } },
       );
-      if (error) throw new Error(extractApiError(error, '回滚失败（需要 owner 角色）'));
+      if (error) throw new Error(extractApiError(error, t('rollbackFailed')));
     },
     onSuccess: () => {
-      toast.success('已回滚该次合并');
+      toast.success(t('rolledBack'));
       queryClient.invalidateQueries({ queryKey: ['graph-merges', spaceId] });
       queryClient.invalidateQueries({ queryKey: ['graph-entities', spaceId] });
       queryClient.invalidateQueries({ queryKey: ['graph-stats', spaceId] });
@@ -127,10 +123,10 @@ export function GraphPage() {
         params: { path: { space_id: spaceId! } },
         body: {},
       });
-      if (error) throw new Error(extractApiError(error, '触发失败（需要 owner 角色）'));
+      if (error) throw new Error(extractApiError(error, t('triggerFailed')));
     },
     onSuccess: () => {
-      toast.success('合并任务已入队（低优先级队列异步执行）');
+      toast.success(t('mergeQueued'));
       queryClient.invalidateQueries({ queryKey: ['graph-merges', spaceId] });
     },
     onError: (e) => toast.error(e.message),
@@ -142,10 +138,10 @@ export function GraphPage() {
         params: { path: { space_id: spaceId! } },
         body: { reprocess_assets: true },
       });
-      if (error) throw new Error(extractApiError(error, '触发失败（需要 owner 角色）'));
+      if (error) throw new Error(extractApiError(error, t('triggerFailed')));
     },
     onSuccess: () => {
-      toast.success('图谱重建已入队，将逐资产重跑图谱步骤');
+      toast.success(t('rebuildQueued'));
       queryClient.invalidateQueries({ queryKey: ['graph-stats', spaceId] });
     },
     onError: (e) => toast.error(e.message),
@@ -156,21 +152,21 @@ export function GraphPage() {
       <div className="grid gap-3 sm:grid-cols-3">
         <Card className="gap-2 py-4">
           <CardContent>
-            <p className="text-sm text-muted-foreground">实体</p>
+            <p className="text-sm text-muted-foreground">{t('statEntities')}</p>
             <p className="text-2xl font-semibold">{stats.data?.entities ?? '—'}</p>
           </CardContent>
         </Card>
         <Card className="gap-2 py-4">
           <CardContent>
-            <p className="text-sm text-muted-foreground">关系（图边）</p>
+            <p className="text-sm text-muted-foreground">{t('statEdges')}</p>
             <p className="text-2xl font-semibold">
-              {stats.data?.edges === -1 ? '图谱不可用' : (stats.data?.edges ?? '—')}
+              {stats.data?.edges === -1 ? t('graphUnavailable') : (stats.data?.edges ?? '—')}
             </p>
           </CardContent>
         </Card>
         <Card className="gap-2 py-4">
           <CardContent>
-            <p className="text-sm text-muted-foreground">合并次数</p>
+            <p className="text-sm text-muted-foreground">{t('statMerges')}</p>
             <p className="text-2xl font-semibold">{stats.data?.merges ?? '—'}</p>
           </CardContent>
         </Card>
@@ -178,11 +174,11 @@ export function GraphPage() {
 
       <Card className="py-4">
         <CardHeader className="flex-row items-center justify-between border-b pb-3">
-          <CardTitle className="text-base">实体列表</CardTitle>
+          <CardTitle className="text-base">{t('entitiesTitle')}</CardTitle>
           <div className="flex items-center gap-2">
             <Input
               className="h-8 w-48"
-              placeholder="搜索实体名"
+              placeholder={t('searchPlaceholder')}
               value={entityQuery}
               onChange={(e) => setEntityQuery(e.target.value)}
             />
@@ -194,26 +190,23 @@ export function GraphPage() {
                   disabled={runMerge.isPending}
                   onClick={() => runMerge.mutate()}
                 >
-                  <GitMerge /> 运行合并
+                  <GitMerge /> {t('runMerge')}
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button size="sm" variant="outline" disabled={rebuild.isPending}>
-                      重建图谱
+                      {t('rebuild')}
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>重建空间图谱？</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        将清空该空间的图结构并逐资产重跑图谱抽取（低优先级队列异步执行）。
-                        实体主数据与合并日志保留。已完成抽取的资产会重新调用 LLM。
-                      </AlertDialogDescription>
+                      <AlertDialogTitle>{t('rebuildTitle')}</AlertDialogTitle>
+                      <AlertDialogDescription>{t('rebuildDesc')}</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogCancel>{t('action.cancel')}</AlertDialogCancel>
                       <AlertDialogAction onClick={() => rebuild.mutate()}>
-                        确认重建
+                        {t('confirmRebuild')}
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
@@ -230,7 +223,7 @@ export function GraphPage() {
           ) : entities.isError ? (
             <p className="text-sm text-destructive">{(entities.error as Error).message}</p>
           ) : (entities.data?.items?.length ?? 0) === 0 ? (
-            <EmptyState title="暂无实体" description="上传文档并完成图谱抽取后，实体将出现在这里。" />
+            <EmptyState title={t('emptyEntities')} description={t('emptyEntitiesDesc')} />
           ) : (
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {(entities.data?.items ?? []).map((e) => (
@@ -243,7 +236,10 @@ export function GraphPage() {
                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{e.description}</p>
                   )}
                   {e.aliases.length > 0 && (
-                    <p className="mt-1 text-xs text-muted-foreground">别名：{e.aliases.join('、')}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('aliasesLabel')}
+                      {e.aliases.join('、')}
+                    </p>
                   )}
                 </div>
               ))}
@@ -254,12 +250,12 @@ export function GraphPage() {
 
       <Card className="py-4">
         <CardHeader className="items-center border-b pb-3">
-          <CardTitle className="text-base">合并日志（可回滚）</CardTitle>
+          <CardTitle className="text-base">{t('mergesTitle')}</CardTitle>
           {!isOwner && (
             <CardAction>
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <ShieldAlert className="size-3" />
-                回滚/重建需空间 owner
+                {t('ownerRequired')}
               </span>
             </CardAction>
           )}
@@ -272,7 +268,7 @@ export function GraphPage() {
           ) : merges.isError ? (
             <p className="text-sm text-destructive">{(merges.error as Error).message}</p>
           ) : (merges.data?.items?.length ?? 0) === 0 ? (
-            <EmptyState title="暂无合并记录" />
+            <EmptyState title={t('emptyMerges')} />
           ) : (
             <div className="divide-y">
               {(merges.data?.items ?? []).map((log) => (
@@ -284,35 +280,34 @@ export function GraphPage() {
                       <span className="font-medium">{String(log.snapshot_names?.winner ?? '?')}</span>
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {REASON_LABEL[log.reason] ?? log.reason}
-                      {log.score !== null && log.score !== undefined && ` · 相似度 ${log.score.toFixed(3)}`}
+                      {t(`reason.${log.reason}`, { defaultValue: log.reason })}
+                      {log.score !== null && log.score !== undefined && ` · ${t('similarity', { score: log.score.toFixed(3) })}`}
                       {` · ${new Date(String(log.created_at)).toLocaleString()}`}
                       {log.created_by ? ` · by ${log.created_by}` : ''}
                     </p>
                   </div>
                   {log.status === 'rolled_back' ? (
-                    <StatusBadge tone="gray">已回滚</StatusBadge>
+                    <StatusBadge tone="gray">{t('statusRolledBack')}</StatusBadge>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <StatusBadge tone="green">已生效</StatusBadge>
+                      <StatusBadge tone="green">{t('statusActive')}</StatusBadge>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button size="sm" variant="outline" disabled={!isOwner}>
-                            <Undo2 /> 回滚
+                            <Undo2 /> {t('rollback')}
                           </Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>回滚这次实体合并？</AlertDialogTitle>
+                            <AlertDialogTitle>{t('rollbackTitle')}</AlertDialogTitle>
                             <AlertDialogDescription>
-                              将按合并日志快照恢复「{String(log.snapshot_names?.loser ?? '?')}」及其关系边。
-                              图结构恢复为合并前状态。
+                              {t('rollbackDesc', { name: String(log.snapshot_names?.loser ?? '?') })}
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>取消</AlertDialogCancel>
+                            <AlertDialogCancel>{t('action.cancel')}</AlertDialogCancel>
                             <AlertDialogAction onClick={() => rollback.mutate(log.log_id)}>
-                              确认回滚
+                              {t('confirmRollback')}
                             </AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>

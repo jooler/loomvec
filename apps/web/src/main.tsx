@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router';
 import { Toaster } from '@loomvec/ui/components/ui/sonner';
 import { ThemeProvider } from '@loomvec/ui/components/theme-provider';
+// i18n 必须最先初始化：页面模块的模块级文案（zod 校验消息等）在 import 阶段取值
+import '@/i18n';
 import { AuthProvider } from './auth';
 import App from './App';
 import './index.css';

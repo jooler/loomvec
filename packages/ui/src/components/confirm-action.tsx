@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,6 +33,7 @@ export function ConfirmAction(props: {
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const { t } = useTranslation();
 
   const confirm = async () => {
     setBusy(true);
@@ -52,7 +54,7 @@ export function ConfirmAction(props: {
           {props.description && <AlertDialogDescription>{props.description}</AlertDialogDescription>}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>{props.cancelText ?? '取消'}</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>{props.cancelText ?? t('action.cancel')}</AlertDialogCancel>
           <AlertDialogAction
             className={props.danger ? 'bg-destructive text-white hover:bg-destructive/90' : ''}
             disabled={busy || props.loading}
@@ -61,7 +63,7 @@ export function ConfirmAction(props: {
               void confirm();
             }}
           >
-            {props.confirmText ?? '确认'}
+            {props.confirmText ?? t('action.confirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

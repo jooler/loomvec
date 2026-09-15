@@ -1,8 +1,9 @@
 import { User } from 'lucide-react';
 import { useQueries } from '@tanstack/react-query';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { useMe, useMySpaces } from '@/hooks';
-import { extractApiError, formatBytes, percentOf, ROLE_META } from '@/utils';
+import { extractApiError, formatBytes, percentOf } from '@/utils';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
 import { Avatar, AvatarFallback } from '@loomvec/ui/components/ui/avatar';
@@ -29,6 +30,7 @@ function QuotaBar({ percent }: { percent: number }) {
 export function ProfilePage() {
   const me = useMe();
   const spaces = useMySpaces();
+  const { t } = useTranslation('profile');
 
   const usages = useQueries({
     queries: (spaces.data ?? []).map((s) => ({
@@ -37,7 +39,7 @@ export function ProfilePage() {
         const { data, error } = await api.GET('/api/v1/spaces/{space_id}/usage', {
           params: { path: { space_id: s.id } },
         });
-        if (error) throw new Error(extractApiError(error, '加载用量失败'));
+        if (error) throw new Error(extractApiError(error, t('loadUsageFailed')));
         return data;
       },
       staleTime: 30_000,
@@ -48,7 +50,7 @@ export function ProfilePage() {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card>
         <CardHeader>
-          <CardTitle>个人信息</CardTitle>
+          <CardTitle>{t('title')}</CardTitle>
         </CardHeader>
         <CardContent>
           {me.isLoading ? (
@@ -68,11 +70,11 @@ export function ProfilePage() {
                 <h2 className="text-xl font-semibold">{me.data.username}</h2>
               </div>
               <DescriptionList cols={1}>
-                <DescriptionItem label="用户 ID">{me.data.user_id}</DescriptionItem>
-                <DescriptionItem label="租户">
+                <DescriptionItem label={t('userIdLabel')}>{me.data.user_id}</DescriptionItem>
+                <DescriptionItem label={t('tenantLabel')}>
                   {me.data.tenant_name ?? me.data.tenant_id ?? '-'}
                 </DescriptionItem>
-                <DescriptionItem label="全局角色">
+                <DescriptionItem label={t('globalRolesLabel')}>
                   {(me.data.roles ?? []).length > 0 ? (
                     <span className="flex flex-wrap items-center gap-1">
                       {me.data.roles.map((r) => (
@@ -83,12 +85,12 @@ export function ProfilePage() {
                     </span>
                   ) : null}
                 </DescriptionItem>
-                <DescriptionItem label="空间角色">
+                <DescriptionItem label={t('spaceRolesLabel')}>
                   {(spaces.data ?? []).length > 0 ? (
                     <span className="flex flex-wrap items-center gap-1">
                       {(spaces.data ?? []).map((s) => (
                         <Badge key={s.id} variant="outline">
-                          {s.name}：{ROLE_META[s.my_role ?? '']?.text ?? s.my_role}
+                          {s.name}：{t(`role.${s.my_role ?? ''}`, { defaultValue: s.my_role ?? '' })}
                         </Badge>
                       ))}
                     </span>
@@ -102,7 +104,7 @@ export function ProfilePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>各空间配额</CardTitle>
+          <CardTitle>{t('quotasTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
           {spaces.isLoading ? (
@@ -110,7 +112,7 @@ export function ProfilePage() {
               <Spinner className="size-5 text-muted-foreground" />
             </div>
           ) : (spaces.data?.length ?? 0) === 0 ? (
-            <EmptyState description="暂无空间" />
+            <EmptyState description={t('emptySpaces')} />
           ) : (
             <div className="space-y-4">
               {(spaces.data ?? []).map((s, i) => {
@@ -121,16 +123,16 @@ export function ProfilePage() {
                     {u ? (
                       <>
                         <p className="text-sm text-muted-foreground">
-                          存储 {formatBytes(u.storage_bytes)} /{' '}
-                          {u.quota_storage_bytes > 0 ? formatBytes(u.quota_storage_bytes) : '不限额'}{' '}
-                          · 文件 {u.file_count} /{' '}
-                          {u.quota_file_count > 0 ? u.quota_file_count : '不限额'}
+                          {t('storageWord')} {formatBytes(u.storage_bytes)} /{' '}
+                          {u.quota_storage_bytes > 0 ? formatBytes(u.quota_storage_bytes) : t('unlimitedQuota')}{' '}
+                          · {t('fileCountWord')} {u.file_count} /{' '}
+                          {u.quota_file_count > 0 ? u.quota_file_count : t('unlimitedQuota')}
                         </p>
                         <QuotaBar percent={percentOf(u.storage_bytes, u.quota_storage_bytes)} />
                         <QuotaBar percent={percentOf(u.file_count, u.quota_file_count)} />
                       </>
                     ) : (
-                      <p className="text-sm text-muted-foreground">（用量加载中）</p>
+                      <p className="text-sm text-muted-foreground">{t('usageLoading')}</p>
                     )}
                   </div>
                 );

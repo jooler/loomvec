@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { clearToken, getStoredToken, storeToken } from '@loomvec/sdk-ts';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, setUnauthorizedHandler } from './api';
 
 export interface MeInfo {
@@ -37,6 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [me, setMe] = useState<MeInfo | null>(null);
   const [ready, setReady] = useState(false);
   const queryClient = useQueryClient();
+  const { t } = useTranslation('auth');
 
   const logout = () => {
     clearToken();
@@ -51,12 +53,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       logout();
-      toast.error('登录已过期，请重新登录', { id: 'auth-expired' });
+      toast.error(t('sessionExpired'), { id: 'auth-expired' });
       if (window.location.hash !== '#/login') window.location.hash = '#/login';
     });
     return () => setUnauthorizedHandler(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const existing = getStoredToken();
@@ -94,7 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ username, roles: roles ?? ['super_admin'] }),
     });
     if (!resp.ok) {
-      throw new Error((await resp.json().catch(() => null))?.message ?? '登录失败');
+      throw new Error((await resp.json().catch(() => null))?.message ?? t('loginFailed'));
     }
     const data = (await resp.json()) as { access_token: string };
     storeToken(data.access_token);

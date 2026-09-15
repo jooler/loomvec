@@ -124,4 +124,31 @@ const form = useForm<z.infer<typeof schema>>({ resolver: zodResolver(schema), de
 
 - 权限闸（canWrite/isSuperAdmin）禁用逻辑、危险操作文案、reason 必填、审计提示语不得随意改动。
 - 查询 key、invalidate 范围、分页大小（PAGE_SIZE）、默认值、错误兜底文案是行为契约，改动需同步评估。
-- UI 文案为中文；新增共享组件放 `packages/ui/src/components/<name>.tsx`（app 专属放 `src/components/`），先确认无同名/同职责组件。
+- UI 文案一律经 i18n（当前仅 zh-CN，见 §11），源码不得硬编码用户可见文案；新增共享组件放 `packages/ui/src/components/<name>.tsx`（app 专属放 `src/components/`），先确认无同名/同职责组件。
+
+## 11. 国际化（i18n）
+
+基础设施：`i18next` + `react-i18next`，共享核心在 `@loomvec/ui/i18n`（`initI18n` / `t` / `setLocale` / `SUPPORTED_LOCALES`）。当前仅实现简体中文（`zh-CN`），结构与类型按多语言组织；功能稳定后新增语言 = 在 `packages/ui/src/i18n/locales/<code>/` 与各 app 的 `locales/<code>/` 补齐同名命名空间 JSON，并在 `packages/ui/src/i18n/locales.ts` 注册。
+
+### 11.1 资源与命名空间
+
+- 语言包只存在于 `locales/zh-CN/<ns>.json`；key 用英文 camelCase、按功能分组（两层为宜，如 `member.add`）；value 为中文文案（逐字保留，含全角标点）。
+- 共享命名空间（`packages/ui/src/i18n/locales/zh-CN/`）：
+  - `common`：跨 app 通用词汇（action/field/feedback/state/pagination 五组，如 `action.save`=保存、`feedback.operationFailed`=操作失败）；
+  - `ui`：共享组件与工具文案（`finder.*`、`chunks.*`、`viewer.*`、`assetStatus.*`、`reviewStatus.*`、`upload.*`、`format.*` 等）。
+- app 命名空间（`apps/<app>/src/i18n/locales/zh-CN/`）按功能域拆分：web = auth/layout/spaces/assets/assetDetail/chat/graph/review/notifications/profile/search；admin = auth/layout/overview/tenants/users/spaces/models/reviews/pipeline/audit/open/settings/system/components；ops = auth/layout/overview/groups/spaces。增删命名空间需同步 app 的 `src/i18n/index.ts` 与 `i18next.d.ts`。
+- **复用优先**：common/ui 已有的词汇不得在 app 语言包重复定义；app 内跨命名空间确需共享的词条，就近期望各存一份（fallback 链只覆盖 common → ui）。
+
+### 11.2 取值写法
+
+- React 组件/hook：`const { t } = useTranslation('<ns>')`，一律**裸 key**（不带 `ns:` 前缀）；命名空间回退链 = 自身 ns → common → ui（运行时 `fallbackNS` 与类型均已配置）。
+- 非 React 模块（模块级 zod schema、`menu.ts`/`constants.ts` 字典等纯 .ts）：`import { t } from '@/i18n'`，key **必须带 `'ns:'` 前缀**（如 `t('spaces:nameRequired')`）。main.tsx / test-setup.ts 已保证 import 阶段完成初始化。
+- 插值用 `{{var}}`（如 `"memberCount": "{{count}} 名成员"` → `t('memberCount', { count })`）；插值变量名由 tsc 校验，必须与 JSON 模板一致。
+- 动态 key（状态字典）必须带 `defaultValue` 才能通过类型检查：`t(\`assetStatus.${s}\`, { defaultValue: s })`；「字典带文案」的结构（`Record<string, {tone, text}>`）只留 tone/color，文案在渲染处按动态 key 取。
+- 回调/Effect 依赖数组用到 `t` 时把 `t` 加入 deps（引用稳定）；组件内勿用 `t` 作局部变量名（遮蔽翻译函数）。
+- 类型增强：各 app `src/i18n/i18next.d.ts`（`CustomTypeOptions`）提供 key 自动补全、存在性与插值校验；lint 即可拦截坏 key。
+
+### 11.3 已知边界（未来多语言时再处理）
+
+- 模块级取值（zod 消息、菜单名）在 import 阶段求值，运行时切换语言不会重算——支持多语言时需改为工厂函数或在组件内求值。
+- 纯函数库（`@loomvec/ui/lib/format`、`lib/upload`）经默认实例取 `t`，语言切换后下一次调用即生效，但已渲染的字符串不重算。

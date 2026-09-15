@@ -1,6 +1,7 @@
 import { ShieldAlert } from 'lucide-react';
 import { lazy } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { AdminLayout } from '@/layouts/AdminLayout';
 import { LoginPage } from '@/pages/login/Login';
 import { PLATFORM_ROLES, useAuth, usePerm } from '@/auth';
@@ -76,6 +77,7 @@ function FullPageLoading() {
 function AccessDenied(props: { title: string; description: string }) {
   const navigate = useNavigate();
   const { logout } = useAuth();
+  const { t } = useTranslation('layout');
   return (
     <div className="grid min-h-svh place-items-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-3 text-center">
@@ -86,7 +88,7 @@ function AccessDenied(props: { title: string; description: string }) {
         <p className="text-sm text-muted-foreground">{props.description}</p>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => navigate('/overview')}>
-            返回总览
+            {t('backToOverview')}
           </Button>
           <Button
             variant="outline"
@@ -95,7 +97,7 @@ function AccessDenied(props: { title: string; description: string }) {
               navigate('/login', { replace: true });
             }}
           >
-            重新登录
+            {t('relogin')}
           </Button>
         </div>
       </div>
@@ -113,13 +115,14 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 /** 角色闸：me.roles 无平台角色（super_admin/operator/auditor）则禁止进入运维端。 */
 function RequirePlatformRole({ children }: { children: React.ReactNode }) {
   const { me, ready } = useAuth();
+  const { t } = useTranslation('layout');
   if (!ready) return <FullPageLoading />;
   const roles = me?.roles ?? [];
   if (!roles.some((r) => (PLATFORM_ROLES as readonly string[]).includes(r))) {
     return (
       <AccessDenied
-        title="无平台角色权限"
-        description="当前账号未被授予平台角色（super_admin / operator / auditor），无法进入运维端。"
+        title={t('denied.noPlatformRoleTitle')}
+        description={t('denied.noPlatformRoleDescription')}
       />
     );
   }
@@ -129,8 +132,14 @@ function RequirePlatformRole({ children }: { children: React.ReactNode }) {
 /** 系统配置组页面仅 super_admin 可达（docs/04 §三）。 */
 function SuperAdminOnly({ children }: { children: React.ReactNode }) {
   const { isSuperAdmin } = usePerm();
+  const { t } = useTranslation('layout');
   if (!isSuperAdmin) {
-    return <AccessDenied title="无访问权限" description="该页面仅 super_admin 可见。" />;
+    return (
+      <AccessDenied
+        title={t('denied.noAccessTitle')}
+        description={t('denied.noAccessDescription')}
+      />
+    );
   }
   return <>{children}</>;
 }

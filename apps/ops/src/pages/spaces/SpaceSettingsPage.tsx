@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { formatBytes } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -43,6 +44,7 @@ export function SpaceSettingsPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('spaces');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [reviewRequired, setReviewRequired] = useState(false);
@@ -98,7 +100,7 @@ export function SpaceSettingsPage() {
       );
     },
     onSuccess: () => {
-      toast.success('设置已保存');
+      toast.success(t('settings.saved'));
       invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -109,10 +111,10 @@ export function SpaceSettingsPage() {
       const { error } = await api.DELETE('/api/v1/ops/spaces/{space_id}', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error('删除失败');
+      if (error) throw new Error(t('finderData.deleteFailed'));
     },
     onSuccess: () => {
-      toast.success('公共空间已删除（含内容与向量清理）');
+      toast.success(t('settings.spaceDeleted'));
       void queryClient.invalidateQueries({ queryKey: ['ops-spaces'] });
       navigate('/overview', { replace: true });
     },
@@ -134,24 +136,24 @@ export function SpaceSettingsPage() {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>空间设置</CardTitle>
-          <CardDescription>空间标识（slug）与模型/分片预设创建时确定，不可修改。</CardDescription>
+          <CardTitle>{t('settings.title')}</CardTitle>
+          <CardDescription>{t('settings.titleDesc')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="name">空间名称</Label>
+              <Label htmlFor="name">{t('settings.nameLabel')}</Label>
               <Input id="name" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="space-y-2">
-              <Label>空间标识</Label>
+              <Label>{t('settings.slugLabel')}</Label>
               <p className="rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm">
                 {space.data?.slug}
               </p>
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="description">描述</Label>
+            <Label htmlFor="description">{t('field.description')}</Label>
             <Textarea
               id="description"
               rows={3}
@@ -161,10 +163,8 @@ export function SpaceSettingsPage() {
           </div>
           <div className="flex items-center justify-between rounded-lg border p-3">
             <div className="space-y-0.5">
-              <Label htmlFor="review_required">先审后见</Label>
-              <p className="text-xs text-muted-foreground">
-                开启后新资产审核通过才可见、才参与检索
-              </p>
+              <Label htmlFor="review_required">{t('settings.reviewLabel')}</Label>
+              <p className="text-xs text-muted-foreground">{t('settings.reviewHint')}</p>
             </div>
             <Switch
               id="review_required"
@@ -174,7 +174,7 @@ export function SpaceSettingsPage() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="quota_storage">存储配额（字节，0 = 不限）</Label>
+              <Label htmlFor="quota_storage">{t('settings.storageQuotaLabel')}</Label>
               <Input
                 id="quota_storage"
                 type="number"
@@ -184,7 +184,7 @@ export function SpaceSettingsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="quota_files">文件数配额（0 = 不限）</Label>
+              <Label htmlFor="quota_files">{t('settings.fileCountQuotaLabel')}</Label>
               <Input
                 id="quota_files"
                 type="number"
@@ -196,7 +196,7 @@ export function SpaceSettingsPage() {
           </div>
           <div className="flex justify-end">
             <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
-              {save.isPending ? '保存中…' : '保存设置'}
+              {save.isPending ? t('action.saving') : t('settings.save')}
             </Button>
           </div>
         </CardContent>
@@ -204,19 +204,23 @@ export function SpaceSettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">用量</CardTitle>
+          <CardTitle className="text-base">{t('settings.usageTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
           <DescriptionList>
-            <DescriptionItem label="已用存储">{formatBytes(usage.data?.storage_bytes ?? 0)}</DescriptionItem>
-            <DescriptionItem label="资产数">{usage.data?.file_count ?? 0}</DescriptionItem>
-            <DescriptionItem label="存储配额">
+            <DescriptionItem label={t('settings.usedStorage')}>
+              {formatBytes(usage.data?.storage_bytes ?? 0)}
+            </DescriptionItem>
+            <DescriptionItem label={t('settings.assetCount')}>
+              {usage.data?.file_count ?? 0}
+            </DescriptionItem>
+            <DescriptionItem label={t('settings.storageQuota')}>
               {(usage.data?.quota_storage_bytes ?? 0) > 0
                 ? formatBytes(usage.data?.quota_storage_bytes ?? 0)
-                : '不限'}
+                : t('settings.unlimited')}
             </DescriptionItem>
-            <DescriptionItem label="文件数配额">
-              {(usage.data?.quota_file_count ?? 0) > 0 ? usage.data?.quota_file_count : '不限'}
+            <DescriptionItem label={t('settings.fileCountQuota')}>
+              {(usage.data?.quota_file_count ?? 0) > 0 ? usage.data?.quota_file_count : t('settings.unlimited')}
             </DescriptionItem>
           </DescriptionList>
         </CardContent>
@@ -224,21 +228,19 @@ export function SpaceSettingsPage() {
 
       <Card className="border-destructive/40">
         <CardHeader>
-          <CardTitle className="text-base text-destructive">危险区</CardTitle>
-          <CardDescription>
-            删除公共空间将级联清理资产、语义单元、向量与对象存储，用户端的链接随之失效。
-          </CardDescription>
+          <CardTitle className="text-base text-destructive">{t('settings.dangerZone')}</CardTitle>
+          <CardDescription>{t('settings.dangerDesc')}</CardDescription>
         </CardHeader>
         <CardContent>
           <ConfirmAction
             trigger={
               <Button variant="destructive" size="sm">
-                删除公共空间
+                {t('settings.deleteSpace')}
               </Button>
             }
-            title={`删除公共空间「${space.data?.name ?? ''}」？`}
-            description="该操作不可恢复：资产、向量与对象存储将一并清理。"
-            confirmText="删除"
+            title={t('settings.deleteTitle', { name: space.data?.name ?? '' })}
+            description={t('settings.deleteDesc')}
+            confirmText={t('action.delete')}
             danger
             onConfirm={() => remove.mutate()}
           />

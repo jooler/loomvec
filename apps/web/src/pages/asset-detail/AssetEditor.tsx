@@ -6,7 +6,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Pencil, X } from 'lucide-react';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { extractApiError } from '@/utils';
+import { t as sharedT } from '@/i18n';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
@@ -32,8 +34,9 @@ interface MetadataField {
   options: unknown[];
 }
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const editorSchema = z.object({
-  name: z.string().min(1, '请输入名称'),
+  name: z.string().min(1, sharedT('assetDetail:nameRequired')),
   tags: z.array(z.string()),
   category: z.string(), // '' = 无分类（unset）
   metadata: z.record(z.string(), z.any()),
@@ -50,6 +53,7 @@ export function AssetEditor(props: {
 }) {
   const { asset: a, canEdit } = props;
   const queryClient = useQueryClient();
+  const { t } = useTranslation('assetDetail');
   const form = useForm<EditorValues>({
     resolver: zodResolver(editorSchema),
     defaultValues: { name: '', tags: [], category: '', metadata: {} },
@@ -102,10 +106,10 @@ export function AssetEditor(props: {
           metadata,
         },
       });
-      if (error) throw new Error(extractApiError(error, '保存失败'));
+      if (error) throw new Error(extractApiError(error, t('editor.saveFailed')));
     },
     onSuccess: () => {
-      toast.success('资产已更新');
+      toast.success(t('editor.saved'));
       void queryClient.invalidateQueries({ queryKey: ['asset', a.id] });
       void queryClient.invalidateQueries({ queryKey: ['assets'] });
     },
@@ -133,7 +137,7 @@ export function AssetEditor(props: {
       if (!field?.required) continue;
       const v = values.metadata[key];
       if (v === undefined || v === null || v === '') {
-        toast.error(`请填写 ${field.name}`);
+        toast.error(t('editor.metaRequired', { name: field.name }));
         return;
       }
     }
@@ -144,26 +148,26 @@ export function AssetEditor(props: {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <Pencil className="size-4" /> 编辑
-          {!canEdit && <BadgeGhost>viewer 只读</BadgeGhost>}
+          <Pencil className="size-4" /> {t('action.edit')}
+          {!canEdit && <BadgeGhost>{t('editor.viewerReadonly')}</BadgeGhost>}
         </CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="max-w-[640px] space-y-4" noValidate>
           <div className="space-y-2">
-            <Label htmlFor="asset-name">名称</Label>
+            <Label htmlFor="asset-name">{t('field.name')}</Label>
             <Input id="asset-name" disabled={!canEdit} {...form.register('name')} />
             {form.formState.errors.name && (
               <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="asset-tags">标签</Label>
+            <Label htmlFor="asset-tags">{t('tagsLabel')}</Label>
             <Input
               id="asset-tags"
               value={tagDraft}
               disabled={!canEdit}
-              placeholder="如：合同 / 2026 / 重要"
+              placeholder={t('editor.tagsPlaceholder')}
               onChange={(e) => setTagDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ',') {
@@ -177,16 +181,16 @@ export function AssetEditor(props: {
             />
             {tagsValue.length > 0 && (
               <div className="flex flex-wrap gap-1">
-                {tagsValue.map((t, i) => (
+                {tagsValue.map((tag, i) => (
                   <span
-                    key={`${t}-${i}`}
+                    key={`${tag}-${i}`}
                     className="inline-flex items-center gap-1 rounded-md border bg-secondary px-1.5 py-0.5 text-xs text-secondary-foreground"
                   >
-                    {t}
+                    {tag}
                     {canEdit && (
                       <button
                         type="button"
-                        aria-label={`移除标签 ${t}`}
+                        aria-label={t('editor.removeTag', { name: tag })}
                         className="text-muted-foreground hover:text-foreground"
                         onClick={() => form.setValue('tags', tagsValue.filter((_, j) => j !== i))}
                       >
@@ -197,20 +201,20 @@ export function AssetEditor(props: {
                 ))}
               </div>
             )}
-            <p className="text-xs text-muted-foreground">输入后回车创建，保存时整体替换标签</p>
+            <p className="text-xs text-muted-foreground">{t('editor.tagsHint')}</p>
           </div>
           <div className="space-y-2">
-            <Label>分类</Label>
+            <Label>{t('editor.categoryLabel')}</Label>
             <Select
               value={categoryValue || NONE}
               onValueChange={(v) => form.setValue('category', v === NONE ? '' : v)}
               disabled={!canEdit}
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="选择分类" />
+                <SelectValue placeholder={t('editor.selectCategoryPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NONE}>无分类</SelectItem>
+                <SelectItem value={NONE}>{t('editor.noCategory')}</SelectItem>
                 {props.categories.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.name}
@@ -223,7 +227,7 @@ export function AssetEditor(props: {
           {metaKeys.length > 0 && (
             <>
               <div className="flex items-center gap-3 pt-2">
-                <span className="text-sm text-muted-foreground">元数据</span>
+                <span className="text-sm text-muted-foreground">{t('editor.metadataLabel')}</span>
                 <Separator className="flex-1" />
               </div>
               {metaKeys.map((key) => {
@@ -270,10 +274,10 @@ export function AssetEditor(props: {
                         disabled={!canEdit}
                       >
                         <SelectTrigger className="w-[200px]">
-                          <SelectValue placeholder="请选择" />
+                          <SelectValue placeholder={t('editor.selectPlaceholder')} />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value={NONE}>未设置</SelectItem>
+                          <SelectItem value={NONE}>{t('editor.unsetOption')}</SelectItem>
                           {(field?.options ?? []).map((o) => (
                             <SelectItem key={String(o)} value={String(o)}>
                               {String(o)}
@@ -297,7 +301,7 @@ export function AssetEditor(props: {
 
           {canEdit && (
             <Button type="submit" disabled={save.isPending}>
-              {save.isPending ? '保存中…' : '保存修改'}
+              {save.isPending ? t('action.saving') : t('editor.saveChanges')}
             </Button>
           )}
         </form>

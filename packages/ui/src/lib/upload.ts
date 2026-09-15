@@ -5,14 +5,20 @@
  */
 import { api } from '@loomvec/sdk-ts';
 import { extractApiError, sha256Hex } from './format';
+import { t } from '../i18n';
+
+/**
+ * 用户在去重确认中放弃上传时，uploadFile 抛出的 Error 消息（流程哨兵，非用户文案）。
+ * 捕获方比较该常量判断“用户主动跳过”，展示 toast 用 ui:upload.* 文案。
+ */
+export const UPLOAD_SKIPPED = 'UPLOAD_SKIPPED';
 
 /** 配额超限原因 → 用户可读提示（登记资产 403 details.quota_reason）。 */
-export const QUOTA_REASON_LABEL: Record<string, string> = {
-  tenant_storage_exceeded: '租户存储配额已用尽，请联系管理员调整',
-  tenant_file_count_exceeded: '租户文件数配额已用尽，请联系管理员调整',
-  space_storage_exceeded: '空间存储配额已用尽，请清理文件或联系空间所有者调整配额',
-  space_file_count_exceeded: '空间文件数配额已用尽，请清理文件或联系空间所有者调整配额',
-};
+export function quotaReasonLabel(reason: string): string {
+  return t(`ui:upload.quotaReason.${reason}`, {
+    defaultValue: t('ui:upload.quotaExceededFallback', { reason }),
+  });
+}
 
 /** 从错误体里取 details.quota_reason（无则 null）。 */
 export function quotaReasonOf(err: unknown): string | null {
@@ -78,9 +84,9 @@ function putWithProgress(
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error(`上传对象存储失败：HTTP ${xhr.status}`));
+      else reject(new Error(t('ui:upload.putFailed', { status: xhr.status })));
     };
-    xhr.onerror = () => reject(new Error('上传对象存储失败（网络错误）'));
+    xhr.onerror = () => reject(new Error(t('ui:upload.putNetworkError')));
     xhr.send(file);
   });
 }
@@ -103,7 +109,7 @@ export interface UploadResult {
 }
 
 /**
- * 单文件完整上传。失败抛错（message 已用户可读）；用户放弃上传抛 Error('已跳过上传')。
+ * 单文件完整上传。失败抛错（message 已用户可读）；用户放弃上传抛 Error(UPLOAD_SKIPPED)。
  */
 export async function uploadFile(file: File, opts: UploadOptions = {}): Promise<UploadResult> {
   // 预签名 / PUT / 登记三处必须使用同一个 Content-Type（签名一致性）
@@ -118,11 +124,11 @@ export async function uploadFile(file: File, opts: UploadOptions = {}): Promise<
     if (!dup.error && dup.data.exists && dup.data.assets.length > 0) {
       const names = dup.data.assets.map((a) => a.name);
       if (opts.onDuplicate && !(await opts.onDuplicate(names))) {
-        throw new Error('已跳过上传');
+        throw new Error(UPLOAD_SKIPPED);
       }
     }
   } catch (e) {
-    if (e instanceof Error && e.message === '已跳过上传') throw e;
+    if (e instanceof Error && e.message === UPLOAD_SKIPPED) throw e;
     // 预检失败不阻断上传（后端语义：不阻断）
   }
 
@@ -135,7 +141,7 @@ export async function uploadFile(file: File, opts: UploadOptions = {}): Promise<
       space_id: opts.spaceId ?? undefined,
     },
   });
-  if (presign.error) throw new Error(extractApiError(presign.error, '预签名失败'));
+  if (presign.error) throw new Error(extractApiError(presign.error, t('ui:upload.presignFailed')));
 
   // 3) PUT 对象存储（带进度；Content-Type 必须与预签名请求一致）
   await putWithProgress(presign.data.upload_url, file, contentType, (pct) =>
@@ -155,8 +161,8 @@ export async function uploadFile(file: File, opts: UploadOptions = {}): Promise<
   });
   if (created.error) {
     const reason = quotaReasonOf(created.error);
-    if (reason) throw new Error(QUOTA_REASON_LABEL[reason] ?? `配额超限：${reason}`);
-    throw new Error(extractApiError(created.error, '登记资产失败'));
+    if (reason) throw new Error(quotaReasonLabel(reason));
+    throw new Error(extractApiError(created.error, t('ui:upload.registerFailed')));
   }
   return { assetId: created.data.id, name: created.data.name };
 }

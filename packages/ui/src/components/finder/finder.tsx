@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { cn } from 'cn';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Spinner } from '../ui/spinner';
@@ -103,6 +104,7 @@ function loadViewMode(): FinderViewMode {
 
 export function Finder(props: FinderProps) {
   const { folders, assets, actions, canWrite } = props;
+  const { t } = useTranslation();
   // 键盘快捷键仅在焦点位于 Finder 容器内时生效（可聚焦根，点击容器即聚焦）
   const rootRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<FinderViewMode>(loadViewMode);
@@ -288,13 +290,13 @@ export function Finder(props: FinderProps) {
       if (mode === 'cut') {
         await actions.moveItems(folderIds, assetIds, targetFolderId);
         setClipboard(null);
-        toast.success('已移动');
+        toast.success(t('finder.moved'));
       } else {
         // 复制成功提示由 app 层 actions.copyItems 负责（含「重新走管线」语义）
         await actions.copyItems(folderIds, assetIds, targetFolderId);
       }
     },
-    [actions, clipboard],
+    [actions, clipboard, t],
   );
 
   const submitDelete = useCallback(async () => {
@@ -304,11 +306,11 @@ export function Finder(props: FinderProps) {
     for (const fid of folderIds) await actions.deleteFolders([fid]);
     if (assetIds.length > 0) {
       await Promise.all(assetIds.map((aid) => actions.deleteAssets([aid])));
-      toast.success(`已删除 ${assetIds.length} 个资产（含向量清理）`);
+      toast.success(t('finder.deletedAssets', { count: assetIds.length }));
     }
     setSelectedFolders(new Set());
     setSelectedAssets(new Set());
-  }, [actions, deleteTarget]);
+  }, [actions, deleteTarget, t]);
 
   const submitRename = useCallback(
     (name: string) => {
@@ -353,16 +355,16 @@ export function Finder(props: FinderProps) {
       }
       for (const fid of payload.folderIds ?? []) {
         if (targetFolderId && descendantsOf(fid).has(targetFolderId)) {
-          toast.error('不能移动到自身或其子目录内');
+          toast.error(t('finder.cannotMoveIntoSelf'));
           return;
         }
       }
       actions
         .moveItems(payload.folderIds ?? [], payload.assetIds ?? [], targetFolderId)
-        .then(() => toast.success('已移动'))
+        .then(() => toast.success(t('finder.moved')))
         .catch(() => {});
     },
-    [actions, descendantsOf],
+    [actions, descendantsOf, t],
   );
 
   // ------------------------------------------------------------------
@@ -392,7 +394,7 @@ export function Finder(props: FinderProps) {
           folderIds: [...selectedFolders],
           assetIds: [...selectedAssets],
         });
-        toast.info('已拷贝所选项目');
+        toast.info(t('finder.copiedSelection'));
       } else if (mod && e.key.toLowerCase() === 'x' && hasSelection && canWrite) {
         e.preventDefault();
         setClipboard({
@@ -400,7 +402,7 @@ export function Finder(props: FinderProps) {
           folderIds: [...selectedFolders],
           assetIds: [...selectedAssets],
         });
-        toast.info('已剪切所选项目');
+        toast.info(t('finder.cutSelection'));
       } else if (mod && e.key.toLowerCase() === 'v' && clipboard && canWrite) {
         e.preventDefault();
         runQuietly(pasteInto(currentFolderId));
@@ -428,6 +430,7 @@ export function Finder(props: FinderProps) {
     pasteInto,
     selectedAssets,
     selectedFolders,
+    t,
   ]);
 
   // ------------------------------------------------------------------
@@ -438,7 +441,7 @@ export function Finder(props: FinderProps) {
     (kind: 'folder' | 'asset', id: string) => (
       <ContextMenuContent>
         <ContextMenuItem onClick={() => onOpen(kind, id)}>
-          <Eye /> 打开
+          <Eye /> {t('finder.open')}
           <ContextMenuShortcut>⏎</ContextMenuShortcut>
         </ContextMenuItem>
         {canWrite && (
@@ -450,44 +453,44 @@ export function Finder(props: FinderProps) {
                 if (f) setRenaming({ kind, id, name: f.name });
               }}
             >
-              <Pencil /> 重命名
+              <Pencil /> {t('finder.rename')}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
                 const snap = selectionSnapshot(kind, id);
                 setClipboard({ mode: 'copy', ...snap });
-                toast.info('已拷贝');
+                toast.info(t('finder.copiedDone'));
               }}
             >
-              <Copy /> 拷贝
+              <Copy /> {t('finder.copy')}
               <ContextMenuShortcut>⌘C</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
                 const snap = selectionSnapshot(kind, id);
                 setClipboard({ mode: 'cut', ...snap });
-                toast.info('已剪切');
+                toast.info(t('finder.cutDone'));
               }}
             >
-              <Scissors /> 剪切
+              <Scissors /> {t('finder.cut')}
               <ContextMenuShortcut>⌘X</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => setRelocate({ mode: 'move', ...selectionSnapshot(kind, id) })}
             >
-              移到…
+              {t('finder.moveTo')}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => setRelocate({ mode: 'copy', ...selectionSnapshot(kind, id) })}
             >
-              复制到…
+              {t('finder.copyTo')}
             </ContextMenuItem>
             {kind === 'asset' &&
               (() => {
                 const a = assets.find((x) => x.id === id);
                 return a?.status === 'failed' ? (
                   <ContextMenuItem onClick={() => runQuietly(actions.retryAssets([id]))}>
-                    <RotateCcw /> 重试
+                    <RotateCcw /> {t('finder.retry')}
                   </ContextMenuItem>
                 ) : null;
               })()}
@@ -496,13 +499,13 @@ export function Finder(props: FinderProps) {
               variant="destructive"
               onClick={() => setDeleteTarget(selectionSnapshot(kind, id))}
             >
-              <Trash2 /> 删除
+              <Trash2 /> {t('finder.delete')}
             </ContextMenuItem>
           </>
         )}
       </ContextMenuContent>
     ),
-    [actions, assets, canWrite, foldersById, onOpen, selectionSnapshot],
+    [actions, assets, canWrite, foldersById, onOpen, selectionSnapshot, t],
   );
 
   const blankMenu = (
@@ -510,10 +513,10 @@ export function Finder(props: FinderProps) {
       {canWrite && (
         <>
           <ContextMenuItem onClick={() => setNewFolderOpen(true)}>
-            <FolderPlus /> 新建文件夹
+            <FolderPlus /> {t('finder.newFolder')}
           </ContextMenuItem>
           <ContextMenuItem onClick={() => fileInputRef.current?.click()}>
-            <Upload /> 上传文件
+            <Upload /> {t('finder.uploadFile')}
           </ContextMenuItem>
           <ContextMenuSeparator />
         </>
@@ -522,11 +525,11 @@ export function Finder(props: FinderProps) {
         disabled={!clipboard}
         onClick={() => clipboard && runQuietly(pasteInto(currentFolderId))}
       >
-        <ClipboardPaste /> 粘贴
+        <ClipboardPaste /> {t('finder.paste')}
         <ContextMenuShortcut>⌘V</ContextMenuShortcut>
       </ContextMenuItem>
       <ContextMenuItem onClick={props.onRefresh}>
-        <RefreshCw /> 刷新
+        <RefreshCw /> {t('finder.refresh')}
       </ContextMenuItem>
     </ContextMenuContent>
   );
@@ -558,9 +561,9 @@ export function Finder(props: FinderProps) {
     : 0;
 
   const viewButtons: Array<{ mode: FinderViewMode; icon: React.ReactNode; label: string }> = [
-    { mode: 'list', icon: <List className="size-4" />, label: '列表' },
-    { mode: 'gallery', icon: <LayoutGrid className="size-4" />, label: '图标' },
-    { mode: 'columns', icon: <Columns3 className="size-4" />, label: '分栏' },
+    { mode: 'list', icon: <List className="size-4" />, label: t('finder.listView') },
+    { mode: 'gallery', icon: <LayoutGrid className="size-4" />, label: t('finder.galleryView') },
+    { mode: 'columns', icon: <Columns3 className="size-4" />, label: t('finder.columnsView') },
   ];
 
   return (
@@ -574,7 +577,7 @@ export function Finder(props: FinderProps) {
     >
       {/* 工具栏：面包屑 + 动作 */}
       <div className="flex flex-wrap items-center gap-2">
-        <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto text-sm" aria-label="目录路径">
+        <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto text-sm" aria-label={t('finder.breadcrumbLabel')}>
           <button
             className="flex shrink-0 items-center gap-1.5 rounded px-1.5 py-1 hover:bg-muted"
             onDragOver={(e) => {
@@ -584,7 +587,7 @@ export function Finder(props: FinderProps) {
             onClick={() => navigateTo(null)}
           >
             <HardDrive className="size-4 text-muted-foreground" />
-            <span className="max-w-32 truncate">{props.spaceName ?? '空间'}</span>
+            <span className="max-w-32 truncate">{props.spaceName ?? t('finder.space')}</span>
           </button>
           {path.map((fid) => {
             const f = foldersById.get(fid);
@@ -631,15 +634,15 @@ export function Finder(props: FinderProps) {
         {canWrite && (
           <>
             <Button variant="outline" size="sm" onClick={() => setNewFolderOpen(true)}>
-              <FolderPlus /> 新建文件夹
+              <FolderPlus /> {t('finder.newFolder')}
             </Button>
             <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-              <Upload /> 上传
+              <Upload /> {t('finder.upload')}
             </Button>
           </>
         )}
         <Button variant="outline" size="sm" onClick={props.onRefresh}>
-          <RefreshCw /> 刷新
+          <RefreshCw /> {t('finder.refresh')}
         </Button>
       </div>
 
@@ -684,8 +687,8 @@ export function Finder(props: FinderProps) {
           />
         ) : total === 0 ? (
           <EmptyState
-            title="此文件夹为空"
-            description={canWrite ? '拖拽文件到此处上传，或右键新建文件夹' : undefined}
+            title={t('finder.folderEmptyTitle')}
+            description={canWrite ? t('finder.folderEmptyHint') : undefined}
             className="flex-1"
           />
         ) : view === 'gallery' ? (
@@ -704,7 +707,7 @@ export function Finder(props: FinderProps) {
       <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>新建文件夹</DialogTitle>
+            <DialogTitle>{t('finder.newFolder')}</DialogTitle>
           </DialogHeader>
           <form
             onSubmit={(e) => {
@@ -719,7 +722,7 @@ export function Finder(props: FinderProps) {
             <Input
               autoFocus
               value={newFolderName}
-              placeholder="文件夹名称"
+              placeholder={t('finder.folderNamePlaceholder')}
               onChange={(e) => setNewFolderName(e.target.value)}
             />
             <DialogFooter className="mt-4">
@@ -731,10 +734,10 @@ export function Finder(props: FinderProps) {
                   setNewFolderName('');
                 }}
               >
-                取消
+                {t('action.cancel')}
               </Button>
               <Button type="submit" disabled={!newFolderName.trim()}>
-                创建
+                {t('action.create')}
               </Button>
             </DialogFooter>
           </form>
@@ -745,15 +748,15 @@ export function Finder(props: FinderProps) {
       <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确定删除所选 {deletingCount} 项？</AlertDialogTitle>
+            <AlertDialogTitle>{t('finder.deleteTitle', { count: deletingCount })}</AlertDialogTitle>
             <AlertDialogDescription>
               {(deleteTarget?.folderIds.length ?? 0) > 0
-                ? '文件夹内的全部子文件夹与资产将一并删除，资产的语义单元与向量会级联清理，不可恢复。'
-                : '资产将被删除，语义单元与向量级联清理，不可恢复。'}
+                ? t('finder.deleteFoldersDesc')
+                : t('finder.deleteAssetsDesc')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t('action.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={(e) => {
@@ -761,7 +764,7 @@ export function Finder(props: FinderProps) {
                 void submitDelete();
               }}
             >
-              删除
+              {t('action.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -780,7 +783,7 @@ export function Finder(props: FinderProps) {
             setRelocate(null);
             if (req.mode === 'move') {
               await actions.moveItems(req.folderIds, req.assetIds, target);
-              toast.success('已移动');
+              toast.success(t('finder.moved'));
             } else {
               // 复制成功提示由 app 层 actions.copyItems 负责（含「重新走管线」语义）
               await actions.copyItems(req.folderIds, req.assetIds, target);
@@ -802,6 +805,7 @@ function BlankMenuZone({
   onUploadFiles: (files: File[]) => void;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   const dragDepth = useRef(0);
   const [uploadHover, setUploadHover] = useState(false);
   return (
@@ -840,7 +844,7 @@ function BlankMenuZone({
           {children}
           {uploadHover && (
             <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-lg bg-primary/5">
-              <p className="text-sm font-medium text-primary">松开以上传到当前文件夹</p>
+              <p className="text-sm font-medium text-primary">{t('finder.releaseToUpload')}</p>
             </div>
           )}
         </div>
@@ -866,6 +870,7 @@ function RelocateDialog({
   onClose: () => void;
   onConfirm: (targetFolderId: string | null) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [target, setTarget] = useState<string | null>(currentFolderId);
   const [pending, setPending] = useState(false);
 
@@ -893,7 +898,7 @@ function RelocateDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{mode === 'move' ? '移动到…' : '复制到…'}</DialogTitle>
+          <DialogTitle>{mode === 'move' ? t('finder.moveTitle') : t('finder.copyTitle')}</DialogTitle>
         </DialogHeader>
         <div className="max-h-80 overflow-y-auto rounded-md border p-1">
           <button
@@ -903,7 +908,7 @@ function RelocateDialog({
             )}
             onClick={() => setTarget(null)}
           >
-            <HardDrive className="size-4 text-muted-foreground" /> 根目录
+            <HardDrive className="size-4 text-muted-foreground" /> {t('finder.rootFolder')}
           </button>
           {rows.map(({ folder, depth }) => {
             const disabled = disabledIds.has(folder.id);
@@ -932,7 +937,7 @@ function RelocateDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            取消
+            {t('action.cancel')}
           </Button>
           <Button
             disabled={pending}
@@ -941,7 +946,11 @@ function RelocateDialog({
               onConfirm(target).catch(() => {}).finally(() => setPending(false));
             }}
           >
-            {pending ? '处理中…' : mode === 'move' ? '移动' : '复制'}
+            {pending
+              ? t('action.processing')
+              : mode === 'move'
+                ? t('finder.move')
+                : t('finder.copyAction')}
           </Button>
         </DialogFooter>
       </DialogContent>

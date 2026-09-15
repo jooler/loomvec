@@ -4,6 +4,7 @@
  * 端点为用户级 /api/v1/chat/*；图谱联合召回由后端常态开启，无请求级开关。
  */
 import { getStoredToken } from '@loomvec/sdk-ts';
+import { t } from '@/i18n';
 
 export interface ChatCitation {
   index: number;
@@ -54,7 +55,7 @@ export async function streamChatAnswer(
     signal,
   });
   if (!resp.ok || !resp.body) {
-    let detail = `请求失败（${resp.status}）`;
+    let detail = t('chat:requestFailedStatus', { status: resp.status });
     try {
       const err = await resp.json();
       if (err?.message) detail = err.message;
@@ -121,6 +122,6 @@ function handleFrame(frame: string, handlers: StreamHandlers) {
       answer: data.answer ?? '',
     });
   } else if (event === 'error') {
-    handlers.onError?.(data.message ?? '生成失败');
+    handlers.onError?.(data.message ?? t('chat:generateFailed'));
   }
 }

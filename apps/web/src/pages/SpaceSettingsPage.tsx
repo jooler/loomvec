@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import {
   CHUNK_PRESETS,
   EMBEDDING_MODELS,
@@ -13,6 +14,7 @@ import {
   formatBytes,
   percentOf,
 } from '@/utils';
+import { t } from '@/i18n';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
@@ -37,14 +39,15 @@ import { Textarea } from '@loomvec/ui/components/ui/textarea';
  * 含用量与配额进度展示；owner 可删除空间（危险操作：级联清理资产、向量与对象存储）。
  */
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const settingsSchema = z.object({
-  name: z.string().min(1, '请输入名称'),
+  name: z.string().min(1, t('spaces:nameRequired')),
   description: z.string().optional(),
   review_required: z.boolean(),
   embedding_model: z.string().optional(),
   chunk_preset: z.string().optional(),
-  quota_storage_bytes: z.number({ error: '请输入数字' }).min(0, '不能小于 0'),
-  quota_file_count: z.number({ error: '请输入数字' }).min(0, '不能小于 0'),
+  quota_storage_bytes: z.number({ error: t('spaces:numberRequired') }).min(0, t('spaces:numberMinInvalid')),
+  quota_file_count: z.number({ error: t('spaces:numberRequired') }).min(0, t('spaces:numberMinInvalid')),
 });
 
 type SettingsValues = z.infer<typeof settingsSchema>;
@@ -52,6 +55,7 @@ type SettingsValues = z.infer<typeof settingsSchema>;
 export function SpaceSettingsPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
+  const { t } = useTranslation('spaces');
   const queryClient = useQueryClient();
   const form = useForm<SettingsValues>({
     resolver: zodResolver(settingsSchema),
@@ -72,7 +76,7 @@ export function SpaceSettingsPage() {
       const { data, error } = await api.GET('/api/v1/spaces/{space_id}', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载空间失败'));
+      if (error) throw new Error(extractApiError(error, t('member.loadSpaceFailed')));
       return data;
     },
   });
@@ -83,7 +87,7 @@ export function SpaceSettingsPage() {
       const { data, error } = await api.GET('/api/v1/spaces/{space_id}/usage', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载用量失败'));
+      if (error) throw new Error(extractApiError(error, t('settings.loadUsageFailed')));
       return data;
     },
   });
@@ -116,10 +120,10 @@ export function SpaceSettingsPage() {
           quota_file_count: values.quota_file_count,
         },
       });
-      if (error) throw new Error(extractApiError(error, '保存失败'));
+      if (error) throw new Error(extractApiError(error, t('settings.saveFailed')));
     },
     onSuccess: () => {
-      toast.success('设置已保存');
+      toast.success(t('settings.saved'));
       void queryClient.invalidateQueries({ queryKey: ['space', spaceId] });
       void queryClient.invalidateQueries({ queryKey: ['spaces'] });
     },
@@ -132,10 +136,10 @@ export function SpaceSettingsPage() {
       const { error } = await api.DELETE('/api/v1/spaces/{space_id}', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '删除失败'));
+      if (error) throw new Error(extractApiError(error, t('finderData.deleteFailed')));
     },
     onSuccess: () => {
-      toast.success('空间已删除');
+      toast.success(t('settings.spaceDeleted'));
       void queryClient.invalidateQueries({ queryKey: ['spaces'] });
       navigate('/spaces');
     },
@@ -165,7 +169,7 @@ export function SpaceSettingsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="空间设置" />
+      <PageHeader title={t('settings.title')} />
 
       <Card>
         <CardContent className="space-y-6">
@@ -174,7 +178,7 @@ export function SpaceSettingsPage() {
             className="max-w-[640px] space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="space-name">空间名称</Label>
+              <Label htmlFor="space-name">{t('fieldName')}</Label>
               <Input
                 id="space-name"
                 maxLength={64}
@@ -187,7 +191,7 @@ export function SpaceSettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="space-description">描述</Label>
+              <Label htmlFor="space-description">{t('field.description')}</Label>
               <Textarea
                 id="space-description"
                 rows={2}
@@ -197,7 +201,7 @@ export function SpaceSettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="space-review-required">上传审核</Label>
+              <Label htmlFor="space-review-required">{t('uploadReview')}</Label>
               <div>
                 <Switch
                   id="space-review-required"
@@ -206,26 +210,24 @@ export function SpaceSettingsPage() {
                   disabled={!isOwner}
                 />
               </div>
-              <p className="text-xs text-muted-foreground">
-                开启后新上传资产需审核通过才对查看者可见
-              </p>
+              <p className="text-xs text-muted-foreground">{t('reviewHintShort')}</p>
             </div>
 
             <div className="space-y-2">
-              <Label>嵌入模型</Label>
+              <Label>{t('embeddingModelLabel')}</Label>
               <Select
                 value={form.watch('embedding_model') ?? 'none'}
                 onValueChange={(v) => form.setValue('embedding_model', v === 'none' ? undefined : v)}
                 disabled={!isOwner}
               >
                 <SelectTrigger className="w-[240px]">
-                  <SelectValue placeholder="默认" />
+                  <SelectValue placeholder={t('optionDefault')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">默认</SelectItem>
+                  <SelectItem value="none">{t('optionDefault')}</SelectItem>
                   {EMBEDDING_MODELS.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>
-                      {m.label}
+                    <SelectItem key={m} value={m}>
+                      {t(`embeddingModel.${m}`, { defaultValue: m })}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -233,20 +235,20 @@ export function SpaceSettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>分片预设</Label>
+              <Label>{t('chunkPresetLabel')}</Label>
               <Select
                 value={form.watch('chunk_preset') ?? 'none'}
                 onValueChange={(v) => form.setValue('chunk_preset', v === 'none' ? undefined : v)}
                 disabled={!isOwner}
               >
                 <SelectTrigger className="w-[240px]">
-                  <SelectValue placeholder="默认" />
+                  <SelectValue placeholder={t('optionDefault')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">默认</SelectItem>
+                  <SelectItem value="none">{t('optionDefault')}</SelectItem>
                   {CHUNK_PRESETS.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>
-                      {m.label}
+                    <SelectItem key={m} value={m}>
+                      {t(`chunkPreset.${m}`, { defaultValue: m })}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -255,7 +257,7 @@ export function SpaceSettingsPage() {
 
             <div className="flex flex-wrap gap-8">
               <div className="space-y-2">
-                <Label htmlFor="quota-storage">存储配额（字节）</Label>
+                <Label htmlFor="quota-storage">{t('settings.quotaStorageLabel')}</Label>
                 <Input
                   id="quota-storage"
                   type="number"
@@ -264,7 +266,7 @@ export function SpaceSettingsPage() {
                   disabled={!isOwner}
                   {...form.register('quota_storage_bytes', { valueAsNumber: true })}
                 />
-                <p className="text-xs text-muted-foreground">0 = 不限额</p>
+                <p className="text-xs text-muted-foreground">{t('settings.quotaZeroHint')}</p>
                 {form.formState.errors.quota_storage_bytes && (
                   <p className="text-sm text-destructive">
                     {form.formState.errors.quota_storage_bytes.message}
@@ -272,7 +274,7 @@ export function SpaceSettingsPage() {
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="quota-file-count">文件数配额</Label>
+                <Label htmlFor="quota-file-count">{t('settings.quotaFileCountLabel')}</Label>
                 <Input
                   id="quota-file-count"
                   type="number"
@@ -281,7 +283,7 @@ export function SpaceSettingsPage() {
                   disabled={!isOwner}
                   {...form.register('quota_file_count', { valueAsNumber: true })}
                 />
-                <p className="text-xs text-muted-foreground">0 = 不限额</p>
+                <p className="text-xs text-muted-foreground">{t('settings.quotaZeroHint')}</p>
                 {form.formState.errors.quota_file_count && (
                   <p className="text-sm text-destructive">
                     {form.formState.errors.quota_file_count.message}
@@ -292,19 +294,17 @@ export function SpaceSettingsPage() {
 
             {isOwner && (
               <Button type="submit" disabled={save.isPending}>
-                {save.isPending ? '保存中…' : '保存设置'}
+                {save.isPending ? t('action.saving') : t('settings.saveSettings')}
               </Button>
             )}
           </form>
           {!isOwner && (
-            <p className="text-sm text-muted-foreground">
-              仅空间所有者可修改设置（当前只读）。
-            </p>
+            <p className="text-sm text-muted-foreground">{t('settings.ownerOnly')}</p>
           )}
 
           <Card className="max-w-[640px]">
             <CardHeader>
-              <CardTitle>用量与配额</CardTitle>
+              <CardTitle>{t('settings.usageTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
               {usage.isLoading ? (
@@ -313,12 +313,13 @@ export function SpaceSettingsPage() {
                 <div className="space-y-4">
                   <div className="space-y-1.5">
                     <p className="text-sm">
-                      存储：{formatBytes(usage.data.storage_bytes)}
+                      {t('settings.storageLabel')}
+                      {formatBytes(usage.data.storage_bytes)}
                       <span className="text-muted-foreground">
                         {' '}/{' '}
                         {usage.data.quota_storage_bytes > 0
                           ? formatBytes(usage.data.quota_storage_bytes)
-                          : '不限额'}
+                          : t('settings.unlimitedQuota')}
                       </span>
                     </p>
                     <Progress
@@ -333,10 +334,11 @@ export function SpaceSettingsPage() {
                   </div>
                   <div className="space-y-1.5">
                     <p className="text-sm">
-                      文件数：{usage.data.file_count}
+                      {t('settings.fileCountLabel')}
+                      {usage.data.file_count}
                       <span className="text-muted-foreground">
                         {' '}/{' '}
-                        {usage.data.quota_file_count > 0 ? usage.data.quota_file_count : '不限额'}
+                        {usage.data.quota_file_count > 0 ? usage.data.quota_file_count : t('settings.unlimitedQuota')}
                       </span>
                     </p>
                     <Progress
@@ -351,15 +353,15 @@ export function SpaceSettingsPage() {
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">无法加载用量。</p>
+                <p className="text-sm text-muted-foreground">{t('settings.usageUnavailable')}</p>
               )}
             </CardContent>
           </Card>
 
           <DescriptionList cols={2} className="max-w-[640px]">
             <DescriptionItem label="Slug">{s.slug}</DescriptionItem>
-            <DescriptionItem label="类型">
-              {s.space_type === 'personal' ? '个人空间' : '共享空间'}
+            <DescriptionItem label={t('typeLabel')}>
+              {s.space_type === 'personal' ? t('typePersonal') : t('typeSharedShort')}
             </DescriptionItem>
           </DescriptionList>
 
@@ -368,12 +370,12 @@ export function SpaceSettingsPage() {
               <ConfirmAction
                 trigger={
                   <Button variant="destructive" disabled={removeSpace.isPending}>
-                    删除空间
+                    {t('settings.deleteSpace')}
                   </Button>
                 }
-                title="删除整个空间？"
-                description="将级联清理资产、向量与对象存储，不可恢复。"
-                confirmText="删除"
+                title={t('settings.deleteTitle')}
+                description={t('settings.deleteDesc')}
+                confirmText={t('action.delete')}
                 danger
                 onConfirm={() => removeSpace.mutate()}
               />

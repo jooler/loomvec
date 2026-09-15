@@ -1,0 +1,16 @@
+{
+  "reasonRequired": "请填写驳回理由",
+  "reasonBlank": "理由不能为空白",
+  "loadQueueFailed": "加载待审队列失败",
+  "decideFailed": "审核操作失败",
+  "title": "审核队列",
+  "emptyQueue": "没有待审核的资产",
+  "submitterLabel": "提交人：",
+  "remarkLabel": "备注：",
+  "approve": "通过",
+  "reject": "驳回",
+  "rejectTitle": "驳回「{{name}}」",
+  "reasonLabel": "驳回理由（必填，将通知上传者）",
+  "reasonPlaceholder": "例如：内容与空间主题不符 / 图片不清晰",
+  "confirmReject": "确认驳回"
+}

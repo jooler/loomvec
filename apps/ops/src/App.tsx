@@ -4,6 +4,7 @@ import { LogOut, UserRound } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { api } from './api';
 import { OPS_ROLES, useAuth } from './auth';
 import { OPS_MENU, staticMenuName } from './menu';
@@ -78,17 +79,15 @@ function FullPageLoading() {
 function AccessDenied() {
   const { logout } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation('layout');
   return (
     <div className="grid min-h-svh place-items-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-3 text-center">
         <div className="flex size-12 items-center justify-center rounded-full bg-muted">
           <ShieldAlert className="size-6 text-muted-foreground" />
         </div>
-        <h2 className="text-lg font-semibold">无运营角色权限</h2>
-        <p className="text-sm text-muted-foreground">
-          运营端面向公共知识库的运营人员（operator / super_admin）。
-          当前账号未被授予运营角色，请联系平台管理员在运维端分配。
-        </p>
+        <h2 className="text-lg font-semibold">{t('accessDenied.title')}</h2>
+        <p className="text-sm text-muted-foreground">{t('accessDenied.description')}</p>
         <Button
           variant="outline"
           onClick={() => {
@@ -96,7 +95,7 @@ function AccessDenied() {
             navigate('/login', { replace: true });
           }}
         >
-          重新登录
+          {t('accessDenied.relogin')}
         </Button>
       </div>
     </div>
@@ -128,11 +127,12 @@ function RequireOpsRole({ children }: { children: React.ReactNode }) {
 function OpsSidebar() {
   const location = useLocation();
   const pathname = location.pathname;
+  const { t } = useTranslation('layout');
   const spaces = useQuery({
     queryKey: ['ops-spaces'],
     queryFn: async () => {
       const { data, error } = await api.GET('/api/v1/ops/spaces');
-      if (error) throw new Error('加载公共空间失败');
+      if (error) throw new Error(t('sidebar.loadFailed'));
       return data.items;
     },
     staleTime: 10_000,
@@ -145,7 +145,7 @@ function OpsSidebar() {
           <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
             L
           </span>
-          LoomVec 运营端
+          {t('brand')}
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -167,10 +167,10 @@ function OpsSidebar() {
         </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center justify-between">
-            公共空间
+            {t('sidebar.publicSpaces')}
             <Button asChild size="xs" variant="ghost" className="h-6 gap-1 px-2">
               <Link to="/overview?create=1">
-                <Plus /> 新建
+                <Plus /> {t('sidebar.create')}
               </Link>
             </Button>
           </SidebarGroupLabel>
@@ -182,7 +182,7 @@ function OpsSidebar() {
                 </div>
               ) : (spaces.data?.length ?? 0) === 0 ? (
                 <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                  还没有公共空间，点击「新建」创建
+                  {t('sidebar.emptyHint')}
                 </p>
               ) : (
                 spaces.data?.map((s) => (
@@ -209,12 +209,13 @@ function OpsSidebar() {
 
 function OpsBreadcrumb() {
   const location = useLocation();
+  const { t } = useTranslation('layout');
   const name = staticMenuName(location.pathname);
   return (
     <Breadcrumb>
       <BreadcrumbList>
         <BreadcrumbItem>
-          <BreadcrumbPage>{name ?? 'LoomVec 运营端'}</BreadcrumbPage>
+          <BreadcrumbPage>{name ?? t('brand')}</BreadcrumbPage>
         </BreadcrumbItem>
       </BreadcrumbList>
     </Breadcrumb>
@@ -224,6 +225,7 @@ function OpsBreadcrumb() {
 function UserMenu() {
   const { me, logout } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation('layout');
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -233,7 +235,7 @@ function UserMenu() {
               <UserRound className="size-3.5" />
             </AvatarFallback>
           </Avatar>
-          <span className="text-sm">{me?.username ?? '未登录'}</span>
+          <span className="text-sm">{me?.username ?? t('userMenu.anonymous')}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -242,11 +244,11 @@ function UserMenu() {
         <DropdownMenuItem
           onClick={() => {
             logout();
-            toast.success('已退出登录');
+            toast.success(t('userMenu.loggedOut'));
             navigate('/login');
           }}
         >
-          <LogOut /> 退出登录
+          <LogOut /> {t('userMenu.logout')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

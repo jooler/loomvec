@@ -3,6 +3,7 @@ import { Fragment, Suspense } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import { LogOut, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { useAuth, usePerm } from '@/auth';
 import { ADMIN_MENU, findMenuTrail } from '@/menu';
 import type { AdminMenuItem } from '@/menu';
@@ -42,6 +43,7 @@ import { ThemeToggle } from '@loomvec/ui/components/mode-toggle';
 function AppSidebar({ menu }: { menu: AdminMenuItem[] }) {
   const location = useLocation();
   const pathname = location.pathname;
+  const { t } = useTranslation('layout');
 
   return (
     <Sidebar>
@@ -50,7 +52,7 @@ function AppSidebar({ menu }: { menu: AdminMenuItem[] }) {
           <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
             L
           </span>
-          LoomVec 运维端
+          {t('brand')}
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -124,6 +126,7 @@ function AdminBreadcrumb() {
 function UserMenu() {
   const { me, logout } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation('layout');
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -133,7 +136,7 @@ function UserMenu() {
               <UserRound className="size-3.5" />
             </AvatarFallback>
           </Avatar>
-          <span className="text-sm">{me?.username ?? '未登录'}</span>
+          <span className="text-sm">{me?.username ?? t('notLoggedIn')}</span>
           <ChevronRight className="size-3.5 rotate-90 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
@@ -143,11 +146,11 @@ function UserMenu() {
         <DropdownMenuItem
           onClick={() => {
             logout();
-            toast.success('已退出登录');
+            toast.success(t('logoutSuccess'));
             navigate('/login');
           }}
         >
-          <LogOut /> 退出登录
+          <LogOut /> {t('logout')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

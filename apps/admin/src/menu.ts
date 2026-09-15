@@ -15,6 +15,7 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
+import { t } from '@/i18n';
 
 export interface AdminMenuItem {
   path: string;
@@ -27,47 +28,47 @@ export interface AdminMenuItem {
 }
 
 export const ADMIN_MENU: AdminMenuItem[] = [
-  { path: '/overview', name: '总览', icon: LayoutDashboard },
-  { path: '/tenants', name: '租户管理', icon: Boxes },
-  { path: '/users', name: '用户与权限', icon: Users },
-  { path: '/spaces', name: '空间治理', icon: Boxes },
-  { path: '/reviews', name: '内容审核', icon: FileCheck2 },
-  { path: '/pipeline', name: '管线监控', icon: Workflow },
+  { path: '/overview', name: t('layout:menu.overview'), icon: LayoutDashboard },
+  { path: '/tenants', name: t('layout:menu.tenants'), icon: Boxes },
+  { path: '/users', name: t('layout:menu.users'), icon: Users },
+  { path: '/spaces', name: t('layout:menu.spaces'), icon: Boxes },
+  { path: '/reviews', name: t('layout:menu.reviews'), icon: FileCheck2 },
+  { path: '/pipeline', name: t('layout:menu.pipeline'), icon: Workflow },
   {
     // 分组锚点仅作菜单 key，不得与任何子路由 path 相同（否则菜单 key 冲突）
     path: '/models-group',
-    name: '模型与检索',
+    name: t('layout:menu.modelsGroup'),
     icon: Bot,
     children: [
-      { path: '/models', name: '重嵌入任务' },
-      { path: '/retrieval', name: '索引状态' },
+      { path: '/models', name: t('layout:menu.models') },
+      { path: '/retrieval', name: t('layout:menu.retrieval') },
     ],
   },
   {
     path: '/open',
-    name: '开放平台',
+    name: t('layout:menu.open'),
     icon: Plug,
     children: [
-      { path: '/open/api-keys', name: 'API Key' },
-      { path: '/open/oauth', name: 'OAuth 应用' },
-      { path: '/open/webhooks', name: 'Webhook' },
+      { path: '/open/api-keys', name: t('layout:menu.apiKeys') },
+      { path: '/open/oauth', name: t('layout:menu.oauth') },
+      { path: '/open/webhooks', name: t('layout:menu.webhooks') },
     ],
   },
   {
     path: '/settings',
-    name: '系统配置',
+    name: t('layout:menu.settings'),
     icon: Settings,
     superAdminOnly: true,
     children: [
-      { path: '/settings/ai', name: 'AI 供方' },
-      { path: '/settings/retrieval', name: '检索参数' },
-      { path: '/settings/upload', name: '上传策略' },
-      { path: '/settings/sso', name: 'SSO/OIDC' },
-      { path: '/settings/extensions', name: '扩展插件' },
+      { path: '/settings/ai', name: t('layout:menu.settingsAi') },
+      { path: '/settings/retrieval', name: t('layout:menu.settingsRetrieval') },
+      { path: '/settings/upload', name: t('layout:menu.settingsUpload') },
+      { path: '/settings/sso', name: t('layout:menu.settingsSso') },
+      { path: '/settings/extensions', name: t('layout:menu.settingsExtensions') },
     ],
   },
-  { path: '/audit', name: '审计日志', icon: FileSearch },
-  { path: '/system', name: '系统状态', icon: HeartPulse },
+  { path: '/audit', name: t('layout:menu.audit'), icon: FileSearch },
+  { path: '/system', name: t('layout:menu.system'), icon: HeartPulse },
 ];
 
 /** 菜单树展开为路径列表（测试/守卫用）；有子菜单时父级仅为分组锚点，不再计入。 */

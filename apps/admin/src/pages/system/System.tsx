@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
@@ -20,31 +21,33 @@ function detailText(detail: Record<string, unknown>): string {
 
 type ComponentRow = SystemStatus['components'][number];
 
-const componentColumns: ColumnDef<ComponentRow, unknown>[] = [
-  {
-    accessorKey: 'name',
-    header: '组件',
-    cell: ({ row }) => COMPONENT_LABEL[row.original.name] ?? row.original.name,
-  },
-  {
-    accessorKey: 'ok',
-    header: '状态',
-    cell: ({ row }) =>
-      row.original.ok ? (
-        <StatusBadge tone="green">正常</StatusBadge>
-      ) : (
-        <StatusBadge tone="red">异常</StatusBadge>
-      ),
-  },
-  {
-    accessorKey: 'detail',
-    header: '版本 / 详情 / 错误',
-    cell: ({ row }) => detailText(row.original.detail) || '-',
-  },
-];
-
 /** 系统状态：组件详情 / 队列深度 / worker 心跳 / 备份 / 平台版本（docs/04 §5.11）。 */
 export function SystemPage() {
+  const { t } = useTranslation('system');
+
+  const componentColumns: ColumnDef<ComponentRow, unknown>[] = [
+    {
+      accessorKey: 'name',
+      header: t('col.component'),
+      cell: ({ row }) => COMPONENT_LABEL[row.original.name] ?? row.original.name,
+    },
+    {
+      accessorKey: 'ok',
+      header: t('field.status'),
+      cell: ({ row }) =>
+        row.original.ok ? (
+          <StatusBadge tone="green">{t('status.ok')}</StatusBadge>
+        ) : (
+          <StatusBadge tone="red">{t('status.error')}</StatusBadge>
+        ),
+    },
+    {
+      accessorKey: 'detail',
+      header: t('col.detail'),
+      cell: ({ row }) => detailText(row.original.detail) || '-',
+    },
+  ];
+
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin-system-status'],
     queryFn: () => unwrap<SystemStatus>(api.GET('/api/v1/admin/system/status')),
@@ -57,12 +60,12 @@ export function SystemPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="系统状态" />
+      <PageHeader title={t('title')} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <CardHeader>
-            <CardTitle>组件健康详情</CardTitle>
+            <CardTitle>{t('componentsTitle')}</CardTitle>
           </CardHeader>
           <CardContent>
             <DataTable
@@ -79,7 +82,7 @@ export function SystemPage() {
         <div className="space-y-4 lg:col-span-2">
           <Card>
             <CardHeader>
-              <CardTitle>队列与心跳</CardTitle>
+              <CardTitle>{t('queuesTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
               <DescriptionList cols={1}>
@@ -88,16 +91,16 @@ export function SystemPage() {
                     <Badge variant="outline">{depth}</Badge>
                   </DescriptionItem>
                 ))}
-                <DescriptionItem label="死信队列">
+                <DescriptionItem label={t('deadLetterQueue')}>
                   <StatusBadge tone={data?.pipeline.dead_letter ? 'red' : 'gray'}>
                     {data?.pipeline.dead_letter ?? 0}
                   </StatusBadge>
                 </DescriptionItem>
-                <DescriptionItem label="worker 心跳">
+                <DescriptionItem label={t('workerHeartbeat')}>
                   {worker?.ok ? (
                     <span>age {formatSeconds(workerAge)}</span>
                   ) : (
-                    <StatusBadge tone="red">无心跳（worker 未运行）</StatusBadge>
+                    <StatusBadge tone="red">{t('noHeartbeat')}</StatusBadge>
                   )}
                 </DescriptionItem>
               </DescriptionList>
@@ -106,7 +109,7 @@ export function SystemPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>备份状态</CardTitle>
+              <CardTitle>{t('backupTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
               {Object.entries(data?.backup ?? {}).length ? (
@@ -118,24 +121,27 @@ export function SystemPage() {
                   ))}
                 </DescriptionList>
               ) : (
-                <p className="text-sm text-muted-foreground">暂无记录</p>
+                <p className="text-sm text-muted-foreground">{t('noRecords')}</p>
               )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>平台信息</CardTitle>
+              <CardTitle>{t('platformTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
               <DescriptionList cols={1}>
-                <DescriptionItem label="API 组件版本">
-                  {String(apiComp?.detail.version ?? '未知')}
+                <DescriptionItem label={t('apiVersion')}>
+                  {String(apiComp?.detail.version ?? t('unknown'))}
                 </DescriptionItem>
-                <DescriptionItem label="存储用量">
-                  {formatBytes(data?.scale.storage_bytes ?? 0)}（{data?.scale.file_count ?? 0} 文件）
+                <DescriptionItem label={t('storage')}>
+                  {t('storageUsage', {
+                    size: formatBytes(data?.scale.storage_bytes ?? 0),
+                    count: data?.scale.file_count ?? 0,
+                  })}
                 </DescriptionItem>
-                <DescriptionItem label="状态生成时间">
+                <DescriptionItem label={t('generatedAt')}>
                   {data ? formatDateTime(data.generated_at) : '-'}
                 </DescriptionItem>
               </DescriptionList>

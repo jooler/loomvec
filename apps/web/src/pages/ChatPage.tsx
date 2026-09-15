@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Dot, Send, ShieldAlert, Waypoints } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Input } from '@loomvec/ui/components/ui/input';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
@@ -13,6 +14,7 @@ import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { MultiSelect } from '@/components/multi-select';
 import { useChatSessions, useMySpaces, usePublicSpaces } from '@/hooks';
 import { extractApiError } from '@/utils';
+import { t as sharedT } from '@/i18n';
 import { streamChatAnswer, type ChatCitation, type GraphEvidence } from '@/chat';
 
 /**
@@ -69,11 +71,19 @@ function renderAnswer(
 
 function citationLabel(c: ChatCitation): string {
   const loc = c.locator ?? {};
-  if (loc.pages?.length) return `第 ${loc.pages.map((p) => p + 1).join(',')} 页`;
+  if (loc.pages?.length)
+    return sharedT('ui:chunks.pageLocator', { pages: loc.pages.map((p) => p + 1).join(',') });
   if (loc.time_start !== undefined)
-    return `${Math.floor(loc.time_start / 60)}分${Math.round(loc.time_start % 60)}秒起`;
-  if (loc.start_line !== undefined) return `行 ${loc.start_line}-${loc.end_line ?? ''}`;
-  return '无定位';
+    return sharedT('chat:timeStart', {
+      minutes: Math.floor(loc.time_start / 60),
+      seconds: Math.round(loc.time_start % 60),
+    });
+  if (loc.start_line !== undefined)
+    return sharedT('ui:chunks.lineLocator', {
+      start: loc.start_line,
+      end: loc.end_line ?? '',
+    });
+  return sharedT('chat:noLocator');
 }
 
 function jumpToCitation(navigate: ReturnType<typeof useNavigate>, c: ChatCitation) {
@@ -89,6 +99,7 @@ export function ChatPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('chat');
   const [input, setInput] = useState('');
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -156,7 +167,7 @@ export function ChatPage() {
         params: { path: { session_id: sessionId! } },
         body: { scope_space_ids: scopeIds },
       });
-      if (error) throw new Error(extractApiError(error, '更新召回范围失败'));
+      if (error) throw new Error(extractApiError(error, t('updateScopeFailed')));
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] }),
     onError: (e) => {
@@ -180,7 +191,7 @@ export function ChatPage() {
           void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
         }
       }
-      if (!sid) throw new Error('会话创建失败');
+      if (!sid) throw new Error(t('sessionCreateFailed'));
 
       setMsgs((prev) => [...prev, { role: 'user', content: question }]);
       setMsgs((prev) => [...prev, { role: 'assistant', content: '', streaming: true }]);
@@ -236,7 +247,7 @@ export function ChatPage() {
     },
     // 网络层异常（fetch/reader 中断）兜底：结束气泡并提示，否则流式标记永不落地
     onError: (e) => {
-      setErrorMsg(e instanceof Error ? e.message : '生成失败，请重试');
+      setErrorMsg(e instanceof Error ? e.message : t('generateFailedRetry'));
       setMsgs((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -261,28 +272,28 @@ export function ChatPage() {
     ...(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name })),
     ...(publicSpaces.data ?? [])
       .filter((s) => s.linked)
-      .map((s) => ({ value: s.id, label: `${s.name}（公共）` })),
+      .map((s) => ({ value: s.id, label: t('publicOption', { name: s.name }) })),
   ];
 
   return (
     <div className="flex h-svh min-w-0 flex-col">
       {/* 顶栏：会话标题 + 召回范围（会话列表在 AppLayout 侧栏上部） */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background px-4 py-3">
-        <h1 className="truncate text-base font-semibold">{currentSession?.title || '对话'}</h1>
+        <h1 className="truncate text-base font-semibold">{currentSession?.title || t('defaultTitle')}</h1>
         {sessionId && (
           <div className="flex items-center gap-2">
-            <span className="shrink-0 text-sm text-muted-foreground">召回空间</span>
+            <span className="shrink-0 text-sm text-muted-foreground">{t('scopeLabel')}</span>
             <MultiSelect
               value={scopeIds}
               options={spaceOptions}
-              placeholder="全部空间（我的全部可检索空间）"
+              placeholder={t('scopePlaceholder')}
               loading={spaces.isLoading || publicSpaces.isLoading || sessions.isLoading}
               onChange={(v) => {
                 setScopeOverride(v);
                 updateScope.mutate(v);
               }}
             />
-            <StatusBadge tone="purple">图谱联合召回</StatusBadge>
+            <StatusBadge tone="purple">{t('graphBadge')}</StatusBadge>
           </div>
         )}
       </div>
@@ -293,13 +304,13 @@ export function ChatPage() {
           {chatDisabled && (
             <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               <ShieldAlert className="size-4" />
-              问答暂不可用：{status.data?.reason ?? 'LLM 未配置'}（检索不受影响）
+              {t('unavailable', { reason: status.data?.reason ?? t('llmNotConfigured') })}
             </div>
           )}
           {msgs.length === 0 && !ask.isPending && (
             <EmptyState
-              title={sessionId ? '向所选空间提问' : '开始一段对话'}
-              description="答案基于会话召回范围内的检索来源生成，引用可点击回溯到原文位置。"
+              title={sessionId ? t('askTitle') : t('startTitle')}
+              description={t('emptyDesc')}
             />
           )}
           {msgs.map((m, i) => (
@@ -319,7 +330,7 @@ export function ChatPage() {
                 )}
                 {m.role === 'assistant' && (m.citations?.length ?? 0) > 0 && (
                   <div className="mt-2 border-t pt-2">
-                    <p className="mb-1 text-xs font-medium text-muted-foreground">引用来源</p>
+                    <p className="mb-1 text-xs font-medium text-muted-foreground">{t('citationsTitle')}</p>
                     <ul className="space-y-1">
                       {m.citations!.map((c) => (
                         <li key={c.index} className="text-xs">
@@ -343,7 +354,7 @@ export function ChatPage() {
                   <Collapsible className="mt-2">
                     <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
                       <Waypoints className="size-3" />
-                      图谱证据链（{m.graphEvidence!.length}）
+                      {t('evidenceCount', { count: m.graphEvidence!.length })}
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <ul className="mt-1 space-y-1 rounded bg-background/60 p-2">
@@ -352,7 +363,11 @@ export function ChatPage() {
                             <span className="font-medium">{ev.head.name}</span>
                             <span className="mx-1 text-primary">—{ev.relation.type}→</span>
                             <span className="font-medium">{ev.tail.name}</span>
-                            {ev.hops > 1 && <span className="ml-1 text-muted-foreground">（{ev.hops} 跳）</span>}
+                            {ev.hops > 1 && (
+                              <span className="ml-1 text-muted-foreground">
+                                {t('hops', { count: ev.hops })}
+                              </span>
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -373,7 +388,7 @@ export function ChatPage() {
                   if (lastUser) ask.mutate(lastUser.content);
                 }}
               >
-                重试
+                {t('action.retry')}
               </button>
             </p>
           )}
@@ -385,7 +400,7 @@ export function ChatPage() {
       <div className="border-t bg-background px-4 py-3">
         <div className="mx-auto flex w-full max-w-3xl items-center gap-2">
           <Input
-            placeholder={chatDisabled ? '问答暂不可用' : '输入问题，Enter 发送…'}
+            placeholder={chatDisabled ? t('inputUnavailable') : t('inputPlaceholder')}
             value={input}
             disabled={chatDisabled}
             onChange={(e) => setInput(e.target.value)}

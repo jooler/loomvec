@@ -3,6 +3,7 @@
  * 仅用于后端接口确实接收 reason 的操作；不接收 reason 的危险操作用 ConfirmAction。
  */
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@loomvec/ui/components/ui/button';
 import {
   Dialog,
@@ -32,6 +33,7 @@ export function ReasonModal(props: {
   const [reason, setReason] = useState('');
   const [error, setError] = useState(false);
   const requireReason = props.requireReason !== false;
+  const { t } = useTranslation('components');
 
   // 关闭时清空（对应旧 antd destroyOnHidden + resetFields）
   useEffect(() => {
@@ -57,38 +59,34 @@ export function ReasonModal(props: {
           {props.description && <DialogDescription>{props.description}</DialogDescription>}
         </DialogHeader>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">操作理由</label>
+          <label className="text-sm font-medium">{t('reason.label')}</label>
           <Textarea
             rows={3}
             maxLength={500}
             value={reason}
             aria-invalid={error || undefined}
-            placeholder="请填写操作理由（将记入审计日志）"
+            placeholder={t('reason.required')}
             onChange={(e) => {
               setReason(e.target.value);
               if (error) setError(false);
             }}
           />
           <div className="flex items-center justify-between">
-            {error ? (
-              <p className="text-sm text-destructive">请填写操作理由（将记入审计日志）</p>
-            ) : (
-              <span />
-            )}
+            {error ? <p className="text-sm text-destructive">{t('reason.required')}</p> : <span />}
             <span className="text-xs text-muted-foreground">{reason.length}/500</span>
           </div>
         </div>
         {props.children}
         <DialogFooter>
           <Button variant="outline" onClick={props.onCancel} disabled={props.confirmLoading}>
-            取消
+            {t('action.cancel')}
           </Button>
           <Button
             variant={props.danger ? 'destructive' : 'default'}
             onClick={() => void submit()}
             disabled={props.confirmLoading}
           >
-            {props.okText ?? '确认执行'}
+            {props.okText ?? t('reason.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>

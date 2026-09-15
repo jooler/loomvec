@@ -1,0 +1,30 @@
+{
+  "superAdminOnly": "本组仅 super_admin 可修改",
+  "jsonInvalid": "JSON 格式无效，请修正后再保存",
+  "savedToast": "配置已保存",
+  "saveFailed": "保存失败",
+  "notSet": "未设置",
+  "set": "设置",
+  "superAdminOnlyHint": "仅 super_admin 可修改系统配置",
+  "editTitle": "修改配置：{{key}}",
+  "restartDescription": "该配置需重启服务后生效。",
+  "sensitiveDescription": "敏感配置写入后仅回显脱敏值。",
+  "newValue": "新值（{{description}}）",
+  "group": {
+    "ai": "AI 供方配置",
+    "retrieval": "检索参数",
+    "upload": "上传策略",
+    "sso": "SSO / OIDC",
+    "extensions": "扩展插件"
+  },
+  "effect": {
+    "restart": "需重启",
+    "immediate": "即时生效"
+  },
+  "col": {
+    "key": "配置键",
+    "description": "说明",
+    "value": "当前值",
+    "effect": "生效方式"
+  }
+}

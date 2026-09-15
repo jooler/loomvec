@@ -6,9 +6,11 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
+import { t as tt } from '@/i18n';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
 import { PageHeader } from '@loomvec/ui/components/page-header';
@@ -31,13 +33,14 @@ import type { SpaceDetail } from '@/types';
 
 type SpaceMember = SpaceDetail['members'][number];
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const quotaSchema = z.object({
-  quota_storage_bytes: z.number({ error: '请输入存储配额（字节）' }).min(0),
-  quota_file_count: z.number({ error: '请输入文件数配额' }).min(0),
+  quota_storage_bytes: z.number({ error: tt('spaces:quotaStorageRequired') }).min(0),
+  quota_file_count: z.number({ error: tt('spaces:quotaFilesRequired') }).min(0),
 });
 
 const transferSchema = z.object({
-  new_owner_id: z.string().min(1, '请输入成员 user_id'),
+  new_owner_id: z.string().min(1, tt('spaces:newOwnerRequired')),
 });
 
 /** 空间治理详情：成员列表 / 封禁解封 / owner 转移 / 内容清空（危险）/ 配额调整（docs/04 §5.4）。 */
@@ -46,6 +49,7 @@ export function SpaceDetailPage() {
   const { canWrite } = usePerm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('spaces');
 
   const [quotaOpen, setQuotaOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
@@ -93,17 +97,17 @@ export function SpaceDetailPage() {
       close();
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setBusy(false);
     }
   };
 
   const memberColumns: ColumnDef<SpaceMember, unknown>[] = [
-    { accessorKey: 'user_id', header: '用户 ID' },
+    { accessorKey: 'user_id', header: t('col.userId') },
     {
       accessorKey: 'role',
-      header: '角色',
+      header: t('col.role'),
       cell: ({ row }) =>
         row.original.role === 'owner' ? (
           <StatusBadge tone="amber">owner</StatusBadge>
@@ -115,7 +119,7 @@ export function SpaceDetailPage() {
     },
     {
       accessorKey: 'invited_by',
-      header: '邀请人',
+      header: t('col.invitedBy'),
       cell: ({ row }) => row.original.invited_by ?? '-',
     },
   ];
@@ -129,21 +133,21 @@ export function SpaceDetailPage() {
           className="-ml-2 text-muted-foreground"
           onClick={() => navigate('/spaces')}
         >
-          <ArrowLeft /> 返回空间列表
+          <ArrowLeft /> {t('backToList')}
         </Button>
       </div>
       <PageHeader
-        title={space?.name ?? '空间详情'}
+        title={space?.name ?? t('detailTitle')}
         description={space?.slug}
         actions={
           <>
             {space?.banned ? (
               <Button variant="outline" disabled={!canWrite} onClick={() => setUnbanOpen(true)}>
-                解封
+                {t('unban')}
               </Button>
             ) : (
               <Button variant="destructive" disabled={!canWrite} onClick={() => setBanOpen(true)}>
-                封禁
+                {t('ban')}
               </Button>
             )}
             <Button
@@ -154,7 +158,7 @@ export function SpaceDetailPage() {
                 setTransferOpen(true);
               }}
             >
-              Owner 转移
+              {t('transferOwner')}
             </Button>
             <Button
               variant="outline"
@@ -164,10 +168,10 @@ export function SpaceDetailPage() {
                 setQuotaOpen(true);
               }}
             >
-              调整配额
+              {t('adjustQuota')}
             </Button>
             <Button variant="destructive" disabled={!canWrite} onClick={() => setClearOpen(true)}>
-              内容清空
+              {t('clearContent')}
             </Button>
           </>
         }
@@ -175,44 +179,44 @@ export function SpaceDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>基本信息</CardTitle>
+          <CardTitle>{t('basicInfoTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
           <DescriptionList cols={2}>
             <DescriptionItem label="ID">{space?.id}</DescriptionItem>
-            <DescriptionItem label="类型">
-              {space?.space_type === 'personal' ? '个人空间' : '共享空间'}
+            <DescriptionItem label={t('col.type')}>
+              {space?.space_type === 'personal' ? t('type.personalSpace') : t('type.sharedSpace')}
             </DescriptionItem>
-            <DescriptionItem label="所属租户">{space?.tenant_id ?? '—（平台级）'}</DescriptionItem>
+            <DescriptionItem label={t('col.tenant')}>{space?.tenant_id ?? t('platformLevel')}</DescriptionItem>
             <DescriptionItem label="Owner">{space?.owner_name ?? '-'}</DescriptionItem>
-            <DescriptionItem label="成员数">{space?.member_count ?? 0}</DescriptionItem>
-            <DescriptionItem label="资产数">{space?.asset_count ?? 0}</DescriptionItem>
-            <DescriptionItem label="存储用量">{formatBytes(space?.storage_bytes ?? 0)}</DescriptionItem>
-            <DescriptionItem label="文件数">{space?.file_count ?? 0}</DescriptionItem>
-            <DescriptionItem label="先审后见">
+            <DescriptionItem label={t('col.memberCount')}>{space?.member_count ?? 0}</DescriptionItem>
+            <DescriptionItem label={t('col.assetCount')}>{space?.asset_count ?? 0}</DescriptionItem>
+            <DescriptionItem label={t('col.storageUsage')}>{formatBytes(space?.storage_bytes ?? 0)}</DescriptionItem>
+            <DescriptionItem label={t('col.fileCount')}>{space?.file_count ?? 0}</DescriptionItem>
+            <DescriptionItem label={t('col.reviewRequired')}>
               {space?.review_required ? (
-                <StatusBadge tone="amber">开启</StatusBadge>
+                <StatusBadge tone="amber">{t('toggle.on')}</StatusBadge>
               ) : (
-                <Badge variant="outline">关闭</Badge>
+                <Badge variant="outline">{t('toggle.off')}</Badge>
               )}
             </DescriptionItem>
-            <DescriptionItem label="状态">
+            <DescriptionItem label={t('field.status')}>
               {space?.banned ? (
-                <StatusBadge tone="red">已封禁</StatusBadge>
+                <StatusBadge tone="red">{t('status.banned')}</StatusBadge>
               ) : (
-                <StatusBadge tone="green">正常</StatusBadge>
+                <StatusBadge tone="green">{t('status.normal')}</StatusBadge>
               )}
             </DescriptionItem>
-            <DescriptionItem label="嵌入模型">{space?.embedding_model ?? '-'}</DescriptionItem>
-            <DescriptionItem label="分块预设">{space?.chunk_preset ?? '-'}</DescriptionItem>
-            <DescriptionItem label="创建时间">{formatDateTime(space?.created_at)}</DescriptionItem>
+            <DescriptionItem label={t('col.embeddingModel')}>{space?.embedding_model ?? '-'}</DescriptionItem>
+            <DescriptionItem label={t('col.chunkPreset')}>{space?.chunk_preset ?? '-'}</DescriptionItem>
+            <DescriptionItem label={t('field.createdAt')}>{formatDateTime(space?.created_at)}</DescriptionItem>
           </DescriptionList>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>成员列表</CardTitle>
+          <CardTitle>{t('membersTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
           <DataTable
@@ -227,31 +231,31 @@ export function SpaceDetailPage() {
       {/* 封禁（危险操作） */}
       <ReasonModal
         open={banOpen}
-        title={`封禁空间「${space?.name ?? ''}」`}
-        description="封禁后该空间所有成员访问被拒，数据保留。此为危险操作。"
-        okText="确认封禁"
+        title={t('banTitle', { name: space?.name ?? '' })}
+        description={t('banDescription')}
+        okText={t('confirmBan')}
         danger
         confirmLoading={busy}
         onCancel={() => setBanOpen(false)}
-        onOk={(reason) => post('/api/v1/admin/spaces/{space_id}/ban', reason, '已封禁', () => setBanOpen(false))}
+        onOk={(reason) => post('/api/v1/admin/spaces/{space_id}/ban', reason, t('bannedToast'), () => setBanOpen(false))}
       />
 
       {/* 解封 */}
       <ReasonModal
         open={unbanOpen}
-        title="解封空间"
-        okText="确认解封"
+        title={t('unbanTitle')}
+        okText={t('confirmUnban')}
         confirmLoading={busy}
         onCancel={() => setUnbanOpen(false)}
-        onOk={(reason) => post('/api/v1/admin/spaces/{space_id}/unban', reason, '已解封', () => setUnbanOpen(false))}
+        onOk={(reason) => post('/api/v1/admin/spaces/{space_id}/unban', reason, t('unbannedToast'), () => setUnbanOpen(false))}
       />
 
       {/* owner 转移：新 owner 必须是空间成员 */}
       <ReasonModal
         open={transferOpen}
-        title="Owner 转移"
-        description="旧 owner 将变为 editor；新 owner 必须已是空间成员。"
-        okText="确认转移"
+        title={t('transferTitle')}
+        description={t('transferDescription')}
+        okText={t('confirmTransfer')}
         confirmLoading={busy}
         onCancel={() => setTransferOpen(false)}
         onOk={async (reason) => {
@@ -266,24 +270,24 @@ export function SpaceDetailPage() {
                 body: { new_owner_id, reason },
               }),
             );
-            toast.success('Owner 已转移');
+            toast.success(t('transferSuccess'));
             setTransferOpen(false);
             invalidate();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }
         }}
       >
         <div className="space-y-1.5">
-          <Label htmlFor="new_owner_id">新 Owner（成员 user_id）</Label>
+          <Label htmlFor="new_owner_id">{t('newOwnerLabel')}</Label>
           <Select
             value={transferForm.watch('new_owner_id') || undefined}
             onValueChange={(v) => transferForm.setValue('new_owner_id', v, { shouldValidate: true })}
           >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="选择空间成员" />
+              <SelectValue placeholder={t('memberPlaceholder')} />
             </SelectTrigger>
             <SelectContent>
               {(space?.members ?? []).map((m) => (
@@ -304,9 +308,9 @@ export function SpaceDetailPage() {
       {/* 内容清空（危险操作） */}
       <ReasonModal
         open={clearOpen}
-        title={`清空空间「${space?.name ?? ''}」全部内容`}
-        description={`软删全部 ${space?.asset_count ?? 0} 个资产并连带清理向量，操作不可逆。此为危险操作。`}
-        okText="确认清空"
+        title={t('clearTitle', { name: space?.name ?? '' })}
+        description={t('clearDescription', { count: space?.asset_count ?? 0 })}
+        okText={t('confirmClear')}
         danger
         confirmLoading={busy}
         onCancel={() => setClearOpen(false)}
@@ -319,11 +323,11 @@ export function SpaceDetailPage() {
                 body: { reason },
               }),
             );
-            toast.success('清空任务已受理');
+            toast.success(t('clearAccepted'));
             setClearOpen(false);
             invalidate();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }
@@ -333,8 +337,8 @@ export function SpaceDetailPage() {
       {/* 配额调整 */}
       <ReasonModal
         open={quotaOpen}
-        title="调整空间配额"
-        okText="保存"
+        title={t('quotaTitle')}
+        okText={t('action.save')}
         confirmLoading={busy}
         onCancel={() => setQuotaOpen(false)}
         onOk={async (reason) => {
@@ -349,11 +353,11 @@ export function SpaceDetailPage() {
                 body: { quota_storage_bytes, quota_file_count, reason },
               }),
             );
-            toast.success('配额已调整');
+            toast.success(t('quotaAdjusted'));
             setQuotaOpen(false);
             invalidate();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }
@@ -361,7 +365,7 @@ export function SpaceDetailPage() {
       >
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label htmlFor="quota_storage_bytes">存储配额（字节）</Label>
+            <Label htmlFor="quota_storage_bytes">{t('quotaStorageLabel')}</Label>
             <Input
               id="quota_storage_bytes"
               type="number"
@@ -376,7 +380,7 @@ export function SpaceDetailPage() {
             )}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="quota_file_count">文件数配额</Label>
+            <Label htmlFor="quota_file_count">{t('quotaFilesLabel')}</Label>
             <Input
               id="quota_file_count"
               type="number"

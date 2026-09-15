@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
-import { JOB_PAGE_SIZE, JOB_STATUS_TONE, JOB_TYPE_LABEL } from './constants';
+import { JOB_PAGE_SIZE, JOB_STATUS_TONE } from './constants';
 import type { AssetJob } from './use-asset-queries';
 
 /** 任务记录卡：分页表 + 单步重跑。 */
@@ -14,17 +15,20 @@ export function JobsCard(props: {
   error?: Error | null;
   onRetry: (step: string) => void;
 }) {
+  const { t } = useTranslation('assetDetail');
   const [jobPage, setJobPage] = useState(1);
 
   const jobColumns: ColumnDef<AssetJob, unknown>[] = [
     {
       accessorKey: 'job_type',
-      header: '步骤',
-      cell: ({ row }) => <span>{JOB_TYPE_LABEL[row.original.job_type] ?? row.original.job_type}</span>,
+      header: t('jobs.step'),
+      cell: ({ row }) => (
+        <span>{t(`jobType.${row.original.job_type}`, { defaultValue: row.original.job_type })}</span>
+      ),
     },
     {
       accessorKey: 'status',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) => (
         <StatusBadge tone={JOB_STATUS_TONE[row.original.status] ?? 'gray'}>
           {row.original.status}
@@ -33,13 +37,13 @@ export function JobsCard(props: {
     },
     {
       accessorKey: 'progress',
-      header: '进度',
+      header: t('jobs.progress'),
       cell: ({ row }) => <span>{Math.round(row.original.progress * 100)}%</span>,
     },
-    { accessorKey: 'attempts', header: '尝试' },
+    { accessorKey: 'attempts', header: t('jobs.attempts') },
     {
       id: 'duration',
-      header: '耗时',
+      header: t('jobs.duration'),
       cell: ({ row }) => (
         <span>
           {row.original.started_at && row.original.finished_at
@@ -50,7 +54,7 @@ export function JobsCard(props: {
     },
     {
       accessorKey: 'error',
-      header: '错误',
+      header: t('jobs.error'),
       cell: ({ row }) =>
         row.original.error ? (
           <span className="block max-w-48 truncate text-destructive" title={row.original.error}>
@@ -62,10 +66,10 @@ export function JobsCard(props: {
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => (
         <Button variant="outline" size="xs" onClick={() => props.onRetry(row.original.job_type)}>
-          重跑此步
+          {t('jobs.retryStep')}
         </Button>
       ),
     },
@@ -74,7 +78,7 @@ export function JobsCard(props: {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">任务记录</CardTitle>
+        <CardTitle className="text-base">{t('jobs.title')}</CardTitle>
       </CardHeader>
       <CardContent>
         {props.error ? (

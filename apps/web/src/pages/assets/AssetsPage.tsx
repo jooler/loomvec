@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { ExternalLink } from 'lucide-react';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { useMySpaces, useSpaceCategories, useSpaceTags } from '@/hooks';
 import {
   AssetViewerOverlay,
@@ -37,6 +38,7 @@ import { EMPTY_FILTERS, type AssetFilters } from './use-assets-list';
  */
 export function AssetsPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
+  const { t } = useTranslation('assets');
   const [filters, setFilters] = useState<AssetFilters>(EMPTY_FILTERS);
   // 目录链受控（app 持有：当前文件夹取数 + 分栏每列取数都依赖它）
   const [path, setPath] = useState<string[]>([]);
@@ -113,7 +115,7 @@ export function AssetsPage() {
         for (const aid of assetIds)
           await m.copyAsset.mutateAsync({ assetId: aid, folderId: target });
         m.invalidateAll();
-        toast.success('复制任务已开始（资产重新走解析管线）');
+        toast.success(t('copyStarted'));
       },
       deleteFolders: async (folderIds) => {
         for (const fid of folderIds) await m.deleteFolder.mutateAsync(fid);
@@ -121,13 +123,13 @@ export function AssetsPage() {
       deleteAssets: async (assetIds) => {
         for (const aid of assetIds) await m.deleteAsset.mutateAsync(aid);
         m.invalidateAll();
-        toast.success(`已删除 ${assetIds.length} 个资产（含向量清理）`);
+        toast.success(t('finder.deletedAssets', { count: assetIds.length }));
       },
       retryAssets: async (assetIds) => {
         for (const aid of assetIds) await m.retryAsset.mutateAsync(aid);
       },
     }),
-    [m],
+    [m, t],
   );
 
   const onUploadFiles = async (files: File[]) => {
@@ -208,7 +210,7 @@ export function AssetsPage() {
                   to={`/a/${assetId}`}
                   className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline"
                 >
-                  <ExternalLink className="size-3" /> 打开详情页（编辑 / 任务 / 图谱）
+                  <ExternalLink className="size-3" /> {t('openDetail')}
                 </Link>
               </p>
             )}
@@ -229,9 +231,9 @@ export function AssetsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>发现疑似重复文件</DialogTitle>
+            <DialogTitle>{t('dupTitle')}</DialogTitle>
             <DialogDescription>
-              本空间已存在相同内容：{dupConfirm?.names.join('、')}。仍要上传这份副本吗？
+              {t('dupDesc', { names: dupConfirm?.names.join('、') ?? '' })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -242,7 +244,7 @@ export function AssetsPage() {
                 setDupConfirm(null);
               }}
             >
-              放弃
+              {t('abandon')}
             </Button>
             <Button
               onClick={() => {
@@ -250,7 +252,7 @@ export function AssetsPage() {
                 setDupConfirm(null);
               }}
             >
-              仍要上传
+              {t('uploadAnyway')}
             </Button>
           </DialogFooter>
         </DialogContent>

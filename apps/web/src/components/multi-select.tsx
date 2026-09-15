@@ -1,4 +1,5 @@
 import { ChevronDown } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { cn } from 'cn';
 import { Badge } from '@loomvec/ui/components/ui/badge';
 import {
@@ -20,6 +21,8 @@ export function MultiSelect(props: {
   loading?: boolean;
   className?: string;
 }) {
+  // 通用筛选控件：文案挂在 search 命名空间（主要消费方），通用词复用 common
+  const { t } = useTranslation('search');
   const labelOf = (v: string) => props.options.find((o) => o.value === v)?.label ?? v;
   return (
     <DropdownMenu>
@@ -52,9 +55,9 @@ export function MultiSelect(props: {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-72 w-56 overflow-y-auto">
         {props.loading ? (
-          <p className="px-2 py-1.5 text-sm text-muted-foreground">加载中…</p>
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">{t('state.loading')}</p>
         ) : props.options.length === 0 ? (
-          <p className="px-2 py-1.5 text-sm text-muted-foreground">暂无选项</p>
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">{t('noOptions')}</p>
         ) : (
           props.options.map((o) => (
             <DropdownMenuCheckboxItem

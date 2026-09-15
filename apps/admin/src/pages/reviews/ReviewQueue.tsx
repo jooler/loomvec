@@ -4,6 +4,7 @@ import { Search } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
 import { DataTable } from '@loomvec/ui/components/data-table';
@@ -24,6 +25,7 @@ export function ReviewQueuePage() {
   const { canWrite } = usePerm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('reviews');
 
   const [spaceId, setSpaceId] = useState('');
   const [draftSpaceId, setDraftSpaceId] = useState('');
@@ -83,12 +85,12 @@ export function ReviewQueuePage() {
           body: { reason },
         }),
       );
-      toast.success('已下架（连带向量清理）');
+      toast.success(t('takedownToast'));
       setSelectedKeys((prev) => prev.filter((id) => id !== takedownTarget.id));
       setTakedownTarget(null);
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setBusy(false);
     }
@@ -102,11 +104,11 @@ export function ReviewQueuePage() {
           body: { asset_ids: selectedKeys, from_step: 'parse' },
         }),
       );
-      toast.success(`已受理 ${resp.accepted} 个资产的重跑任务`);
+      toast.success(t('rerunAcceptedToast', { count: resp.accepted }));
       setSelectedKeys([]);
       void queryClient.invalidateQueries({ queryKey: ['admin-pipeline-jobs'] });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
@@ -115,7 +117,7 @@ export function ReviewQueuePage() {
       id: 'select',
       header: () => (
         <Checkbox
-          aria-label="全选本页"
+          aria-label={t('chunks.selectAllPage')}
           checked={allChecked ? true : someChecked ? 'indeterminate' : false}
           onCheckedChange={(v) => {
             setSelectedKeys((prev) =>
@@ -128,7 +130,7 @@ export function ReviewQueuePage() {
       ),
       cell: ({ row }) => (
         <Checkbox
-          aria-label={`选择 ${row.original.name}`}
+          aria-label={t('selectItem', { name: row.original.name })}
           checked={selectedKeys.includes(row.original.id)}
           onCheckedChange={(v) => {
             setSelectedKeys((prev) =>
@@ -142,7 +144,7 @@ export function ReviewQueuePage() {
     },
     {
       accessorKey: 'name',
-      header: '资产',
+      header: t('col.asset'),
       cell: ({ row }) => (
         <button
           className="text-sm font-medium hover:underline"
@@ -152,50 +154,50 @@ export function ReviewQueuePage() {
         </button>
       ),
     },
-    { accessorKey: 'space_slug', header: '空间', cell: ({ row }) => row.original.space_slug ?? '-' },
+    { accessorKey: 'space_slug', header: t('col.space'), cell: ({ row }) => row.original.space_slug ?? '-' },
     {
       accessorKey: 'mime_type',
-      header: '类型',
+      header: t('col.type'),
       cell: ({ row }) => <Badge variant="outline">{row.original.mime_type}</Badge>,
     },
     {
       accessorKey: 'size_bytes',
-      header: '大小',
+      header: t('col.size'),
       cell: ({ row }) => formatBytes(row.original.size_bytes),
     },
     {
       accessorKey: 'status',
-      header: '资产状态',
+      header: t('col.assetStatus'),
       cell: ({ row }) => <Badge variant="outline">{row.original.status}</Badge>,
     },
     {
       accessorKey: 'review_reason',
-      header: '待审原因',
+      header: t('col.reviewReason'),
       cell: ({ row }) => row.original.review_reason ?? '-',
     },
     {
       accessorKey: 'created_at',
-      header: '提交时间',
+      header: t('col.submittedAt'),
       cell: ({ row }) => formatDateTime(row.original.created_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => (
         <div className="flex items-center gap-1">
           <ConfirmAction
-            title="确认通过该资产？"
+            title={t('approveConfirm')}
             onConfirm={async () => {
               try {
                 await decide(row.original.id, 'approve');
-                toast.success('已通过');
+                toast.success(t('approvedToast'));
               } catch (e) {
-                toast.error(e instanceof Error ? e.message : '操作失败');
+                toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
               }
             }}
             trigger={
               <Button variant="link" size="xs" className="px-0" disabled={!canWrite}>
-                通过
+                {t('approve')}
               </Button>
             }
           />
@@ -206,7 +208,7 @@ export function ReviewQueuePage() {
             disabled={!canWrite}
             onClick={() => setRejectTarget(row.original)}
           >
-            驳回
+            {t('reject')}
           </Button>
           <Button
             variant="link"
@@ -215,7 +217,7 @@ export function ReviewQueuePage() {
             disabled={!canWrite}
             onClick={() => setTakedownTarget(row.original)}
           >
-            下架
+            {t('takedown')}
           </Button>
           <Button
             variant="link"
@@ -223,7 +225,7 @@ export function ReviewQueuePage() {
             className="px-0"
             onClick={() => navigate(`/content/${row.original.id}`)}
           >
-            chunk 复核
+            {t('chunkReview')}
           </Button>
         </div>
       ),
@@ -232,11 +234,11 @@ export function ReviewQueuePage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="内容审核" description="开启「先审后见」的共享空间待审资产" />
+      <PageHeader title={t('title')} description={t('description')} />
       <div className="flex flex-wrap items-center gap-2">
         <Input
           className="w-72"
-          placeholder="按空间 ID 过滤"
+          placeholder={t('searchPlaceholder')}
           value={draftSpaceId}
           onChange={(e) => setDraftSpaceId(e.target.value)}
           onKeyDown={(e) => {
@@ -249,7 +251,7 @@ export function ReviewQueuePage() {
         <Button
           variant="outline"
           size="icon"
-          aria-label="搜索"
+          aria-label={t('action.search')}
           onClick={() => {
             setSpaceId(draftSpaceId.trim());
             setPage(1);
@@ -263,30 +265,30 @@ export function ReviewQueuePage() {
             setBusy(true);
             try {
               for (const id of selectedKeys) await decide(id, 'approve');
-              toast.success('已批量通过');
+              toast.success(t('batchApprovedToast'));
               setSelectedKeys([]);
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : '操作失败');
+              toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
             } finally {
               setBusy(false);
             }
           }}
         >
-          批量通过（{selectedKeys.length}）
+          {t('batchApprove', { count: selectedKeys.length })}
         </Button>
         <Button
           variant="destructive"
           disabled={!canWrite || selectedKeys.length === 0}
           onClick={() => setBatchRejectOpen(true)}
         >
-          批量驳回（{selectedKeys.length}）
+          {t('batchReject', { count: selectedKeys.length })}
         </Button>
         <Button
           variant="outline"
           disabled={!canWrite || selectedKeys.length === 0}
           onClick={() => void batchRerun()}
         >
-          批量重跑（{selectedKeys.length}）
+          {t('batchRerun', { count: selectedKeys.length })}
         </Button>
       </div>
       <DataTable
@@ -303,9 +305,9 @@ export function ReviewQueuePage() {
       {/* 单个驳回（危险操作：驳回必填理由并通知 owner） */}
       <ReasonModal
         open={rejectTarget !== null}
-        title={`驳回资产「${rejectTarget?.name ?? ''}」`}
-        description="驳回后 owner 将收到通知（含驳回理由）。"
-        okText="确认驳回"
+        title={t('rejectTitle', { name: rejectTarget?.name ?? '' })}
+        description={t('rejectDescription')}
+        okText={t('confirmReject')}
         danger
         confirmLoading={busy}
         onCancel={() => setRejectTarget(null)}
@@ -314,10 +316,10 @@ export function ReviewQueuePage() {
           setBusy(true);
           try {
             await decide(rejectTarget.id, 'reject', reason);
-            toast.success('已驳回');
+            toast.success(t('rejectedToast'));
             setRejectTarget(null);
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }
@@ -327,9 +329,9 @@ export function ReviewQueuePage() {
       {/* 批量驳回 */}
       <ReasonModal
         open={batchRejectOpen}
-        title={`批量驳回（${selectedKeys.length} 个资产）`}
-        description="驳回理由将通知各资产 owner。"
-        okText="确认驳回"
+        title={t('batchRejectTitle', { count: selectedKeys.length })}
+        description={t('batchRejectDescription')}
+        okText={t('confirmReject')}
         danger
         confirmLoading={busy}
         onCancel={() => setBatchRejectOpen(false)}
@@ -337,11 +339,11 @@ export function ReviewQueuePage() {
           setBusy(true);
           try {
             for (const id of selectedKeys) await decide(id, 'reject', reason);
-            toast.success('已批量驳回');
+            toast.success(t('batchRejectedToast'));
             setBatchRejectOpen(false);
             setSelectedKeys([]);
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }
@@ -351,15 +353,15 @@ export function ReviewQueuePage() {
       {/* 下架（危险操作：rejected + 软删 + 向量删除） */}
       <ReasonModal
         open={takedownTarget !== null}
-        title={`下架资产「${takedownTarget?.name ?? ''}」`}
-        description="下架 = 驳回 + 软删 + 向量连带清理，操作不可逆。此为危险操作。"
-        okText="确认下架"
+        title={t('takedownTitle', { name: takedownTarget?.name ?? '' })}
+        description={t('takedownDescription')}
+        okText={t('confirmTakedown')}
         danger
         confirmLoading={busy}
         onCancel={() => setTakedownTarget(null)}
         onOk={takedown}
       />
-      <p className="text-sm text-muted-foreground">点击资产名或「chunk 复核」进入切片质量复核页。</p>
+      <p className="text-sm text-muted-foreground">{t('queueHint')}</p>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 /** 一次性明文凭证展示（仅此一次可见），用于 API Key / client secret / signing secret。 */
 import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@loomvec/ui/components/ui/button';
 import {
   Dialog,
@@ -17,11 +18,11 @@ export interface SecretField {
   value: string;
 }
 
-function copyText(v: string) {
+function copyText(v: string, copiedMsg: string, failedMsg: string) {
   void navigator.clipboard
     .writeText(v)
-    .then(() => toast.success('已复制'))
-    .catch(() => toast.error('复制失败，请手动选择复制'));
+    .then(() => toast.success(copiedMsg))
+    .catch(() => toast.error(failedMsg));
 }
 
 export function SecretModal(props: {
@@ -30,13 +31,14 @@ export function SecretModal(props: {
   fields: SecretField[];
   onClose: () => void;
 }) {
+  const { t } = useTranslation('components');
   return (
     <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{props.title}</DialogTitle>
           <DialogDescription className="text-amber-600 dark:text-amber-400">
-            以下凭证仅此一次展示，请立即复制保存；关闭后无法再次查看。
+            {t('secret.warning')}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -49,7 +51,7 @@ export function SecretModal(props: {
                   variant="ghost"
                   size="icon"
                   className="size-7 shrink-0"
-                  onClick={() => copyText(f.value)}
+                  onClick={() => copyText(f.value, t('feedback.copied'), t('secret.copyFailed'))}
                 >
                   <Copy />
                 </Button>
@@ -58,7 +60,7 @@ export function SecretModal(props: {
           ))}
         </div>
         <DialogFooter>
-          <Button onClick={props.onClose}>我已保存，关闭</Button>
+          <Button onClick={props.onClose}>{t('secret.saved')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -8,7 +8,8 @@ import { useMutation, useQuery, useQueryClient, useQueries } from '@tanstack/rea
 import { toast } from 'sonner';
 import type { ApiClient } from '@loomvec/sdk-ts';
 import { extractApiError } from '../../lib/format';
-import { uploadFile } from '../../lib/upload';
+import { UPLOAD_SKIPPED, uploadFile } from '../../lib/upload';
+import { t } from '../../i18n';
 import type { FinderAsset, FinderFolder } from './types';
 
 /** 资产筛选（与资产列表 API 的 query 参数一一对应；空值 = 不过滤）。 */
@@ -34,7 +35,7 @@ export function useFinderFolders(client: ApiClient, spaceId?: string) {
       const { data, error } = await client.GET('/api/v1/spaces/{space_id}/folders', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载文件夹失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.loadFoldersFailed')));
       return data as FinderFolder[];
     },
   });
@@ -80,7 +81,7 @@ async function fetchFolderAssets(
       },
     },
   });
-  if (error) throw new Error(extractApiError(error, '加载资产失败'));
+  if (error) throw new Error(extractApiError(error, t('ui:finderData.loadAssetsFailed')));
   return data as { items: FinderAsset[] };
 }
 
@@ -134,13 +135,13 @@ export function useColumnsFolderAssets(
         params: { path: { space_id: spaceId! } },
         body: { name, parent_id: parentId ?? undefined },
       });
-      if (error) throw new Error(extractApiError(error, '新建文件夹失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.createFolderFailed')));
     },
     onSuccess: () => {
-      toast.success('文件夹已创建');
+      toast.success(t('ui:finderData.folderCreated'));
       invalidateAll();
     },
-    onError: (e) => fail(e, '新建文件夹失败'),
+    onError: (e) => fail(e, t('ui:finderData.createFolderFailed')),
   });
 
   const renameFolder = useMutation({
@@ -149,13 +150,13 @@ export function useColumnsFolderAssets(
         params: { path: { folder_id: folderId } },
         body: { name, unset_category: false, unset_folder: false },
       });
-      if (error) throw new Error(extractApiError(error, '重命名失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.renameFailed')));
     },
     onSuccess: () => {
-      toast.success('已重命名');
+      toast.success(t('ui:finderData.renamed'));
       invalidateAll();
     },
-    onError: (e) => fail(e, '重命名失败'),
+    onError: (e) => fail(e, t('ui:finderData.renameFailed')),
   });
 
   const renameAsset = useMutation({
@@ -164,13 +165,13 @@ export function useColumnsFolderAssets(
         params: { path: { asset_id: assetId } },
         body: { name, unset_category: false, unset_folder: false },
       });
-      if (error) throw new Error(extractApiError(error, '重命名失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.renameFailed')));
     },
     onSuccess: () => {
-      toast.success('已重命名');
+      toast.success(t('ui:finderData.renamed'));
       invalidateAll();
     },
-    onError: (e) => fail(e, '重命名失败'),
+    onError: (e) => fail(e, t('ui:finderData.renameFailed')),
   });
 
   const moveFolder = useMutation({
@@ -187,13 +188,13 @@ export function useColumnsFolderAssets(
           ? { parent_id: parentId, unset_parent: false }
           : { unset_parent: true },
       });
-      if (error) throw new Error(extractApiError(error, '移动文件夹失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.moveFolderFailed')));
     },
     onSuccess: () => {
-      toast.success('文件夹已移动');
+      toast.success(t('ui:finderData.folderMoved'));
       invalidateAll();
     },
-    onError: (e) => fail(e, '移动文件夹失败'),
+    onError: (e) => fail(e, t('ui:finderData.moveFolderFailed')),
   });
 
   const moveAsset = useMutation({
@@ -208,9 +209,9 @@ export function useColumnsFolderAssets(
         params: { path: { asset_id: assetId } },
         body: folderId ? { folder_id: folderId, unset_folder: false } : { unset_folder: true },
       });
-      if (error) throw new Error(extractApiError(error, '移动资产失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.moveAssetFailed')));
     },
-    onError: (e) => fail(e, '移动资产失败'),
+    onError: (e) => fail(e, t('ui:finderData.moveAssetFailed')),
   });
 
   const copyAsset = useMutation({
@@ -225,9 +226,9 @@ export function useColumnsFolderAssets(
         params: { path: { asset_id: assetId } },
         body: { target_folder_id: folderId ?? undefined },
       });
-      if (error) throw new Error(extractApiError(error, '复制资产失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.copyAssetFailed')));
     },
-    onError: (e) => fail(e, '复制资产失败'),
+    onError: (e) => fail(e, t('ui:finderData.copyAssetFailed')),
   });
 
   const copyFolder = useMutation({
@@ -242,9 +243,9 @@ export function useColumnsFolderAssets(
         params: { path: { folder_id: folderId } },
         body: { parent_id: parentId ?? undefined },
       });
-      if (error) throw new Error(extractApiError(error, '复制文件夹失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.copyFolderFailed')));
     },
-    onError: (e) => fail(e, '复制文件夹失败'),
+    onError: (e) => fail(e, t('ui:finderData.copyFolderFailed')),
   });
 
   const deleteFolder = useMutation({
@@ -252,13 +253,13 @@ export function useColumnsFolderAssets(
       const { error } = await client.DELETE('/api/v1/folders/{folder_id}', {
         params: { path: { folder_id: folderId } },
       });
-      if (error) throw new Error(extractApiError(error, '删除文件夹失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.deleteFolderFailed')));
     },
     onSuccess: () => {
-      toast.success('文件夹已删除（含内容）');
+      toast.success(t('ui:finderData.folderDeleted'));
       invalidateAll();
     },
-    onError: (e) => fail(e, '删除文件夹失败'),
+    onError: (e) => fail(e, t('ui:finderData.deleteFolderFailed')),
   });
 
   const deleteAsset = useMutation({
@@ -266,9 +267,9 @@ export function useColumnsFolderAssets(
       const { error } = await client.DELETE('/api/v1/assets/{asset_id}', {
         params: { path: { asset_id: assetId } },
       });
-      if (error) throw new Error(extractApiError(error, '删除失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.deleteFailed')));
     },
-    onError: (e) => fail(e, '删除失败'),
+    onError: (e) => fail(e, t('ui:finderData.deleteFailed')),
   });
 
   const retryAsset = useMutation({
@@ -277,13 +278,13 @@ export function useColumnsFolderAssets(
         params: { path: { asset_id: assetId } },
         body: {},
       });
-      if (error) throw new Error(extractApiError(error, '重试失败'));
+      if (error) throw new Error(extractApiError(error, t('ui:finderData.retryFailed')));
     },
     onSuccess: () => {
-      toast.success('已重新入队');
+      toast.success(t('ui:finderData.requeued'));
       invalidateAll();
     },
-    onError: (e) => fail(e, '重试失败'),
+    onError: (e) => fail(e, t('ui:finderData.retryFailed')),
   });
 
   return {
@@ -316,7 +317,7 @@ export function useFinderThumbs(client: ApiClient, assets: FinderAsset[], cap = 
         const { data, error } = await client.GET('/api/v1/assets/{asset_id}', {
           params: { path: { asset_id: id } },
         });
-        if (error) throw new Error(extractApiError(error, '加载缩略图失败'));
+        if (error) throw new Error(extractApiError(error, t('ui:finderData.loadThumbFailed')));
         return data.renditions.find((r) => r.kind === 'thumbnail')?.url ?? null;
       },
       staleTime: 10 * 60_000,
@@ -350,8 +351,8 @@ export async function uploadFilesToFolder(
       });
       ok += 1;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '上传失败';
-      if (msg === '已跳过上传') toast.info(`已跳过重复文件：${file.name}`);
+      const msg = e instanceof Error ? e.message : t('ui:finderData.uploadFailed');
+      if (msg === UPLOAD_SKIPPED) toast.info(t('ui:finderData.skippedDuplicate', { name: file.name }));
       else toast.error(msg);
     }
     done += 1;

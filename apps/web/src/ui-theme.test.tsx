@@ -9,41 +9,42 @@ import {
 } from '@loomvec/ui/components/ui/dropdown-menu';
 import { ThemeProvider } from '@loomvec/ui/components/theme-provider';
 import { ThemeToggle } from '@loomvec/ui/components/mode-toggle';
+import { t } from '@/i18n';
 
 afterEach(() => {
   localStorage.clear();
   document.documentElement.className = '';
 });
 
-describe('Button 作为 Radix asChild 触发器', () => {
+describe('Button as Radix asChild trigger', () => {
   // 回归：React 18 下 Button 未用 forwardRef 时，Slot 传 ref 会在挂载期报
   // "Function components cannot be given refs"（见运维端/用户端布局启动告警）
-  it('不再触发 function-component ref 警告', () => {
+  it('no longer triggers function-component ref warning', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     render(
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button>触发器</Button>
+          <Button>trigger</Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
-          <DropdownMenuItem>菜单项</DropdownMenuItem>
+          <DropdownMenuItem>menu item</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>,
     );
-    expect(screen.getByRole('button', { name: '触发器' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'trigger' })).toBeInTheDocument();
     expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('cannot be given refs'));
     errorSpy.mockRestore();
   });
 });
 
 describe('ThemeProvider + ThemeToggle', () => {
-  it('点击在明暗间切换（class 挂在 <html> 上）', async () => {
+  it('toggles light/dark on click (class on <html>)', async () => {
     render(
       <ThemeProvider defaultTheme="light" enableSystem={false}>
         <ThemeToggle />
       </ThemeProvider>,
     );
-    const toggle = screen.getByRole('button', { name: '切换明暗主题' });
+    const toggle = screen.getByRole('button', { name: t('ui:modeToggle.toggleTheme') });
     await waitFor(() =>
       expect(document.documentElement.classList.contains('dark')).toBe(false),
     );

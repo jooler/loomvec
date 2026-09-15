@@ -1,9 +1,11 @@
 /**
  * 共享格式化与错误工具（web / admin 单源；app 内经各自 utils.ts 再导出使用）。
+ * 文案经 i18next 默认实例翻译（app 入口已初始化；未初始化时回退为 key）。
  */
+import { i18next, t } from '../i18n';
 
 /** 从 openapi-fetch 的 error（后端 {code,message,details} 或 FastAPI 422 校验体）提取人类可读信息。 */
-export function extractApiError(err: unknown, fallback = '请求失败'): string {
+export function extractApiError(err: unknown, fallback = t('ui:format.requestFailed')): string {
   if (err && typeof err === 'object') {
     const e = err as Record<string, unknown>;
     if (typeof e.message === 'string' && e.message) return e.message;
@@ -34,13 +36,18 @@ export function formatDateTime(v: string | null | undefined): string {
   if (!v) return '-';
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return v;
-  return d.toLocaleString('zh-CN', { hour12: false });
+  return d.toLocaleString(i18next.resolvedLanguage ?? 'zh-CN', { hour12: false });
 }
 
 /** 配额使用率展示：quota 为 0 视为不限。 */
 export function formatQuota(used: number, quota: number): string {
-  if (!quota) return `${formatBytes(used)} / 不限`;
-  return `${formatBytes(used)} / ${formatBytes(quota)}（${((used / quota) * 100).toFixed(1)}%）`;
+  if (!quota) return t('ui:format.quotaUnlimited', { used: formatBytes(used) });
+  const percent = `${((used / quota) * 100).toFixed(1)}%`;
+  return t('ui:format.quotaLimited', {
+    used: formatBytes(used),
+    quota: formatBytes(quota),
+    percent,
+  });
 }
 
 /** 秒数格式化（阶段耗时用）。 */
@@ -57,7 +64,7 @@ export function blobToArrayBuffer(data: Blob): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as ArrayBuffer);
-    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.onerror = () => reject(new Error(t('ui:format.readFileFailed')));
     reader.readAsArrayBuffer(data);
   });
 }

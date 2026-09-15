@@ -4,8 +4,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { api, unwrap } from '@/api';
+import { t as tt } from '@/i18n';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
@@ -13,10 +15,11 @@ import { Label } from '@loomvec/ui/components/ui/label';
 import { Switch } from '@loomvec/ui/components/ui/switch';
 import type { OidcBinding } from '@/types';
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const bindingSchema = z.object({
-  domain: z.string().min(1, '请输入邮箱域').max(255),
-  issuer: z.string().min(1, '请输入 Issuer').max(512),
-  client_id: z.string().min(1, '请输入 Client ID').max(255),
+  domain: z.string().min(1, tt('tenants:oidc.domainRequired')).max(255),
+  issuer: z.string().min(1, tt('tenants:oidc.issuerRequired')).max(512),
+  client_id: z.string().min(1, tt('tenants:oidc.clientIdRequired')).max(255),
   client_secret: z.string().max(512),
   enabled: z.boolean(),
 });
@@ -34,6 +37,7 @@ const EMPTY_VALUES: BindingValues = {
 export function OidcBindingCard(props: { tenantId: string; canWrite: boolean }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
+  const { t } = useTranslation('tenants');
   const bindingForm = useForm<BindingValues>({
     resolver: zodResolver(bindingSchema),
     defaultValues: EMPTY_VALUES,
@@ -70,7 +74,7 @@ export function OidcBindingCard(props: { tenantId: string; canWrite: boolean }) 
   /** OIDC 绑定保存：空 secret 保留原值（后端语义）。 */
   const saveBinding = async (values: BindingValues) => {
     if (!binding?.has_secret && !values.client_secret) {
-      bindingForm.setError('client_secret', { message: '请输入 Client Secret' });
+      bindingForm.setError('client_secret', { message: t('oidc.clientSecretRequired') });
       return;
     }
     setBusy(true);
@@ -81,10 +85,10 @@ export function OidcBindingCard(props: { tenantId: string; canWrite: boolean }) 
           body: { ...values, client_secret: values.client_secret ?? '' },
         }),
       );
-      toast.success('OIDC 域绑定已保存');
+      toast.success(t('oidc.saved'));
       void queryClient.invalidateQueries({ queryKey: bindingKey });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '保存失败');
+      toast.error(e instanceof Error ? e.message : t('oidc.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -94,14 +98,12 @@ export function OidcBindingCard(props: { tenantId: string; canWrite: boolean }) 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>OIDC 域绑定</CardTitle>
+        <CardTitle>{t('oidc.title')}</CardTitle>
         <CardAction>
           {binding ? (
-            <span className="text-sm">该邮箱域登录的用户自动归属本租户</span>
+            <span className="text-sm">{t('oidc.boundHint')}</span>
           ) : (
-            <span className="text-sm text-muted-foreground">
-              未绑定（域内首个用户由租户管理员分配角色）
-            </span>
+            <span className="text-sm text-muted-foreground">{t('oidc.unboundHint')}</span>
           )}
         </CardAction>
       </CardHeader>
@@ -114,9 +116,9 @@ export function OidcBindingCard(props: { tenantId: string; canWrite: boolean }) 
           className="max-w-[560px] space-y-4"
         >
           <div className="space-y-2">
-            <Label htmlFor="binding-domain">邮箱域</Label>
+            <Label htmlFor="binding-domain">{t('oidc.domainLabel')}</Label>
             <Input id="binding-domain" maxLength={255} {...bindingForm.register('domain')} />
-            <p className="text-xs text-muted-foreground">如 example.com</p>
+            <p className="text-xs text-muted-foreground">{t('oidc.domainHint')}</p>
             {bindingForm.formState.errors.domain && (
               <p className="text-sm text-destructive">
                 {bindingForm.formState.errors.domain.message}
@@ -156,7 +158,7 @@ export function OidcBindingCard(props: { tenantId: string; canWrite: boolean }) 
               {...bindingForm.register('client_secret')}
             />
             <p className="text-xs text-muted-foreground">
-              {binding?.has_secret ? '已设置；留空保留原值' : '必填（首次绑定）'}
+              {binding?.has_secret ? t('oidc.secretSetHint') : t('oidc.secretRequiredHint')}
             </p>
             {bindingForm.formState.errors.client_secret && (
               <p className="text-sm text-destructive">
@@ -170,10 +172,10 @@ export function OidcBindingCard(props: { tenantId: string; canWrite: boolean }) 
               checked={bindingForm.watch('enabled')}
               onCheckedChange={(v) => bindingForm.setValue('enabled', v)}
             />
-            <Label htmlFor="binding-enabled">启用</Label>
+            <Label htmlFor="binding-enabled">{t('action.enable')}</Label>
           </div>
           <Button type="submit" disabled={busy || !props.canWrite}>
-            {busy ? '保存中…' : '保存绑定'}
+            {busy ? t('action.saving') : t('oidc.saveBinding')}
           </Button>
         </form>
       </CardContent>

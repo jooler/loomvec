@@ -6,6 +6,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Plus } from 'lucide-react';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
+import { t } from '@/i18n';
 import { api, unwrap } from '@/api';
 import { Button } from '@loomvec/ui/components/ui/button';
 import {
@@ -50,8 +52,9 @@ interface OpsSpaceItem {
   created_at: string;
 }
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const createSchema = z.object({
-  name: z.string().min(1, '请输入空间名称').max(255),
+  name: z.string().min(1, t('overview:nameRequired')).max(255),
   description: z.string().max(2000).optional(),
   review_required: z.boolean(),
 });
@@ -61,6 +64,7 @@ type CreateValues = z.infer<typeof createSchema>;
 function CreateSpaceDialog(props: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { t } = useTranslation('overview');
   const form = useForm<CreateValues>({
     resolver: zodResolver(createSchema),
     defaultValues: { name: '', description: '', review_required: false },
@@ -80,7 +84,7 @@ function CreateSpaceDialog(props: { open: boolean; onOpenChange: (open: boolean)
       return space;
     },
     onSuccess: (space) => {
-      toast.success('公共空间已创建');
+      toast.success(t('spaceCreated'));
       void queryClient.invalidateQueries({ queryKey: ['ops-spaces'] });
       form.reset();
       props.onOpenChange(false);
@@ -93,29 +97,25 @@ function CreateSpaceDialog(props: { open: boolean; onOpenChange: (open: boolean)
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>创建公共空间</DialogTitle>
-          <DialogDescription>
-            公共空间由运营端创建与维护；创建后通过「可见性」勾选用户分组，用户端即可选择链接。
-          </DialogDescription>
+          <DialogTitle>{t('createSpace')}</DialogTitle>
+          <DialogDescription>{t('createDesc')}</DialogDescription>
         </DialogHeader>
         <form onSubmit={form.handleSubmit((v) => create.mutate(v))} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">空间名称</Label>
-            <Input id="name" placeholder="如：公司公共知识库" {...form.register('name')} />
+            <Label htmlFor="name">{t('nameLabel')}</Label>
+            <Input id="name" placeholder={t('namePlaceholder')} {...form.register('name')} />
             {form.formState.errors.name && (
               <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="description">描述</Label>
+            <Label htmlFor="description">{t('field.description')}</Label>
             <Textarea id="description" rows={3} {...form.register('description')} />
           </div>
           <div className="flex items-center justify-between rounded-lg border p-3">
             <div className="space-y-0.5">
-              <Label htmlFor="review_required">先审后见</Label>
-              <p className="text-xs text-muted-foreground">
-                开启后新资产审核通过才可见、才参与检索
-              </p>
+              <Label htmlFor="review_required">{t('reviewLabel')}</Label>
+              <p className="text-xs text-muted-foreground">{t('reviewHint')}</p>
             </div>
             <Switch
               id="review_required"
@@ -125,10 +125,10 @@ function CreateSpaceDialog(props: { open: boolean; onOpenChange: (open: boolean)
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              取消
+              {t('action.cancel')}
             </Button>
             <Button type="submit" disabled={form.formState.isSubmitting}>
-              {form.formState.isSubmitting ? '创建中…' : '创建'}
+              {form.formState.isSubmitting ? t('creating') : t('action.create')}
             </Button>
           </DialogFooter>
         </form>
@@ -138,6 +138,7 @@ function CreateSpaceDialog(props: { open: boolean; onOpenChange: (open: boolean)
 }
 
 export function OverviewPage() {
+  const { t } = useTranslation('overview');
   const [searchParams, setSearchParams] = useSearchParams();
   const [createOpen, setCreateOpen] = useState(searchParams.get('create') === '1');
 
@@ -157,11 +158,11 @@ export function OverviewPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="公共空间总览"
-        description="维护公共知识库空间：上传与管理内容、配置分组可见性。点击空间进入管理界面。"
+        title={t('title')}
+        description={t('description')}
         actions={
           <Button onClick={() => setCreateOpen(true)}>
-            <Plus /> 创建公共空间
+            <Plus /> {t('createSpace')}
           </Button>
         }
       />
@@ -175,11 +176,7 @@ export function OverviewPage() {
       ) : spaces.isError ? (
         <p className="text-sm text-destructive">{(spaces.error as Error).message}</p>
       ) : (spaces.data?.length ?? 0) === 0 ? (
-        <EmptyState
-          title="还没有公共空间"
-          description="创建第一个公共空间，勾选可见分组后即可对用户端开放链接。"
-          className="mt-10"
-        />
+        <EmptyState title={t('emptyTitle')} description={t('emptyDesc')} className="mt-10" />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {spaces.data?.map((s) => (
@@ -188,7 +185,9 @@ export function OverviewPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
                     {s.name}
-                    {s.review_required && <StatusBadge tone="amber">需审核</StatusBadge>}
+                    {s.review_required && (
+                      <StatusBadge tone="amber">{t('reviewBadge')}</StatusBadge>
+                    )}
                   </CardTitle>
                   {s.description && (
                     <CardDescription className="line-clamp-2">{s.description}</CardDescription>
@@ -196,11 +195,13 @@ export function OverviewPage() {
                 </CardHeader>
                 <CardContent className="text-sm text-muted-foreground">
                   <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    <span>{s.file_count} 个资产</span>
-                    <span>{s.group_count} 个可见分组</span>
-                    <span>{s.member_count} 名成员</span>
+                    <span>{t('assetCount', { count: s.file_count })}</span>
+                    <span>{t('visibleGroupCount', { count: s.group_count })}</span>
+                    <span>{t('memberCount', { count: s.member_count })}</span>
                   </div>
-                  <p className="mt-2 text-xs">{new Date(s.created_at).toLocaleDateString()} 创建</p>
+                  <p className="mt-2 text-xs">
+                    {t('createdAtSuffix', { date: new Date(s.created_at).toLocaleDateString() })}
+                  </p>
                 </CardContent>
               </Card>
             </Link>

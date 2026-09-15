@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-table';
 import { ChevronLeft, ChevronRight, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
 import {
@@ -41,6 +42,7 @@ export function DataTable<TData>(props: {
   emptyDescription?: string;
 }) {
   const { columns, data, loading } = props;
+  const { t } = useTranslation();
   const serverPaged =
     typeof props.total === 'number' &&
     typeof props.page === 'number' &&
@@ -119,8 +121,8 @@ export function DataTable<TData>(props: {
                 <TableCell colSpan={colCount} className="p-0">
                   <EmptyState
                     icon={TriangleAlert}
-                    title="加载失败"
-                    description={props.error.message || '请求出错，请稍后重试'}
+                    title={t('feedback.loadFailed')}
+                    description={props.error.message || t('feedback.requestErrorRetry')}
                     className="[&>div:first-child]:bg-destructive/10 [&_svg]:text-destructive"
                   />
                 </TableCell>
@@ -145,11 +147,9 @@ export function DataTable<TData>(props: {
       </div>
       {showPager && !loading && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>共 {totalCount} 条</span>
+          <span>{t('pagination.total', { count: totalCount })}</span>
           <div className="flex items-center gap-2">
-            <span>
-              第 {current} / {totalPages} 页
-            </span>
+            <span>{t('pagination.pageOf', { current, total: totalPages })}</span>
             <Button
               variant="outline"
               size="sm"
@@ -160,7 +160,7 @@ export function DataTable<TData>(props: {
                   : setInternalPage((p) => Math.max(0, p - 1))
               }
             >
-              <ChevronLeft /> 上一页
+              <ChevronLeft /> {t('pagination.prev')}
             </Button>
             <Button
               variant="outline"
@@ -172,7 +172,7 @@ export function DataTable<TData>(props: {
                   : setInternalPage((p) => p + 1)
               }
             >
-              下一页 <ChevronRight />
+              {t('pagination.next')} <ChevronRight />
             </Button>
           </div>
         </div>

@@ -1,0 +1,15 @@
+{
+  "loadListFailed": "加载资产列表失败",
+  "loadCategoriesFailed": "加载分类失败",
+  "loadTagsFailed": "加载标签失败",
+  "typePlaceholder": "类型",
+  "reviewStatusPlaceholder": "审核状态",
+  "tagPlaceholder": "标签",
+  "categoryPlaceholder": "分类",
+  "copyStarted": "复制任务已开始（资产重新走解析管线）",
+  "openDetail": "打开详情页（编辑 / 任务 / 图谱）",
+  "dupTitle": "发现疑似重复文件",
+  "dupDesc": "本空间已存在相同内容：{{names}}。仍要上传这份副本吗？",
+  "abandon": "放弃",
+  "uploadAnyway": "仍要上传"
+}

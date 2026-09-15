@@ -1,0 +1,73 @@
+{
+  "title": "空间治理",
+  "searchPlaceholder": "按名称/slug 搜索",
+  "viewDetail": "详情",
+  "detailTitle": "空间详情",
+  "backToList": "返回空间列表",
+  "basicInfoTitle": "基本信息",
+  "membersTitle": "成员列表",
+  "ban": "封禁",
+  "unban": "解封",
+  "transferOwner": "Owner 转移",
+  "adjustQuota": "调整配额",
+  "clearContent": "内容清空",
+  "banTitle": "封禁空间「{{name}}」",
+  "banDescription": "封禁后该空间所有成员访问被拒，数据保留。此为危险操作。",
+  "confirmBan": "确认封禁",
+  "bannedToast": "已封禁",
+  "unbanTitle": "解封空间",
+  "confirmUnban": "确认解封",
+  "unbannedToast": "已解封",
+  "transferTitle": "Owner 转移",
+  "transferDescription": "旧 owner 将变为 editor；新 owner 必须已是空间成员。",
+  "confirmTransfer": "确认转移",
+  "newOwnerLabel": "新 Owner（成员 user_id）",
+  "memberPlaceholder": "选择空间成员",
+  "newOwnerRequired": "请输入成员 user_id",
+  "transferSuccess": "Owner 已转移",
+  "clearTitle": "清空空间「{{name}}」全部内容",
+  "clearDescription": "软删全部 {{count}} 个资产并连带清理向量，操作不可逆。此为危险操作。",
+  "confirmClear": "确认清空",
+  "clearAccepted": "清空任务已受理",
+  "quotaTitle": "调整空间配额",
+  "quotaAdjusted": "配额已调整",
+  "quotaStorageLabel": "存储配额（字节）",
+  "quotaStorageRequired": "请输入存储配额（字节）",
+  "quotaFilesLabel": "文件数配额",
+  "quotaFilesRequired": "请输入文件数配额",
+  "platformLevel": "—（平台级）",
+  "toggle": {
+    "on": "开启",
+    "off": "关闭"
+  },
+  "status": {
+    "banned": "已封禁",
+    "normal": "正常"
+  },
+  "filter": {
+    "typePlaceholder": "空间类型",
+    "banPlaceholder": "封禁状态"
+  },
+  "type": {
+    "personal": "个人",
+    "shared": "共享",
+    "personalSpace": "个人空间",
+    "sharedSpace": "共享空间"
+  },
+  "col": {
+    "space": "空间",
+    "type": "类型",
+    "tenant": "所属租户",
+    "memberCount": "成员数",
+    "assetCount": "资产数",
+    "storage": "存储",
+    "reviewRequired": "先审后见",
+    "storageUsage": "存储用量",
+    "fileCount": "文件数",
+    "embeddingModel": "嵌入模型",
+    "chunkPreset": "分块预设",
+    "userId": "用户 ID",
+    "role": "角色",
+    "invitedBy": "邀请人"
+  }
+}

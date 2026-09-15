@@ -7,8 +7,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { useMySpaces, usePublicSpaces, useSpaceLinkToggle } from '@/hooks';
-import { CHUNK_PRESETS, EMBEDDING_MODELS, extractApiError, formatBytes, ROLE_META, ROLE_TONE } from '@/utils';
+import { t } from '@/i18n';
+import { CHUNK_PRESETS, EMBEDDING_MODELS, extractApiError, formatBytes, ROLE_TONE } from '@/utils';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Badge } from '@loomvec/ui/components/ui/badge';
@@ -49,8 +51,9 @@ import { Textarea } from '@loomvec/ui/components/ui/textarea';
 /** Radix Select 不允许空串 value：此哨兵表示「默认（不指定）」。 */
 const UNSET = '__unset__';
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const createSchema = z.object({
-  name: z.string().min(1, '请输入名称'),
+  name: z.string().min(1, t('spaces:nameRequired')),
   description: z.string().optional(),
   space_type: z.enum(['shared', 'personal']),
   review_required: z.boolean(),
@@ -63,6 +66,7 @@ type CreateValues = z.infer<typeof createSchema>;
 function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { t } = useTranslation('spaces');
   const form = useForm<CreateValues>({
     resolver: zodResolver(createSchema),
     defaultValues: {
@@ -92,11 +96,11 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
           chunk_preset: values.chunk_preset === UNSET ? undefined : values.chunk_preset,
         },
       });
-      if (error) throw new Error(extractApiError(error, '创建空间失败'));
+      if (error) throw new Error(extractApiError(error, t('createFailed')));
       return data;
     },
     onSuccess: (space) => {
-      toast.success(`空间「${space.name}」已创建`);
+      toast.success(t('created', { name: space.name }));
       void queryClient.invalidateQueries({ queryKey: ['spaces'] });
       onClose();
       navigate(`/s/${space.id}/assets`);
@@ -113,14 +117,14 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>创建空间</DialogTitle>
+          <DialogTitle>{t('createSpace')}</DialogTitle>
         </DialogHeader>
         <form onSubmit={form.handleSubmit((v) => create.mutate(v))} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="space-name">空间名称</Label>
+            <Label htmlFor="space-name">{t('fieldName')}</Label>
             <Input
               id="space-name"
-              placeholder="例如：产品知识库"
+              placeholder={t('namePlaceholder')}
               maxLength={64}
               {...form.register('name')}
             />
@@ -130,17 +134,17 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="space-description">描述</Label>
+            <Label htmlFor="space-description">{t('field.description')}</Label>
             <Textarea
               id="space-description"
               rows={2}
-              placeholder="空间用途说明（可选）"
+              placeholder={t('descriptionPlaceholder')}
               {...form.register('description')}
             />
           </div>
 
           <div className="space-y-2">
-            <Label>空间类型</Label>
+            <Label>{t('spaceType')}</Label>
             <Select
               value={form.watch('space_type')}
               onValueChange={(v) => form.setValue('space_type', v as CreateValues['space_type'])}
@@ -149,8 +153,8 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="shared">共享空间（可邀请成员协作）</SelectItem>
-                <SelectItem value="personal">个人空间</SelectItem>
+                <SelectItem value="shared">{t('typeShared')}</SelectItem>
+                <SelectItem value="personal">{t('typePersonal')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -162,61 +166,59 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
                 checked={form.watch('review_required')}
                 onCheckedChange={(v) => form.setValue('review_required', v)}
               />
-              <Label htmlFor="space-review">上传审核</Label>
+              <Label htmlFor="space-review">{t('uploadReview')}</Label>
             </div>
-            <p className="text-xs text-muted-foreground">
-              开启后新上传的资产需所有者审核通过后才对查看者可见
-            </p>
+            <p className="text-xs text-muted-foreground">{t('reviewHint')}</p>
           </div>
 
           <div className="space-y-2">
-            <Label>嵌入模型</Label>
+            <Label>{t('embeddingModelLabel')}</Label>
             <Select
               value={form.watch('embedding_model')}
               onValueChange={(v) => form.setValue('embedding_model', v)}
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="默认" />
+                <SelectValue placeholder={t('optionDefault')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={UNSET}>默认</SelectItem>
+                <SelectItem value={UNSET}>{t('optionDefault')}</SelectItem>
                 {EMBEDDING_MODELS.map((m) => (
-                  <SelectItem key={m.value} value={m.value}>
-                    {m.label}
+                  <SelectItem key={m} value={m}>
+                    {t(`embeddingModel.${m}`, { defaultValue: m })}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">留空使用租户默认配置</p>
+            <p className="text-xs text-muted-foreground">{t('leaveBlankHint')}</p>
           </div>
 
           <div className="space-y-2">
-            <Label>分片预设</Label>
+            <Label>{t('chunkPresetLabel')}</Label>
             <Select
               value={form.watch('chunk_preset')}
               onValueChange={(v) => form.setValue('chunk_preset', v)}
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="默认" />
+                <SelectValue placeholder={t('optionDefault')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={UNSET}>默认</SelectItem>
+                <SelectItem value={UNSET}>{t('optionDefault')}</SelectItem>
                 {CHUNK_PRESETS.map((p) => (
-                  <SelectItem key={p.value} value={p.value}>
-                    {p.label}
+                  <SelectItem key={p} value={p}>
+                    {t(`chunkPreset.${p}`, { defaultValue: p })}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">留空使用租户默认配置</p>
+            <p className="text-xs text-muted-foreground">{t('leaveBlankHint')}</p>
           </div>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
-              取消
+              {t('action.cancel')}
             </Button>
             <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? '保存中…' : '确定'}
+              {create.isPending ? t('action.saving') : t('ok')}
             </Button>
           </DialogFooter>
         </form>
@@ -227,6 +229,7 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
 
 export function SpacesPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation('spaces');
   const spaces = useMySpaces();
   const publicSpaces = usePublicSpaces();
   const linkToggle = useSpaceLinkToggle();
@@ -236,13 +239,13 @@ export function SpacesPage() {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>我的空间</CardTitle>
+          <CardTitle>{t('mySpaces')}</CardTitle>
           <CardAction className="flex items-center gap-2">
             <Button variant="outline" onClick={() => spaces.refetch()}>
-              <RefreshCw /> 刷新
+              <RefreshCw /> {t('action.refresh')}
             </Button>
             <Button onClick={() => setCreateOpen(true)}>
-              <Plus /> 创建空间
+              <Plus /> {t('createSpace')}
             </Button>
           </CardAction>
         </CardHeader>
@@ -254,11 +257,11 @@ export function SpacesPage() {
           ) : spaces.isError ? (
             <p className="text-sm text-destructive">{(spaces.error as Error).message}</p>
           ) : (spaces.data?.length ?? 0) === 0 ? (
-            <EmptyState description="还没有空间，点击右上角「创建空间」开始" />
+            <EmptyState description={t('emptyMySpaces')} />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {(spaces.data ?? []).map((s) => {
-                const roleMeta = ROLE_META[s.my_role ?? ''];
+                const role = s.my_role ?? '';
                 return (
                   <Card
                     key={s.id}
@@ -268,24 +271,26 @@ export function SpacesPage() {
                     <CardHeader>
                       <CardTitle className="truncate">{s.name}</CardTitle>
                       <CardAction>
-                        <StatusBadge tone={ROLE_TONE[s.my_role ?? '']}>
-                          {roleMeta?.text ?? s.my_role}
+                        <StatusBadge tone={ROLE_TONE[role]}>
+                          {t(`role.${role}`, { defaultValue: role })}
                         </StatusBadge>
                       </CardAction>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">
-                        {s.description ?? '（无描述）'}
+                        {s.description ?? t('noDescription')}
                       </p>
                       <div className="flex flex-wrap items-center gap-1">
-                        {s.review_required && <StatusBadge tone="amber">需审核</StatusBadge>}
+                        {s.review_required && <StatusBadge tone="amber">{t('reviewRequired')}</StatusBadge>}
                         {s.space_type === 'personal' && (
-                          <Badge variant="outline">个人</Badge>
+                          <Badge variant="outline">{t('personal')}</Badge>
                         )}
-                        <Badge variant="outline">{s.member_count ?? '-'} 名成员</Badge>
                         <Badge variant="outline">
-                          存储配额{' '}
-                          {s.quota_storage_bytes > 0 ? formatBytes(s.quota_storage_bytes) : '不限'}
+                          {t('memberCount', { count: s.member_count ?? '-' })}
+                        </Badge>
+                        <Badge variant="outline">
+                          {t('storageQuota')}{' '}
+                          {s.quota_storage_bytes > 0 ? formatBytes(s.quota_storage_bytes) : t('unlimited')}
                         </Badge>
                       </div>
                     </CardContent>
@@ -299,16 +304,13 @@ export function SpacesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>公共空间</CardTitle>
+          <CardTitle>{t('publicSpaces')}</CardTitle>
           <CardAction>
             <Button variant="outline" onClick={() => publicSpaces.refetch()}>
-              <RefreshCw /> 刷新
+              <RefreshCw /> {t('action.refresh')}
             </Button>
           </CardAction>
-          <CardDescription>
-            由运营方维护的公共知识库。链接后可作为问答检索源（在对话页「召回空间」中选择）；
-            公共空间内容不开放浏览。
-          </CardDescription>
+          <CardDescription>{t('publicSpacesDesc')}</CardDescription>
         </CardHeader>
         <CardContent>
           {publicSpaces.isLoading ? (
@@ -318,7 +320,7 @@ export function SpacesPage() {
           ) : publicSpaces.isError ? (
             <p className="text-sm text-destructive">{(publicSpaces.error as Error).message}</p>
           ) : (publicSpaces.data?.length ?? 0) === 0 ? (
-            <EmptyState description="暂无可链接的公共空间（未对你所在的分组公开）" />
+            <EmptyState description={t('emptyPublicSpaces')} />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {(publicSpaces.data ?? []).map((s) => (
@@ -326,20 +328,20 @@ export function SpacesPage() {
                   <CardHeader>
                     <CardTitle className="truncate">{s.name}</CardTitle>
                     <CardAction>
-                      <StatusBadge tone="purple">公共</StatusBadge>
+                      <StatusBadge tone="purple">{t('publicBadge')}</StatusBadge>
                     </CardAction>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">
-                      {s.description ?? '（无描述）'}
+                      {s.description ?? t('noDescription')}
                     </p>
                     <div className="flex items-center justify-between rounded-lg border p-2.5">
                       <div className="space-y-0.5">
                         <Label htmlFor={`link-${s.id}`} className="text-sm">
-                          链接到此空间
+                          {t('linkToSpace')}
                         </Label>
                         <p className="text-xs text-muted-foreground">
-                          {s.linked ? '已链接：可作为问答检索源' : '未链接'}
+                          {s.linked ? t('linkedState') : t('notLinked')}
                         </p>
                       </div>
                       <Switch
@@ -351,7 +353,9 @@ export function SpacesPage() {
                             { spaceId: s.id, linked: v },
                             {
                               onSuccess: () =>
-                                toast.success(v ? `已链接「${s.name}」` : `已断开「${s.name}」`),
+                                toast.success(
+                                  v ? t('linkedToast', { name: s.name }) : t('unlinkedToast', { name: s.name }),
+                                ),
                             },
                           )
                         }

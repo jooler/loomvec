@@ -4,6 +4,7 @@ import { Search } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
@@ -29,7 +30,7 @@ import {
   SelectValue,
 } from '@loomvec/ui/components/ui/select';
 import type { FailureItem, JobRow, PagedResp } from '@/types';
-import { JOB_STATUS_META, jobStatusMeta } from '@/constants';
+import { JOB_STATUS_TONE, jobStatusTone } from '@/constants';
 import { formatDateTime } from '@/utils';
 
 const PAGE_SIZE = 20;
@@ -43,6 +44,7 @@ export function PipelineListPage() {
   const { canWrite } = usePerm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('pipeline');
 
   const [status, setStatus] = useState<string | undefined>();
   const [jobType, setJobType] = useState<string | undefined>();
@@ -100,11 +102,11 @@ export function PipelineListPage() {
           body: { step: step ?? null },
         }),
       );
-      toast.success('重试已受理');
+      toast.success(t('retryAccepted'));
       setRetryTarget(null);
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setBusy(false);
     }
@@ -113,7 +115,7 @@ export function PipelineListPage() {
   const columns: ColumnDef<JobRow, unknown>[] = [
     {
       accessorKey: 'id',
-      header: '任务 ID',
+      header: t('col.taskId'),
       cell: ({ row }) => (
         <button
           className="text-sm font-medium hover:underline"
@@ -125,31 +127,35 @@ export function PipelineListPage() {
     },
     {
       accessorKey: 'asset_name',
-      header: '资产',
+      header: t('col.asset'),
       cell: ({ row }) => row.original.asset_name ?? '-',
     },
     {
       accessorKey: 'job_type',
-      header: '阶段',
+      header: t('col.stage'),
       cell: ({ row }) => <Badge variant="outline">{row.original.job_type}</Badge>,
     },
     {
       accessorKey: 'status',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) => {
-        const m = jobStatusMeta(row.original.status);
-        return <StatusBadge tone={m.tone}>{m.text}</StatusBadge>;
+        const s = row.original.status;
+        return (
+          <StatusBadge tone={jobStatusTone(s)}>
+            {t(`jobStatus.${s}`, { defaultValue: s })}
+          </StatusBadge>
+        );
       },
     },
     {
       accessorKey: 'progress',
-      header: '进度',
+      header: t('col.progress'),
       cell: ({ row }) => `${(row.original.progress * 100).toFixed(0)}%`,
     },
-    { accessorKey: 'attempts', header: '尝试' },
+    { accessorKey: 'attempts', header: t('col.attempts') },
     {
       accessorKey: 'error',
-      header: '错误',
+      header: t('col.error'),
       cell: ({ row }) =>
         row.original.error ? (
           <span className="block max-w-60 truncate text-destructive" title={row.original.error}>
@@ -161,17 +167,17 @@ export function PipelineListPage() {
     },
     {
       accessorKey: 'started_at',
-      header: '开始',
+      header: t('col.startedAt'),
       cell: ({ row }) => formatDateTime(row.original.started_at),
     },
     {
       accessorKey: 'finished_at',
-      header: '结束',
+      header: t('col.finishedAt'),
       cell: ({ row }) => formatDateTime(row.original.finished_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => (
         <div className="flex gap-1">
           <Button
@@ -180,7 +186,7 @@ export function PipelineListPage() {
             className="h-auto p-0"
             onClick={() => navigate(`/pipeline/${row.original.id}`)}
           >
-            详情
+            {t('viewDetail')}
           </Button>
           <ConfirmAction
             trigger={
@@ -190,11 +196,11 @@ export function PipelineListPage() {
                 className="h-auto p-0"
                 disabled={!canWrite || row.original.status !== 'failed'}
               >
-                重试
+                {t('action.retry')}
               </Button>
             }
-            title="确认重试该任务？"
-            description="将从指定步骤（默认 parse）重新派发管线任务。"
+            title={t('retryConfirmTitle')}
+            description={t('retryConfirmDescription')}
             onConfirm={() => setRetryTarget(row.original)}
           />
         </div>
@@ -204,11 +210,11 @@ export function PipelineListPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="管线监控" />
+      <PageHeader title={t('title')} />
 
       <Card>
         <CardHeader>
-          <CardTitle>失败原因聚合 Top 10</CardTitle>
+          <CardTitle>{t('failuresTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
           {(failures?.items ?? []).length ? (
@@ -223,7 +229,7 @@ export function PipelineListPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">近 24h 无失败记录</p>
+            <p className="text-sm text-muted-foreground">{t('noFailures')}</p>
           )}
         </CardContent>
       </Card>
@@ -237,13 +243,13 @@ export function PipelineListPage() {
           }}
         >
           <SelectTrigger className="w-[130px]">
-            <SelectValue placeholder="状态" />
+            <SelectValue placeholder={t('field.status')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>全部</SelectItem>
-            {Object.entries(JOB_STATUS_META).map(([value, m]) => (
+            <SelectItem value={ALL}>{t('action.all')}</SelectItem>
+            {Object.keys(JOB_STATUS_TONE).map((value) => (
               <SelectItem key={value} value={value}>
-                {m.text}
+                {t(`jobStatus.${value}`, { defaultValue: value })}
               </SelectItem>
             ))}
           </SelectContent>
@@ -256,10 +262,10 @@ export function PipelineListPage() {
           }}
         >
           <SelectTrigger className="w-[130px]">
-            <SelectValue placeholder="管线阶段" />
+            <SelectValue placeholder={t('filterStagePlaceholder')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>全部</SelectItem>
+            <SelectItem value={ALL}>{t('action.all')}</SelectItem>
             {['parse', 'chunk', 'extract', 'embed', 'index'].map((v) => (
               <SelectItem key={v} value={v}>
                 {v}
@@ -276,12 +282,12 @@ export function PipelineListPage() {
           }}
         >
           <Input
-            placeholder="资产 MIME 类型，如 application/pdf"
+            placeholder={t('mimePlaceholder')}
             className="w-[240px]"
             value={mimeDraft}
             onChange={(e) => setMimeDraft(e.target.value)}
           />
-          <Button type="submit" variant="outline" size="icon" aria-label="按 MIME 过滤">
+          <Button type="submit" variant="outline" size="icon" aria-label={t('mimeFilter')}>
             <Search />
           </Button>
         </form>
@@ -294,7 +300,7 @@ export function PipelineListPage() {
         error={isError ? error : undefined}
         total={data?.total}
         page={page.current}
-        pageSize={PAGE_SIZE}
+        pageSize={page.pageSize}
         onPageChange={(current) => setPage({ current, pageSize: PAGE_SIZE })}
       />
 
@@ -311,7 +317,10 @@ export function PipelineListPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {`重试任务 ${retryTarget?.id.slice(0, 8) ?? ''}（${retryTarget?.job_type ?? ''}）`}
+              {t('retryTitle', {
+                id: retryTarget?.id.slice(0, 8) ?? '',
+                jobType: retryTarget?.job_type ?? '',
+              })}
             </DialogTitle>
           </DialogHeader>
           <Select
@@ -319,10 +328,10 @@ export function PipelineListPage() {
             onValueChange={(v) => setRetryStep(v === DEFAULT_STEP ? undefined : v)}
           >
             <SelectTrigger className="w-[200px]">
-              <SelectValue placeholder="起始步骤（默认 parse）" />
+              <SelectValue placeholder={t('stepPlaceholder')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={DEFAULT_STEP}>默认（parse）</SelectItem>
+              <SelectItem value={DEFAULT_STEP}>{t('defaultStep')}</SelectItem>
               {['parse', 'chunk', 'embed', 'index'].map((v) => (
                 <SelectItem key={v} value={v}>
                   {v}
@@ -339,10 +348,10 @@ export function PipelineListPage() {
                 setRetryStep(undefined);
               }}
             >
-              取消
+              {t('action.cancel')}
             </Button>
             <Button disabled={busy} onClick={() => void retry(retryStep).then(() => setRetryStep(undefined))}>
-              {busy ? '重试中…' : '确认重试'}
+              {busy ? t('retrying') : t('confirmRetry')}
             </Button>
           </DialogFooter>
         </DialogContent>

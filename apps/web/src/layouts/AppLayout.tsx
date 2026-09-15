@@ -1,5 +1,6 @@
-import { Bell, ChevronDown, FolderKanban, Search } from 'lucide-react';
+import { Bell, ChevronDown, FolderKanban, Search, type LucideIcon } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/auth';
 import { useNotifications } from '@/hooks';
 import { Avatar, AvatarFallback } from '@loomvec/ui/components/ui/avatar';
@@ -17,17 +18,28 @@ import { ChatSessions } from '@/layouts/chat-sessions';
 import { cn } from 'cn';
 
 /** 常规导航条目：固定在侧栏底部（对话区之上不设条目，对话经侧栏上部会话列表直达）。 */
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<{
+  to: string;
+  labelKey: 'nav.spaces' | 'nav.search' | 'nav.notifications';
+  icon: LucideIcon;
+  match: (p: string) => boolean;
+  showUnread?: boolean;
+}> = [
   {
     to: '/spaces',
-    label: '空间管理',
+    labelKey: 'nav.spaces',
     icon: FolderKanban,
     match: (p: string) => p === '/spaces' || p.startsWith('/s/'),
   },
-  { to: '/search', label: '检索', icon: Search, match: (p: string) => p.startsWith('/search') },
+  {
+    to: '/search',
+    labelKey: 'nav.search',
+    icon: Search,
+    match: (p: string) => p.startsWith('/search'),
+  },
   {
     to: '/notifications',
-    label: '通知',
+    labelKey: 'nav.notifications',
     icon: Bell,
     match: (p: string) => p.startsWith('/notifications'),
     showUnread: true,
@@ -44,6 +56,7 @@ export function AppLayout() {
   const { me, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation('layout');
 
   // 30s 轮询：仅供侧栏「通知」条目的未读徽标
   const notifications = useNotifications();
@@ -68,7 +81,7 @@ export function AppLayout() {
         {/* 对话区：新建对话 + 历史会话（重命名 / 删除） */}
         <ChatSessions />
         <nav className="space-y-1 border-t px-2 py-2">
-          {NAV_ITEMS.map(({ to, label, icon: Icon, match, showUnread }) => (
+          {NAV_ITEMS.map(({ to, labelKey, icon: Icon, match, showUnread }) => (
             <NavLink
               key={to}
               to={to}
@@ -82,7 +95,7 @@ export function AppLayout() {
               }
             >
               <Icon className="size-4" />
-              {label}
+              {t(labelKey)}
               {showUnread && unread > 0 && (
                 <Badge className="ml-auto h-4 min-w-4 rounded-full px-1 text-[10px]">
                   {unread}
@@ -100,12 +113,12 @@ export function AppLayout() {
                     {(me?.username ?? '?').slice(0, 1).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
-                <span className="truncate text-sm">{me?.username ?? '未登录'}</span>
+                <span className="truncate text-sm">{me?.username ?? t('notLoggedIn')}</span>
                 <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-44">
-              <DropdownMenuItem onClick={() => navigate('/profile')}>个人中心</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate('/profile')}>{t('profileMenu')}</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => {
@@ -113,7 +126,7 @@ export function AppLayout() {
                   navigate('/login');
                 }}
               >
-                退出登录
+                {t('logout')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

@@ -1,0 +1,33 @@
+{
+  "title": "总览",
+  "generatedAt": "数据生成于 {{time}}",
+  "openGrafana": "打开 Grafana",
+  "componentOk": "运行正常",
+  "probeFailed": "探测失败",
+  "pipelineTitle": "管线态势（24h）",
+  "totalTasks24h": "24h 总任务",
+  "succeeded": "成功",
+  "failureRate": "失败率",
+  "deadLetter": "死信：{{count}}",
+  "scaleTitle": "平台规模",
+  "backupTitle": "备份状态",
+  "backupEmpty": "暂无备份状态记录（scripts/backup.sh 回写）",
+  "todoTitle": "待办聚合",
+  "scale": {
+    "tenants": "租户",
+    "users": "用户",
+    "spaces": "空间",
+    "assets": "资产",
+    "semanticUnits": "语义单元",
+    "storage": "存储用量"
+  },
+  "todo": {
+    "pendingReview": "待审资产",
+    "goReview": "去审核 →",
+    "failedJobs": "失败任务",
+    "goProcess": "去处理 →",
+    "deadLetter": "死信",
+    "goView": "去查看 →"
+  },
+  "colStage": "阶段"
+}

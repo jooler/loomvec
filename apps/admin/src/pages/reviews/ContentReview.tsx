@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { cn } from 'cn';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
@@ -23,6 +24,7 @@ const UNITS_PAGE_SIZE = 20;
 /** 内容预览：对应旧 Typography.Paragraph ellipsis rows=3 expandable。 */
 function ContentPreview({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
+  const { t } = useTranslation('reviews');
   return (
     <div className="max-w-[480px] space-y-0.5">
       <p className={cn('whitespace-pre-wrap break-words text-sm', !expanded && 'line-clamp-3')}>
@@ -32,7 +34,7 @@ function ContentPreview({ content }: { content: string }) {
         className="text-xs text-muted-foreground hover:underline"
         onClick={() => setExpanded((v) => !v)}
       >
-        {expanded ? '收起' : '展开'}
+        {expanded ? t('collapse') : t('expand')}
       </button>
     </div>
   );
@@ -44,6 +46,7 @@ export function ContentReviewPage() {
   const { canWrite } = usePerm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('reviews');
   const [takedownOpen, setTakedownOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [unitsPage, setUnitsPage] = useState(1);
@@ -65,33 +68,43 @@ export function ContentReviewPage() {
 
   const columns: ColumnDef<UnitRow, unknown>[] = [
     { accessorKey: 'order_index', header: '#' },
-    { accessorKey: 'title', header: '标题', cell: ({ row }) => row.original.title ?? '-' },
+    {
+      accessorKey: 'title',
+      header: t('unitCol.title'),
+      cell: ({ row }) => row.original.title ?? '-',
+    },
     {
       accessorKey: 'unit_type',
-      header: '类型',
+      header: t('unitCol.type'),
       cell: ({ row }) => <Badge variant="outline">{row.original.unit_type}</Badge>,
     },
     {
       accessorKey: 'chunk_method',
-      header: '分片来源',
+      header: t('unitCol.chunkSource'),
       cell: ({ row }) =>
         row.original.chunk_method === 'llm' ? (
-          <StatusBadge tone="blue">LLM 分片</StatusBadge>
+          <StatusBadge tone="blue">{t('chunks.sourceLlmMarkers')}</StatusBadge>
         ) : (
-          <StatusBadge tone="amber">结构化兜底</StatusBadge>
+          <StatusBadge tone="amber">{t('chunks.sourceStructuralFallback')}</StatusBadge>
         ),
     },
-    { accessorKey: 'char_count', header: '字符数' },
-    { accessorKey: 'locator', header: '定位', cell: ({ row }) => row.original.locator ?? '-' },
+    { accessorKey: 'char_count', header: t('unitCol.charCount') },
+    {
+      accessorKey: 'locator',
+      header: t('unitCol.locator'),
+      cell: ({ row }) => row.original.locator ?? '-',
+    },
     {
       accessorKey: 'embed_model_version',
-      header: '嵌入版本',
+      header: t('unitCol.embedVersion'),
       cell: ({ row }) =>
-        row.original.embed_model_version ?? <StatusBadge tone="red">未嵌入</StatusBadge>,
+        row.original.embed_model_version ?? (
+          <StatusBadge tone="red">{t('notEmbedded')}</StatusBadge>
+        ),
     },
     {
       accessorKey: 'content',
-      header: '内容预览',
+      header: t('unitCol.contentPreview'),
       cell: ({ row }) => <ContentPreview content={row.original.content} />,
     },
   ];
@@ -105,15 +118,15 @@ export function ContentReviewPage() {
           className="-ml-2 text-muted-foreground"
           onClick={() => navigate('/reviews')}
         >
-          <ArrowLeft /> 返回审核队列
+          <ArrowLeft /> {t('backToQueue')}
         </Button>
       </div>
       <PageHeader
-        title={asset?.name ?? 'chunk 复核'}
-        description={asset ? `空间：${asset.space_slug ?? '-'}` : undefined}
+        title={asset?.name ?? t('detailTitle')}
+        description={asset ? t('spacePrefix', { slug: asset.space_slug ?? '-' }) : undefined}
         actions={
           <Button variant="destructive" disabled={!canWrite} onClick={() => setTakedownOpen(true)}>
-            下架资产
+            {t('takedownAsset')}
           </Button>
         }
       />
@@ -121,21 +134,27 @@ export function ContentReviewPage() {
       <Card>
         <CardContent>
           <DescriptionList cols={2}>
-            <DescriptionItem label="资产 ID">{asset?.id ?? assetId}</DescriptionItem>
-            <DescriptionItem label="类型">{asset?.mime_type ?? '-'}</DescriptionItem>
-            <DescriptionItem label="大小">{formatBytes(asset?.size_bytes ?? 0)}</DescriptionItem>
-            <DescriptionItem label="资产状态">{asset?.status ?? '-'}</DescriptionItem>
-            <DescriptionItem label="审核状态">
+            <DescriptionItem label={t('detailLabel.assetId')}>
+              {asset?.id ?? assetId}
+            </DescriptionItem>
+            <DescriptionItem label={t('col.type')}>{asset?.mime_type ?? '-'}</DescriptionItem>
+            <DescriptionItem label={t('col.size')}>
+              {formatBytes(asset?.size_bytes ?? 0)}
+            </DescriptionItem>
+            <DescriptionItem label={t('col.assetStatus')}>{asset?.status ?? '-'}</DescriptionItem>
+            <DescriptionItem label={t('detailLabel.reviewStatus')}>
               {asset?.review_status ? <Badge variant="outline">{asset.review_status}</Badge> : '-'}
             </DescriptionItem>
-            <DescriptionItem label="提交时间">{formatDateTime(asset?.created_at)}</DescriptionItem>
+            <DescriptionItem label={t('col.submittedAt')}>
+              {formatDateTime(asset?.created_at)}
+            </DescriptionItem>
           </DescriptionList>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>语义单元切片（{data?.items.length ?? 0}）</CardTitle>
+          <CardTitle>{t('unitsTitle', { count: data?.items.length ?? 0 })}</CardTitle>
         </CardHeader>
         <CardContent>
           <DataTable
@@ -155,9 +174,9 @@ export function ContentReviewPage() {
       {/* 下架（危险操作：连带向量清理） */}
       <ReasonModal
         open={takedownOpen}
-        title={`下架资产「${asset?.name ?? ''}」`}
-        description="下架 = 驳回 + 软删 + 向量连带清理（含全部语义单元），操作不可逆。"
-        okText="确认下架"
+        title={t('takedownTitle', { name: asset?.name ?? '' })}
+        description={t('takedownDescriptionWithUnits')}
+        okText={t('confirmTakedown')}
         danger
         confirmLoading={busy}
         onCancel={() => setTakedownOpen(false)}
@@ -170,13 +189,13 @@ export function ContentReviewPage() {
                 body: { reason },
               }),
             );
-            toast.success('已下架');
+            toast.success(t('takedownToastShort'));
             setTakedownOpen(false);
             void queryClient.invalidateQueries({ queryKey: ['admin-reviews'] });
             void queryClient.invalidateQueries({ queryKey: ['admin-system-status'] });
             navigate('/reviews');
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }

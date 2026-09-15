@@ -1,13 +1,4 @@
-/** 资产详情页共享字典/常量。 */
-
-export const JOB_TYPE_LABEL: Record<string, string> = {
-  parse: '解析',
-  chunk: 'LLM 分片+抽取',
-  graph: '图谱写入',
-  embed: '嵌入',
-  index: '索引',
-  transcode: '懒转码',
-};
+/** 资产详情页共享字典/常量。任务类型文案走 i18n assetDetail:jobType.*。 */
 
 export const JOB_STATUS_TONE: Record<string, 'gray' | 'blue' | 'green' | 'red'> = {
   pending: 'gray',

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, UserPlus, Users } from 'lucide-react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -41,6 +42,7 @@ interface GroupMember {
 
 function CreateGroupDialog(props: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation('groups');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
 
@@ -53,7 +55,7 @@ function CreateGroupDialog(props: { open: boolean; onOpenChange: (open: boolean)
       );
     },
     onSuccess: () => {
-      toast.success('分组已创建');
+      toast.success(t('groupCreated'));
       void queryClient.invalidateQueries({ queryKey: ['ops-groups'] });
       setName('');
       setDescription('');
@@ -66,10 +68,8 @@ function CreateGroupDialog(props: { open: boolean; onOpenChange: (open: boolean)
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>创建用户分组</DialogTitle>
-          <DialogDescription>
-            分组用于公共空间可见性：在某空间「可见性」页签勾选分组，该分组内用户即可链接该空间。
-          </DialogDescription>
+          <DialogTitle>{t('createTitle')}</DialogTitle>
+          <DialogDescription>{t('createDesc')}</DialogDescription>
         </DialogHeader>
         <form
           onSubmit={(e) => {
@@ -79,16 +79,16 @@ function CreateGroupDialog(props: { open: boolean; onOpenChange: (open: boolean)
           className="space-y-4"
         >
           <div className="space-y-2">
-            <Label htmlFor="group-name">分组名称</Label>
+            <Label htmlFor="group-name">{t('nameLabel')}</Label>
             <Input
               id="group-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="如：产品研发部"
+              placeholder={t('namePlaceholder')}
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="group-desc">描述</Label>
+            <Label htmlFor="group-desc">{t('field.description')}</Label>
             <Input
               id="group-desc"
               value={description}
@@ -97,10 +97,10 @@ function CreateGroupDialog(props: { open: boolean; onOpenChange: (open: boolean)
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              取消
+              {t('action.cancel')}
             </Button>
             <Button type="submit" disabled={create.isPending || name.trim().length === 0}>
-              {create.isPending ? '创建中…' : '创建'}
+              {create.isPending ? t('creating') : t('action.create')}
             </Button>
           </DialogFooter>
         </form>
@@ -111,6 +111,7 @@ function CreateGroupDialog(props: { open: boolean; onOpenChange: (open: boolean)
 
 function GroupMembersDialog(props: { group: GroupItem; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation('groups');
   const [username, setUsername] = useState('');
 
   const members = useQuery({
@@ -138,7 +139,7 @@ function GroupMembersDialog(props: { group: GroupItem; onClose: () => void }) {
       );
     },
     onSuccess: () => {
-      toast.success(`已加入 ${username}`);
+      toast.success(t('memberAdded', { username }));
       setUsername('');
       invalidate();
     },
@@ -150,10 +151,10 @@ function GroupMembersDialog(props: { group: GroupItem; onClose: () => void }) {
       const { error } = await api.DELETE('/api/v1/ops/groups/{group_id}/members/{user_id}', {
         params: { path: { group_id: props.group.id, user_id: userId } },
       });
-      if (error) throw new Error('移除失败');
+      if (error) throw new Error(t('removeFailed'));
     },
     onSuccess: () => {
-      toast.success('已移出分组');
+      toast.success(t('memberRemoved'));
       invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -163,8 +164,8 @@ function GroupMembersDialog(props: { group: GroupItem; onClose: () => void }) {
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>分组成员：{props.group.name}</DialogTitle>
-          <DialogDescription>按用户名添加成员；成员可属多个分组。</DialogDescription>
+          <DialogTitle>{t('membersTitle', { name: props.group.name })}</DialogTitle>
+          <DialogDescription>{t('membersDesc')}</DialogDescription>
         </DialogHeader>
         <form
           onSubmit={(e) => {
@@ -176,10 +177,10 @@ function GroupMembersDialog(props: { group: GroupItem; onClose: () => void }) {
           <Input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="用户名"
+            placeholder={t('usernamePlaceholder')}
           />
           <Button type="submit" size="sm" disabled={add.isPending || username.trim().length === 0}>
-            <UserPlus /> 添加
+            <UserPlus /> {t('add')}
           </Button>
         </form>
         <div className="max-h-72 divide-y overflow-y-auto rounded-lg border">
@@ -188,7 +189,7 @@ function GroupMembersDialog(props: { group: GroupItem; onClose: () => void }) {
               <Skeleton className="h-6 w-40" />
             </div>
           ) : (members.data?.length ?? 0) === 0 ? (
-            <p className="px-4 py-6 text-center text-sm text-muted-foreground">还没有成员</p>
+            <p className="px-4 py-6 text-center text-sm text-muted-foreground">{t('noMembers')}</p>
           ) : (
             members.data?.map((m) => (
               <div key={m.user_id} className="flex items-center justify-between gap-2 px-4 py-2.5">
@@ -201,12 +202,12 @@ function GroupMembersDialog(props: { group: GroupItem; onClose: () => void }) {
                 <ConfirmAction
                   trigger={
                     <Button variant="outline" size="xs" className="text-destructive hover:text-destructive">
-                      移除
+                      {t('remove')}
                     </Button>
                   }
-                  title="移出分组？"
-                  description="移出后该用户对仅授权此分组的公共空间立即失去可见性与检索资格。"
-                  confirmText="移除"
+                  title={t('removeTitle')}
+                  description={t('removeDesc')}
+                  confirmText={t('remove')}
                   danger
                   onConfirm={() => remove.mutate(m.user_id)}
                 />
@@ -221,6 +222,7 @@ function GroupMembersDialog(props: { group: GroupItem; onClose: () => void }) {
 
 export function GroupsPage() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation('groups');
   const [createOpen, setCreateOpen] = useState(false);
   const [managing, setManaging] = useState<GroupItem | null>(null);
 
@@ -235,10 +237,10 @@ export function GroupsPage() {
       const { error } = await api.DELETE('/api/v1/ops/groups/{group_id}', {
         params: { path: { group_id: groupId } },
       });
-      if (error) throw new Error('删除分组失败');
+      if (error) throw new Error(t('deleteFailed'));
     },
     onSuccess: () => {
-      toast.success('分组已删除（其可见性勾选一并清除）');
+      toast.success(t('groupDeleted'));
       void queryClient.invalidateQueries({ queryKey: ['ops-groups'] });
       void queryClient.invalidateQueries({ queryKey: ['ops-visibility'] });
     },
@@ -248,11 +250,11 @@ export function GroupsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="用户分组"
-        description="分组是公共空间可见性的授权单元。在空间的「可见性」页签勾选分组即对该分组公开。"
+        title={t('title')}
+        description={t('description')}
         actions={
           <Button onClick={() => setCreateOpen(true)}>
-            <Plus /> 创建分组
+            <Plus /> {t('createGroup')}
           </Button>
         }
       />
@@ -267,8 +269,8 @@ export function GroupsPage() {
         <p className="text-sm text-destructive">{(groups.error as Error).message}</p>
       ) : (groups.data?.length ?? 0) === 0 ? (
         <EmptyState
-          title="还没有用户分组"
-          description="创建分组并添加成员，再到公共空间「可见性」页签勾选。"
+          title={t('emptyTitle')}
+          description={t('emptyDesc')}
           className="mt-10"
         />
       ) : (
@@ -284,21 +286,21 @@ export function GroupsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  {g.member_count} 名成员 · 对 {g.space_count} 个空间可见
+                  {t('summary', { memberCount: g.member_count, spaceCount: g.space_count })}
                 </p>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => setManaging(g)}>
-                    管理成员
+                    {t('manageMembers')}
                   </Button>
                   <ConfirmAction
                     trigger={
                       <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
-                        删除
+                        {t('action.delete')}
                       </Button>
                     }
-                    title={`删除分组「${g.name}」？`}
-                    description="删除后该分组在各空间的可见性勾选一并清除。"
-                    confirmText="删除"
+                    title={t('deleteTitle', { name: g.name })}
+                    description={t('deleteDesc')}
+                    confirmText={t('action.delete')}
                     danger
                     onConfirm={() => removeGroup.mutate(g.id)}
                   />

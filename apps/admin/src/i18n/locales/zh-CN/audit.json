@@ -1,0 +1,28 @@
+{
+  "title": "审计日志",
+  "exportButton": "导出 JSONL（≤10000 条）",
+  "exportFailed": "导出失败",
+  "query": "查询",
+  "actorPlaceholder": "操作者 user_id（UUID）",
+  "actionPlaceholder": "操作（前缀匹配，如 admin.tenant）",
+  "objectTypePlaceholder": "对象类型，如 tenant / space",
+  "tenantIdPlaceholder": "租户 ID（UUID）",
+  "sinceLabel": "起始时间",
+  "untilLabel": "截止时间",
+  "beforeAfter": "变更前后",
+  "detailTitle": "审计详情：{{action}}",
+  "objectLabel": "对象：",
+  "reasonLabel": "理由：",
+  "beforeLabel": "变更前：",
+  "afterLabel": "变更后：",
+  "ipLabel": "IP：",
+  "col": {
+    "time": "时间",
+    "actor": "操作者",
+    "action": "操作",
+    "objectType": "对象类型",
+    "objectId": "对象 ID",
+    "reason": "理由",
+    "detail": "详情"
+  }
+}

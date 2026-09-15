@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Volume2 } from 'lucide-react';
 import { api, getStoredToken } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { formatClock } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Progress } from '@loomvec/ui/components/ui/progress';
@@ -59,6 +60,7 @@ export function parseWebVTT(text: string): Cue[] {
 export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: number }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const { t } = useTranslation('assetDetail');
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
   const [subtitles, setSubtitles] = useState<{ text: string; blobUrl: string } | null>(null);
@@ -150,7 +152,7 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
     );
   }
   if (!data || mode === 'unsupported') {
-    return <p className="text-sm text-muted-foreground">该资产暂不支持在线播放。</p>;
+    return <p className="text-sm text-muted-foreground">{t('media.unsupported')}</p>;
   }
 
   const dur = duration ?? data.duration ?? 0;
@@ -161,7 +163,7 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
       <div className="space-y-3">
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <Loader2 className="mr-1 inline size-4 animate-spin" />
-          首次播放触发转码中（{Math.round((data.progress ?? 0) * 100)}%），完成后即可流畅播放。
+          {t('media.transcoding', { percent: Math.round((data.progress ?? 0) * 100) })}
         </div>
         <Progress value={(data.progress ?? 0) * 100} />
         {data.keyframes.length > 0 && (
@@ -190,7 +192,7 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
               <track
                 kind="subtitles"
                 srcLang="zh"
-                label="转写"
+                label={t('media.trackLabel')}
                 src={subtitles.blobUrl}
               />
             )}
@@ -209,7 +211,7 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
             <track
               kind="subtitles"
               srcLang="zh"
-              label="转写"
+              label={t('media.trackLabel')}
               src={subtitles.blobUrl}
             />
           )}
@@ -240,7 +242,7 @@ export function MediaPlayer({ assetId, seekTo }: { assetId: string; seekTo?: num
                   <button
                     key={i}
                     type="button"
-                    title={`场景 ${formatClock(k.time_start)}`}
+                    title={t('media.keyframeAt', { time: formatClock(k.time_start) })}
                     className="absolute top-0 h-1.5 w-2 rounded bg-primary/60 hover:bg-primary"
                     style={{ left: `${left}%` }}
                     onClick={() => doSeek(k.time_start)}
@@ -288,9 +290,10 @@ function KeyframeRail({
   currentTime: number;
   onSeek: (t: number) => void;
 }) {
+  const { t } = useTranslation('assetDetail');
   return (
     <div className="space-y-1">
-      <p className="text-xs font-medium text-muted-foreground">场景关键帧</p>
+      <p className="text-xs font-medium text-muted-foreground">{t('media.keyframesTitle')}</p>
       <div className="flex gap-1 overflow-x-auto">
         {keyframes.map((k, i) => (
           <Button
@@ -306,9 +309,11 @@ function KeyframeRail({
             onClick={() => onSeek(k.time_start)}
           >
             {k.url ? (
-              <img src={k.url} alt={`场景 ${i + 1}`} className="h-12 w-20 rounded object-cover" />
+              <img src={k.url} alt={t('media.sceneIndex', { index: i + 1 })} className="h-12 w-20 rounded object-cover" />
             ) : (
-              <div className="grid h-12 w-20 place-items-center rounded bg-muted text-xs">场景 {i + 1}</div>
+              <div className="grid h-12 w-20 place-items-center rounded bg-muted text-xs">
+                {t('media.sceneIndex', { index: i + 1 })}
+              </div>
             )}
             <span className="text-[10px] text-muted-foreground">{formatClock(k.time_start)}</span>
           </Button>

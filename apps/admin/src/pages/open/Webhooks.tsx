@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
@@ -34,6 +35,7 @@ const PAGE_SIZE = 20;
 export function WebhooksPage() {
   const { canWrite } = usePerm();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('open');
 
   const [page, setPage] = useState({ current: 1, pageSize: PAGE_SIZE });
   const [createOpen, setCreateOpen] = useState(false);
@@ -70,9 +72,9 @@ export function WebhooksPage() {
 
   const create = async () => {
     const errors: typeof formError = {};
-    if (!form.name.trim()) errors.name = '请输入订阅名称';
-    if (!form.url.trim()) errors.url = '请输入回调地址（https://）';
-    if (form.eventTypes.length === 0) errors.eventTypes = '至少订阅一个事件';
+    if (!form.name.trim()) errors.name = t('webhook.nameRequired');
+    if (!form.url.trim()) errors.url = t('webhook.urlRequired');
+    if (form.eventTypes.length === 0) errors.eventTypes = t('webhook.eventsRequired');
     setFormError(errors);
     if (Object.keys(errors).length > 0) return;
     setBusy(true);
@@ -87,12 +89,12 @@ export function WebhooksPage() {
           },
         }),
       );
-      toast.success('订阅已创建（signing secret 仅此一次展示）');
+      toast.success(t('webhook.createdToast'));
       closeCreate();
       setSecretValue(created.secret ?? null);
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '创建失败');
+      toast.error(e instanceof Error ? e.message : t('webhook.createFailed'));
     } finally {
       setBusy(false);
     }
@@ -106,10 +108,10 @@ export function WebhooksPage() {
           body,
         }),
       );
-      toast.success('已更新');
+      toast.success(t('webhook.updatedToast'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
@@ -122,7 +124,7 @@ export function WebhooksPage() {
       );
       setSecretValue(resp.secret);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
@@ -136,20 +138,20 @@ export function WebhooksPage() {
           body: { reason },
         }),
       );
-      toast.success('已删除');
+      toast.success(t('feedback.deleted'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setBusy(false);
     }
   };
 
   const columns: ColumnDef<Subscription, unknown>[] = [
-    { accessorKey: 'name', header: '名称' },
+    { accessorKey: 'name', header: t('field.name') },
     {
       accessorKey: 'url',
-      header: '回调地址',
+      header: t('webhook.col.url'),
       cell: ({ row }) => (
         <code className="block max-w-56 truncate rounded bg-muted px-1 py-0.5 font-mono text-xs" title={row.original.url}>
           {row.original.url}
@@ -158,7 +160,7 @@ export function WebhooksPage() {
     },
     {
       accessorKey: 'event_types',
-      header: '事件',
+      header: t('webhook.col.events'),
       cell: ({ row }) => (
         <div className="flex flex-wrap gap-1">
           {row.original.event_types.map((e) => (
@@ -171,44 +173,44 @@ export function WebhooksPage() {
     },
     {
       accessorKey: 'paused',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) =>
         row.original.paused ? (
-          <StatusBadge tone="amber">已暂停</StatusBadge>
+          <StatusBadge tone="amber">{t('webhook.status.paused')}</StatusBadge>
         ) : (
-          <StatusBadge tone="green">订阅中</StatusBadge>
+          <StatusBadge tone="green">{t('webhook.status.active')}</StatusBadge>
         ),
     },
     {
       accessorKey: 'created_at',
-      header: '创建时间',
+      header: t('field.createdAt'),
       cell: ({ row }) => formatDateTime(row.original.created_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => {
         const s = row.original;
         return (
           <div className="flex flex-wrap gap-1">
             <Button variant="link" size="sm" onClick={() => setDeliverySub(s)}>
-              投递日志
+              {t('webhook.deliveries')}
             </Button>
             {s.paused ? (
               <Button variant="link" size="sm" disabled={!canWrite} onClick={() => void patch(s, { paused: false })}>
-                恢复
+                {t('webhook.resume')}
               </Button>
             ) : (
               <Button variant="link" size="sm" disabled={!canWrite} onClick={() => void patch(s, { paused: true })}>
-                暂停
+                {t('webhook.pause')}
               </Button>
             )}
             <ConfirmAction
-              title="确认重置 signing secret？"
-              description="旧 secret 立即失效，新 secret 仅此一次展示。"
+              title={t('webhook.resetSecretConfirm')}
+              description={t('webhook.resetSecretDescription')}
               trigger={
                 <Button variant="link" size="sm" disabled={!canWrite}>
-                  重置 secret
+                  {t('webhook.resetSecret')}
                 </Button>
               }
               onConfirm={() => resetSecret(s)}
@@ -220,7 +222,7 @@ export function WebhooksPage() {
               disabled={!canWrite}
               onClick={() => setDeleteTarget(s)}
             >
-              删除
+              {t('action.delete')}
             </Button>
           </div>
         );
@@ -231,10 +233,10 @@ export function WebhooksPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Webhook"
+        title={t('webhook.title')}
         actions={
           <Button disabled={!canWrite} onClick={() => setCreateOpen(true)}>
-            新建订阅
+            {t('webhook.create')}
           </Button>
         }
       />
@@ -253,7 +255,7 @@ export function WebhooksPage() {
       <Dialog open={createOpen} onOpenChange={(o) => !o && closeCreate()}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>新建 Webhook 订阅</DialogTitle>
+            <DialogTitle>{t('webhook.createTitle')}</DialogTitle>
           </DialogHeader>
           <form
             onSubmit={(e) => {
@@ -263,7 +265,7 @@ export function WebhooksPage() {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="webhook-name">订阅名称</Label>
+              <Label htmlFor="webhook-name">{t('webhook.nameLabel')}</Label>
               <Input
                 id="webhook-name"
                 maxLength={255}
@@ -273,7 +275,7 @@ export function WebhooksPage() {
               {formError.name && <p className="text-sm text-destructive">{formError.name}</p>}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="webhook-url">回调地址（https://）</Label>
+              <Label htmlFor="webhook-url">{t('webhook.urlLabel')}</Label>
               <Input
                 id="webhook-url"
                 placeholder="https://example.com/hooks/loomvec"
@@ -283,7 +285,7 @@ export function WebhooksPage() {
               {formError.url && <p className="text-sm text-destructive">{formError.url}</p>}
             </div>
             <div className="space-y-2">
-              <Label>订阅事件</Label>
+              <Label>{t('webhook.eventsLabel')}</Label>
               <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
                 {WEBHOOK_EVENT_TYPES.map((e) => (
                   <label key={e} className="flex items-center gap-2 text-sm">
@@ -294,7 +296,7 @@ export function WebhooksPage() {
                           ...f,
                           eventTypes: checked
                             ? [...f.eventTypes, e]
-                            : f.eventTypes.filter((t) => t !== e),
+                            : f.eventTypes.filter((ev) => ev !== e),
                         }));
                         if (formError.eventTypes) setFormError((p) => ({ ...p, eventTypes: undefined }));
                       }}
@@ -308,7 +310,7 @@ export function WebhooksPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="webhook-desc">描述（可选）</Label>
+              <Label htmlFor="webhook-desc">{t('webhook.descriptionLabel')}</Label>
               <Textarea
                 id="webhook-desc"
                 rows={2}
@@ -318,10 +320,10 @@ export function WebhooksPage() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={closeCreate} disabled={busy}>
-                取消
+                {t('action.cancel')}
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy ? '保存中…' : '创建'}
+                {busy ? t('action.saving') : t('action.create')}
               </Button>
             </DialogFooter>
           </form>
@@ -331,9 +333,9 @@ export function WebhooksPage() {
       {/* 删除订阅（危险操作）：理由入审计 */}
       <ReasonModal
         open={deleteTarget !== null}
-        title={`删除 Webhook 订阅「${deleteTarget?.name ?? ''}」`}
-        description="删除后该订阅立即失效，操作不可逆。"
-        okText="确认删除"
+        title={t('webhook.deleteTitle', { name: deleteTarget?.name ?? '' })}
+        description={t('webhook.deleteDescription')}
+        okText={t('webhook.confirmDelete')}
         danger
         confirmLoading={busy}
         onCancel={() => setDeleteTarget(null)}
@@ -342,8 +344,8 @@ export function WebhooksPage() {
 
       <SecretModal
         open={secretValue !== null}
-        title="Signing Secret（仅此一次展示）"
-        fields={secretValue ? [{ label: 'secret', value: secretValue }] : []}
+        title={t('webhook.secretTitle')}
+        fields={secretValue ? [{ label: t('webhook.secretLabel'), value: secretValue }] : []}
         onClose={() => setSecretValue(null)}
       />
 

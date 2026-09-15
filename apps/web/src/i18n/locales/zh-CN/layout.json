@@ -1,0 +1,36 @@
+{
+  "nav": {
+    "spaces": "空间管理",
+    "search": "检索",
+    "notifications": "通知"
+  },
+  "notLoggedIn": "未登录",
+  "profileMenu": "个人中心",
+  "logout": "退出登录",
+  "spaceFallback": "空间",
+  "reviewRequired": "需审核",
+  "role": {
+    "owner": "所有者",
+    "editor": "编辑者",
+    "viewer": "查看者"
+  },
+  "tab": {
+    "assets": "资产",
+    "search": "检索",
+    "graph": "图谱",
+    "review": "审核",
+    "members": "成员",
+    "settings": "设置"
+  },
+  "chat": {
+    "newChat": "新建对话",
+    "untitled": "新会话",
+    "moreActions": "会话「{{title}}」更多操作",
+    "noHistory": "暂无历史对话",
+    "renameTitle": "重命名会话",
+    "renameDesc": "修改在侧栏中展示的会话标题。",
+    "deleteTitle": "删除会话？",
+    "deleteDesc": "将删除「{{title}}」及其全部消息，操作不可恢复。",
+    "deleteFailed": "删除会话失败"
+  }
+}

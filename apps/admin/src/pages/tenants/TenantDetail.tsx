@@ -5,9 +5,11 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
+import { t as tt } from '@/i18n';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ReasonModal } from '@/components/ReasonModal';
@@ -19,13 +21,14 @@ import type { TenantRow } from '@/types';
 import { formatDateTime, formatQuota } from '@/utils';
 import { OidcBindingCard } from './OidcBindingCard';
 
+// 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const quotaSchema = z.object({
-  quota_storage_bytes: z.number({ error: '请输入存储配额' }).min(0),
-  quota_file_count: z.number({ error: '请输入文件数配额' }).min(0),
+  quota_storage_bytes: z.number({ error: tt('tenants:form.quotaStorageRequired') }).min(0),
+  quota_file_count: z.number({ error: tt('tenants:form.quotaFilesRequired') }).min(0),
 });
 
 const editSchema = z.object({
-  name: z.string().min(1, '请输入租户名称').max(255),
+  name: z.string().min(1, tt('tenants:form.nameRequired')).max(255),
   plan: z.string(),
 });
 
@@ -38,6 +41,7 @@ export function TenantDetailPage() {
   const { canWrite } = usePerm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('tenants');
 
   const [quotaOpen, setQuotaOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -78,22 +82,22 @@ export function TenantDetailPage() {
           params: { path: { tenant_id: tenantId! } },
         }),
       );
-      toast.success('租户已启用');
+      toast.success(t('activated'));
       invalidate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     }
   };
 
   return (
     <div className="space-y-4">
       <Button variant="ghost" size="sm" className="-ml-2" onClick={() => navigate('/tenants')}>
-        <ArrowLeft /> 返回
+        <ArrowLeft /> {t('action.back')}
       </Button>
 
       <PageHeader
-        title={tenant?.name ?? '租户详情'}
-        description={tenant?.status === 'active' ? undefined : '已停用'}
+        title={tenant?.name ?? t('detailTitle')}
+        description={tenant?.status === 'active' ? undefined : t('suspendedStatus')}
         actions={
           <>
             <Button
@@ -104,7 +108,7 @@ export function TenantDetailPage() {
                 setEditOpen(true);
               }}
             >
-              编辑
+              {t('action.edit')}
             </Button>
             <Button
               variant="outline"
@@ -117,15 +121,15 @@ export function TenantDetailPage() {
                 setQuotaOpen(true);
               }}
             >
-              调整配额
+              {t('adjustQuota')}
             </Button>
             {tenant?.status === 'active' ? (
               <Button variant="destructive" disabled={!canWrite} onClick={() => setSuspendOpen(true)}>
-                停用
+                {t('suspend')}
               </Button>
             ) : (
               <Button variant="outline" disabled={!canWrite} onClick={() => void activateTenant()}>
-                启用
+                {t('action.enable')}
               </Button>
             )}
           </>
@@ -134,21 +138,21 @@ export function TenantDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>基本信息与用量报表</CardTitle>
+          <CardTitle>{t('basicInfoTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
           <DescriptionList cols={2}>
             <DescriptionItem label="ID">{tenant?.id}</DescriptionItem>
-            <DescriptionItem label="状态">{tenant?.status}</DescriptionItem>
-            <DescriptionItem label="套餐">{tenant?.plan}</DescriptionItem>
-            <DescriptionItem label="创建时间">{formatDateTime(tenant?.created_at)}</DescriptionItem>
-            <DescriptionItem label="空间数">{tenant?.space_count ?? 0}</DescriptionItem>
-            <DescriptionItem label="用户数">{tenant?.user_count ?? 0}</DescriptionItem>
-            <DescriptionItem label="存储用量">
+            <DescriptionItem label={t('field.status')}>{tenant?.status}</DescriptionItem>
+            <DescriptionItem label={t('col.plan')}>{tenant?.plan}</DescriptionItem>
+            <DescriptionItem label={t('field.createdAt')}>{formatDateTime(tenant?.created_at)}</DescriptionItem>
+            <DescriptionItem label={t('col.spaceCount')}>{tenant?.space_count ?? 0}</DescriptionItem>
+            <DescriptionItem label={t('col.userCount')}>{tenant?.user_count ?? 0}</DescriptionItem>
+            <DescriptionItem label={t('col.storageUsage')}>
               {formatQuota(tenant?.used_storage_bytes ?? 0, tenant?.quota_storage_bytes ?? 0)}
             </DescriptionItem>
-            <DescriptionItem label="文件数">
-              {tenant?.used_file_count ?? 0} / {tenant?.quota_file_count ? tenant.quota_file_count : '不限'}
+            <DescriptionItem label={t('col.fileCount')}>
+              {tenant?.used_file_count ?? 0} / {tenant?.quota_file_count ? tenant.quota_file_count : t('unlimited')}
             </DescriptionItem>
           </DescriptionList>
         </CardContent>
@@ -159,8 +163,8 @@ export function TenantDetailPage() {
       {/* 配额调整：必填理由入审计 */}
       <ReasonModal
         open={quotaOpen}
-        title="调整租户配额"
-        okText="保存"
+        title={t('adjustQuotaTitle')}
+        okText={t('action.save')}
         confirmLoading={busy}
         onCancel={() => setQuotaOpen(false)}
         onOk={async (reason) => {
@@ -175,11 +179,11 @@ export function TenantDetailPage() {
                 body: { quota_storage_bytes, quota_file_count, reason },
               }),
             );
-            toast.success('配额已调整');
+            toast.success(t('quotaAdjusted'));
             setQuotaOpen(false);
             invalidate();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }
@@ -187,7 +191,7 @@ export function TenantDetailPage() {
       >
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="quota-storage">存储配额（字节）</Label>
+            <Label htmlFor="quota-storage">{t('form.quotaStoragePlainLabel')}</Label>
             <Input
               id="quota-storage"
               type="number"
@@ -201,7 +205,7 @@ export function TenantDetailPage() {
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="quota-files">文件数配额</Label>
+            <Label htmlFor="quota-files">{t('form.quotaFilesPlainLabel')}</Label>
             <Input
               id="quota-files"
               type="number"
@@ -220,8 +224,8 @@ export function TenantDetailPage() {
       {/* 编辑名称/套餐 */}
       <ReasonModal
         open={editOpen}
-        title="编辑租户"
-        okText="保存"
+        title={t('editTenant')}
+        okText={t('action.save')}
         requireReason={false}
         confirmLoading={busy}
         onCancel={() => setEditOpen(false)}
@@ -237,11 +241,11 @@ export function TenantDetailPage() {
                 body: { name: values.name, plan: values.plan },
               }),
             );
-            toast.success('已保存');
+            toast.success(t('feedback.saved'));
             setEditOpen(false);
             invalidate();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }
@@ -249,14 +253,14 @@ export function TenantDetailPage() {
       >
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="edit-name">租户名称</Label>
+            <Label htmlFor="edit-name">{t('form.nameLabel')}</Label>
             <Input id="edit-name" maxLength={255} {...editForm.register('name')} />
             {editForm.formState.errors.name && (
               <p className="text-sm text-destructive">{editForm.formState.errors.name.message}</p>
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="edit-plan">套餐</Label>
+            <Label htmlFor="edit-plan">{t('form.planLabel')}</Label>
             <Input id="edit-plan" {...editForm.register('plan')} />
           </div>
         </div>
@@ -265,9 +269,9 @@ export function TenantDetailPage() {
       {/* 停用（冻结）：危险操作 */}
       <ReasonModal
         open={suspendOpen}
-        title={`停用租户「${tenant?.name ?? ''}」`}
-        description="停用后该租户所有用户登录与 API 访问被冻结，数据保留。此为危险操作。"
-        okText="确认停用"
+        title={t('suspendTitle', { name: tenant?.name ?? '' })}
+        description={t('suspendDescriptionShort')}
+        okText={t('confirmSuspend')}
         danger
         confirmLoading={busy}
         onCancel={() => setSuspendOpen(false)}
@@ -280,11 +284,11 @@ export function TenantDetailPage() {
                 body: { reason },
               }),
             );
-            toast.success('租户已停用');
+            toast.success(t('suspendToastShort'));
             setSuspendOpen(false);
             invalidate();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '操作失败');
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
           } finally {
             setBusy(false);
           }

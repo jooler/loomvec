@@ -1,0 +1,118 @@
+{
+  "clearFilter": "清除筛选",
+  "apiKey": {
+    "title": "API Key",
+    "issue": "签发 API Key",
+    "issueTitle": "签发 API Key",
+    "issueButton": "签发",
+    "issuedTitle": "API Key 签发成功",
+    "issuedToast": "API Key 已签发（明文仅此一次展示）",
+    "issueFailed": "签发失败",
+    "revokeConfirm": "确认吊销该 API Key？",
+    "revoke": "吊销",
+    "revokedToast": "已吊销",
+    "neverExpires": "永不过期",
+    "neverUsed": "从未使用",
+    "nameRequired": "请输入名称",
+    "scopeLabel": "权限点（scopes）",
+    "scopesRequired": "至少选择一个 scope",
+    "rateLabel": "限流（次/分钟）",
+    "rateRequired": "请输入限流（次/分钟）",
+    "rateMin": "限流至少为 1",
+    "expiresLabel": "有效期（秒，留空永不过期）",
+    "expiresMin": "有效期至少 60 秒",
+    "keyLabel": "API Key",
+    "scopeOption": {
+      "read": "read（读）",
+      "write": "write（写）"
+    },
+    "col": {
+      "scopes": "Scopes",
+      "rateLimit": "限流（次/分）",
+      "expiresAt": "过期时间",
+      "lastUsedAt": "最近使用"
+    }
+  },
+  "oauth": {
+    "title": "OAuth 应用",
+    "create": "创建应用",
+    "createTitle": "创建 OAuth 应用",
+    "createdToast": "OAuth 应用已创建（secret 仅此一次展示）",
+    "createFailed": "创建失败",
+    "suspendConfirm": "确认停用该应用？",
+    "activatedToast": "已启用",
+    "suspendedToast": "已停用",
+    "resetSecretConfirm": "确认重置 client secret？",
+    "resetSecretDescription": "旧 secret 立即失效，新 secret 仅此一次展示。",
+    "resetSecret": "重置 secret",
+    "deleteTitle": "删除 OAuth 应用「{{name}}」",
+    "deleteDescription": "删除后该应用立即不可用，操作不可逆。",
+    "confirmDelete": "确认删除",
+    "nameLabel": "应用名称",
+    "nameRequired": "请输入应用名称",
+    "redirectLabel": "Redirect URIs（每行一个）",
+    "redirectRequired": "至少填写一个回调地址",
+    "scopesLabel": "Scopes（OAuth 仅用户级读写）",
+    "scopesRequired": "至少选择一个 scope",
+    "homepageLabel": "主页地址（可选）",
+    "descriptionLabel": "描述（可选）",
+    "secretTitle": "凭证（仅此一次展示）",
+    "status": {
+      "active": "启用",
+      "suspended": "停用"
+    }
+  },
+  "webhook": {
+    "title": "Webhook",
+    "create": "新建订阅",
+    "createTitle": "新建 Webhook 订阅",
+    "createdToast": "订阅已创建（signing secret 仅此一次展示）",
+    "createFailed": "创建失败",
+    "updatedToast": "已更新",
+    "nameLabel": "订阅名称",
+    "nameRequired": "请输入订阅名称",
+    "urlRequired": "请输入回调地址（https://）",
+    "eventsRequired": "至少订阅一个事件",
+    "urlLabel": "回调地址（https://）",
+    "eventsLabel": "订阅事件",
+    "descriptionLabel": "描述（可选）",
+    "deliveries": "投递日志",
+    "resume": "恢复",
+    "pause": "暂停",
+    "resetSecretConfirm": "确认重置 signing secret？",
+    "resetSecretDescription": "旧 secret 立即失效，新 secret 仅此一次展示。",
+    "resetSecret": "重置 secret",
+    "deleteTitle": "删除 Webhook 订阅「{{name}}」",
+    "deleteDescription": "删除后该订阅立即失效，操作不可逆。",
+    "confirmDelete": "确认删除",
+    "secretTitle": "Signing Secret（仅此一次展示）",
+    "secretLabel": "secret",
+    "status": {
+      "paused": "已暂停",
+      "active": "订阅中"
+    },
+    "col": {
+      "url": "回调地址",
+      "events": "事件"
+    }
+  },
+  "delivery": {
+    "title": "投递日志：{{name}}",
+    "statusPlaceholder": "投递状态",
+    "replay": "重放",
+    "replayConfirm": "确认重放该投递？",
+    "replayAccepted": "重放已受理",
+    "status": {
+      "pending": "待投递",
+      "delivered": "已投递",
+      "failed": "失败",
+      "dead": "死信"
+    },
+    "col": {
+      "attempts": "尝试",
+      "error": "错误",
+      "responseStatus": "响应码",
+      "deliveredAt": "投递时间"
+    }
+  }
+}

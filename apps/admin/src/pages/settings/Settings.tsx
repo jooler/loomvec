@@ -2,8 +2,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
+import { t as tt } from '@/i18n';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ReasonModal } from '@/components/ReasonModal';
@@ -14,12 +16,13 @@ import { Switch } from '@loomvec/ui/components/ui/switch';
 import { Textarea } from '@loomvec/ui/components/ui/textarea';
 import type { SettingItem } from '@/types';
 
+// 模块级文案（分组标题字典）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const GROUP_TITLE: Record<string, string> = {
-  ai: 'AI 供方配置',
-  retrieval: '检索参数',
-  upload: '上传策略',
-  sso: 'SSO / OIDC',
-  extensions: '扩展插件',
+  ai: tt('settings:group.ai'),
+  retrieval: tt('settings:group.retrieval'),
+  upload: tt('settings:group.upload'),
+  sso: tt('settings:group.sso'),
+  extensions: tt('settings:group.extensions'),
 };
 
 /** 编辑值控件：按原始值类型选择（布尔 → 开关；数字 → 输入框；字符串 → 纯文本；
@@ -71,6 +74,7 @@ function ValueEditor(props: {
 export function SettingsPage({ group }: { group: string }) {
   const { isSuperAdmin } = usePerm();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('settings');
   const [editTarget, setEditTarget] = useState<SettingItem | null>(null);
   const [editValue, setEditValue] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -90,7 +94,7 @@ export function SettingsPage({ group }: { group: string }) {
       typeof editTarget.value === 'object' &&
       typeof editValue === 'string'
     ) {
-      toast.error('JSON 格式无效，请修正后再保存');
+      toast.error(t('jsonInvalid'));
       return;
     }
     setBusy(true);
@@ -101,11 +105,11 @@ export function SettingsPage({ group }: { group: string }) {
           body: { value: editValue, reason },
         }),
       );
-      toast.success('配置已保存');
+      toast.success(t('savedToast'));
       setEditTarget(null);
       void queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '保存失败');
+      toast.error(e instanceof Error ? e.message : t('saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -114,19 +118,19 @@ export function SettingsPage({ group }: { group: string }) {
   const columns: ColumnDef<SettingItem, unknown>[] = [
     {
       accessorKey: 'key',
-      header: '配置键',
+      header: t('col.key'),
       cell: ({ row }) => (
         <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{row.original.key}</code>
       ),
     },
-    { accessorKey: 'description', header: '说明' },
+    { accessorKey: 'description', header: t('col.description') },
     {
       accessorKey: 'value',
-      header: '当前值',
+      header: t('col.value'),
       cell: ({ row }) => {
         const v = row.original.value;
         return row.original.sensitive ? (
-          <span className="text-sm text-muted-foreground">{String(v ?? '未设置')}</span>
+          <span className="text-sm text-muted-foreground">{String(v ?? t('notSet'))}</span>
         ) : (
           <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
             {typeof v === 'object' ? JSON.stringify(v) : String(v ?? '-')}
@@ -136,17 +140,17 @@ export function SettingsPage({ group }: { group: string }) {
     },
     {
       accessorKey: 'effect',
-      header: '生效方式',
+      header: t('col.effect'),
       cell: ({ row }) =>
         row.original.effect === 'restart' ? (
-          <StatusBadge tone="amber">需重启</StatusBadge>
+          <StatusBadge tone="amber">{t('effect.restart')}</StatusBadge>
         ) : (
-          <StatusBadge tone="green">即时生效</StatusBadge>
+          <StatusBadge tone="green">{t('effect.immediate')}</StatusBadge>
         ),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => {
         const r = row.original;
         return r.sensitive && r.value == null ? (
@@ -159,20 +163,20 @@ export function SettingsPage({ group }: { group: string }) {
               setEditValue('');
             }}
           >
-            设置
+            {t('set')}
           </Button>
         ) : (
           <Button
             variant="link"
             size="sm"
             disabled={!isSuperAdmin}
-            title={isSuperAdmin ? undefined : '仅 super_admin 可修改系统配置'}
+            title={isSuperAdmin ? undefined : t('superAdminOnlyHint')}
             onClick={() => {
               setEditTarget(r);
               setEditValue(r.value);
             }}
           >
-            编辑
+            {t('action.edit')}
           </Button>
         );
       },
@@ -185,7 +189,7 @@ export function SettingsPage({ group }: { group: string }) {
         title={GROUP_TITLE[group] ?? group}
         description={
           group === 'ai' || group === 'sso' || group === 'extensions'
-            ? '本组仅 super_admin 可修改'
+            ? t('superAdminOnly')
             : undefined
         }
       />
@@ -200,22 +204,24 @@ export function SettingsPage({ group }: { group: string }) {
       {/* 配置修改：必填理由入审计（docs/04 §六） */}
       <ReasonModal
         open={editTarget !== null}
-        title={`修改配置：${editTarget?.key ?? ''}`}
+        title={t('editTitle', { key: editTarget?.key ?? '' })}
         description={
           editTarget?.effect === 'restart'
-            ? '该配置需重启服务后生效。'
+            ? t('restartDescription')
             : editTarget?.sensitive
-              ? '敏感配置写入后仅回显脱敏值。'
+              ? t('sensitiveDescription')
               : undefined
         }
-        okText="保存"
+        okText={t('action.save')}
         confirmLoading={busy}
         onCancel={() => setEditTarget(null)}
         onOk={save}
       >
         {editTarget && (
           <div className="space-y-2 pb-4">
-            <p className="text-sm font-medium">新值（{editTarget.description}）</p>
+            <p className="text-sm font-medium">
+              {t('newValue', { description: editTarget.description })}
+            </p>
             <ValueEditor
               value={editValue}
               structured={editTarget.value != null && typeof editTarget.value === 'object'}

@@ -1,0 +1,20 @@
+{
+  "loadMeFailed": "加载用户信息失败",
+  "loadUsageFailed": "加载用量失败",
+  "title": "个人信息",
+  "userIdLabel": "用户 ID",
+  "tenantLabel": "租户",
+  "globalRolesLabel": "全局角色",
+  "spaceRolesLabel": "空间角色",
+  "role": {
+    "owner": "所有者",
+    "editor": "编辑者",
+    "viewer": "查看者"
+  },
+  "quotasTitle": "各空间配额",
+  "emptySpaces": "暂无空间",
+  "storageWord": "存储",
+  "fileCountWord": "文件",
+  "unlimitedQuota": "不限额",
+  "usageLoading": "（用量加载中）"
+}

@@ -1,0 +1,26 @@
+{
+  "brand": "LoomVec 运营端",
+  "menu": {
+    "overview": "总览",
+    "groups": "用户分组"
+  },
+  "breadcrumb": {
+    "publicSpace": "公共空间"
+  },
+  "sidebar": {
+    "publicSpaces": "公共空间",
+    "create": "新建",
+    "emptyHint": "还没有公共空间，点击「新建」创建",
+    "loadFailed": "加载公共空间失败"
+  },
+  "userMenu": {
+    "anonymous": "未登录",
+    "loggedOut": "已退出登录",
+    "logout": "退出登录"
+  },
+  "accessDenied": {
+    "title": "无运营角色权限",
+    "description": "运营端面向公共知识库的运营人员（operator / super_admin）。 当前账号未被授予运营角色，请联系平台管理员在运维端分配。",
+    "relogin": "重新登录"
+  }
+}

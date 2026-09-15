@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router';
 import { Bell, Check } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useNotificationActions, useNotifications } from '@/hooks';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
 import { Badge } from '@loomvec/ui/components/ui/badge';
@@ -20,6 +21,7 @@ function payloadSummary(payload: Record<string, unknown>): string {
 
 export function NotificationsPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation('notifications');
   const notifications = useNotifications();
   const { markRead, markAllRead } = useNotificationActions();
 
@@ -44,7 +46,7 @@ export function NotificationsPage() {
               </span>
             )}
           </span>
-          通知中心
+          {t('title')}
         </CardTitle>
         <CardAction>
           <Button
@@ -53,7 +55,7 @@ export function NotificationsPage() {
             disabled={unread === 0 || markAllRead.isPending}
             onClick={() => markAllRead.mutate()}
           >
-            <Check /> 全部已读
+            <Check /> {t('markAllRead')}
           </Button>
         </CardAction>
       </CardHeader>
@@ -65,7 +67,7 @@ export function NotificationsPage() {
         ) : notifications.isError ? (
           <p className="text-sm text-destructive">{(notifications.error as Error).message}</p>
         ) : (notifications.data?.items.length ?? 0) === 0 ? (
-          <EmptyState description="暂无通知" />
+          <EmptyState description={t('empty')} />
         ) : (
           <ul className="divide-y">
             {(notifications.data?.items ?? []).map((n) => {
@@ -91,7 +93,7 @@ export function NotificationsPage() {
                     {summary && <p className="text-sm break-all text-muted-foreground">{summary}</p>}
                     <p className="text-sm text-muted-foreground">
                       {new Date(n.created_at).toLocaleString()}
-                      {assetId && <span className="ml-2 text-primary">点击查看资产</span>}
+                      {assetId && <span className="ml-2 text-primary">{t('viewAsset')}</span>}
                     </p>
                   </div>
                   {!n.read && (
@@ -105,7 +107,9 @@ export function NotificationsPage() {
                         markRead.mutate(n.id);
                       }}
                     >
-                      {markRead.isPending && markRead.variables === n.id ? '标记中…' : '标记已读'}
+                      {markRead.isPending && markRead.variables === n.id
+                        ? t('marking')
+                        : t('markRead')}
                     </Button>
                   )}
                 </li>

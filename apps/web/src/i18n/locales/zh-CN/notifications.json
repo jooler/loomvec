@@ -1,0 +1,11 @@
+{
+  "title": "通知中心",
+  "markAllRead": "全部已读",
+  "empty": "暂无通知",
+  "viewAsset": "点击查看资产",
+  "marking": "标记中…",
+  "markRead": "标记已读",
+  "loadFailed": "加载通知失败",
+  "markReadFailed": "标记已读失败",
+  "markAllReadFailed": "全部已读失败"
+}

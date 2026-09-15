@@ -1,0 +1,43 @@
+{
+  "title": "用户与权限",
+  "searchPlaceholder": "按用户名/邮箱搜索",
+  "clearFilter": "清除筛选",
+  "enabled": "已启用",
+  "roleUpdated": "平台角色已更新",
+  "enableConfirm": "确认启用该用户？",
+  "roleAssignOnly": "仅 super_admin 可分配平台角色",
+  "roleAssign": "角色分配",
+  "disableTitle": "禁用用户「{{name}}」",
+  "disableDescription": "禁用后该用户无法登录与访问 API。",
+  "confirmDisable": "确认禁用",
+  "disabledToast": "已禁用",
+  "roleTitle": "平台角色分配：{{name}}",
+  "roleDescription": "操作理由将记入审计日志。",
+  "roleLabel": "平台角色",
+  "rolePlaceholder": "选择平台角色",
+  "roleRequired": "请选择平台角色",
+  "reasonLabel": "操作理由",
+  "reasonRequired": "请填写操作理由（将记入审计日志）",
+  "confirmAssign": "确认分配",
+  "roleOption": {
+    "superAdmin": "super_admin（全部功能）",
+    "operator": "operator（日常运营）",
+    "auditor": "auditor（只读+审计导出）"
+  },
+  "status": {
+    "active": "正常",
+    "disabled": "已禁用"
+  },
+  "source": {
+    "oidc": "OIDC",
+    "local": "本地"
+  },
+  "col": {
+    "username": "用户名",
+    "email": "邮箱",
+    "tenant": "所属租户",
+    "source": "来源",
+    "platformRole": "平台角色",
+    "lastActive": "最近活跃"
+  }
+}

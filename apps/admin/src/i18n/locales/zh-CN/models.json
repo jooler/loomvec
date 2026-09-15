@@ -1,0 +1,44 @@
+{
+  "title": "重嵌入任务",
+  "description": "模型切换后的空间级重嵌入；向量携带 model_version，过渡期检索按旧版本继续服务",
+  "createTask": "新建重嵌入任务",
+  "createdToast": "重嵌入任务已创建（检索期间按空间旧版本继续服务，完成后原子切换）",
+  "createFailed": "创建失败",
+  "creating": "创建中…",
+  "cancelToast": "已取消（running 状态由 worker 协作停止）",
+  "cancelTitle": "取消重嵌入任务 {{id}}",
+  "cancelDescription": "取消后该任务不再继续执行（running 状态由 worker 协作停止）。",
+  "confirmCancelTask": "确认取消任务",
+  "spaceIdLabel": "空间 ID",
+  "spaceIdPlaceholder": "目标空间 UUID",
+  "spaceIdRequired": "请输入空间 ID（UUID）",
+  "targetModelLabel": "目标模型（白名单）",
+  "targetModelPlaceholder": "请选择目标模型（白名单）",
+  "targetModelRequired": "请选择目标模型（白名单）",
+  "status": {
+    "pending": "排队中",
+    "running": "进行中",
+    "succeeded": "完成",
+    "failed": "失败"
+  },
+  "col": {
+    "taskId": "任务 ID",
+    "space": "空间",
+    "targetModel": "目标模型",
+    "progress": "进度",
+    "assets": "资产（完成/失败/总数）",
+    "error": "错误",
+    "updatedAt": "更新时间"
+  },
+  "indexTitle": "索引状态",
+  "indexDescription": "Milvus 语义单元嵌入一致性概览（重嵌入过渡期多版本并存）",
+  "notEmbedded": "未嵌入",
+  "emptyUnits": "暂无语义单元数据。",
+  "indexCol": {
+    "spaceId": "空间 ID",
+    "units": "语义单元总数",
+    "embedded": "已嵌入",
+    "pending": "待嵌入",
+    "modelVersions": "模型版本分布"
+  }
+}

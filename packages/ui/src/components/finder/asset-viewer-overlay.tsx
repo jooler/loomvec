@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import type { ApiClient } from '@loomvec/sdk-ts';
 import { extractApiError, formatBytes } from '../../lib/format';
 import { Button } from '../ui/button';
@@ -46,6 +47,7 @@ export interface AssetViewerOverlayProps {
 export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
   const { assetId } = props;
   const [markdown, setMarkdown] = useState<string | null>(null);
+  const { t } = useTranslation();
 
   const detail = useQuery({
     queryKey: ['finder-asset-detail', assetId],
@@ -54,7 +56,7 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
       const { data, error } = await props.client.GET('/api/v1/assets/{asset_id}', {
         params: { path: { asset_id: assetId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载资产失败'));
+      if (error) throw new Error(extractApiError(error, t('viewer.loadAssetFailed')));
       return data;
     },
   });
@@ -66,7 +68,7 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
       const { data, error } = await props.client.GET('/api/v1/assets/{asset_id}/preview', {
         params: { path: { asset_id: assetId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载预览失败'));
+      if (error) throw new Error(extractApiError(error, t('viewer.loadPreviewFailed')));
       return data as unknown as PreviewData;
     },
   });
@@ -93,8 +95,12 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
   useEffect(() => {
     if (!assetId) return;
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      )
+        return;
       if (e.key === 'Escape') onClose();
       if (e.key === 'ArrowLeft' && hasPrev && onPrev) onPrev();
       if (e.key === 'ArrowRight' && hasNext && onNext) onNext();
@@ -118,14 +124,14 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
       <div className="flex items-center gap-2 border-b px-4 py-2.5">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium" title={a?.name}>
-            {a?.name ?? '资产查看'}
+            {a?.name ?? t('viewer.defaultTitle')}
           </p>
           {a && (
             <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span>{a.mime_type}</span>
               <span>{formatBytes(a.size_bytes)}</span>
               <StatusBadge tone={STATUS_TONE[a.status]?.tone}>
-                {STATUS_TONE[a.status]?.text ?? a.status}
+                {t(`assetStatus.${a.status}`, { defaultValue: a.status })}
               </StatusBadge>
               <ReviewStatusTag status={a.review_status} />
             </p>
@@ -137,7 +143,7 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
             size="icon-sm"
             disabled={!props.hasPrev}
             onClick={props.onPrev}
-            aria-label="上一个"
+            aria-label={t('viewer.prev')}
           >
             <ChevronLeft />
           </Button>
@@ -146,11 +152,11 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
             size="icon-sm"
             disabled={!props.hasNext}
             onClick={props.onNext}
-            aria-label="下一个"
+            aria-label={t('viewer.next')}
           >
             <ChevronRight />
           </Button>
-          <Button variant="ghost" size="icon-sm" onClick={props.onClose} aria-label="关闭">
+          <Button variant="ghost" size="icon-sm" onClick={props.onClose} aria-label={t('viewer.close')}>
             <X />
           </Button>
         </div>
@@ -183,9 +189,9 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
             className="flex min-h-0 flex-1 flex-col"
           >
             <TabsList className="shrink-0">
-              <TabsTrigger value="original">原始文件</TabsTrigger>
-              <TabsTrigger value="parsed">解析结果（MinerU）</TabsTrigger>
-              {props.showChunks && <TabsTrigger value="chunks">分片</TabsTrigger>}
+              <TabsTrigger value="original">{t('viewer.tabOriginal')}</TabsTrigger>
+              <TabsTrigger value="parsed">{t('viewer.tabParsed')}</TabsTrigger>
+              {props.showChunks && <TabsTrigger value="chunks">{t('viewer.tabChunks')}</TabsTrigger>}
             </TabsList>
             <TabsContent value="original" className="mt-3 min-h-0 flex-1">
               {/* 查看器占满剩余高度，滚动条由查看器内部控制（embedpdf/docx/文本均 h-full） */}
@@ -203,7 +209,7 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
                 </div>
               ) : (
                 <p className="grid h-full place-items-center text-sm text-muted-foreground">
-                  该类型不走文档解析（图片/音视频/纯文本），内容见原始文件。
+                  {t('viewer.noParseHint')}
                 </p>
               )}
             </TabsContent>

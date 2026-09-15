@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { usePerm } from '@/auth';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
@@ -16,7 +17,7 @@ import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import type { JobDetail, JobRow } from '@/types';
-import { jobStatusMeta } from '@/constants';
+import { jobStatusTone } from '@/constants';
 import { formatDateTime, formatSeconds } from '@/utils';
 
 /** 任务详情：输入资产、各阶段耗时分解、错误信息、重试（docs/04 §5.6）。 */
@@ -25,6 +26,7 @@ export function PipelineDetailPage() {
   const { canWrite } = usePerm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('pipeline');
   const [busy, setBusy] = useState(false);
 
   const jobKey = ['admin-pipeline-job', jobId];
@@ -48,10 +50,10 @@ export function PipelineDetailPage() {
           body: { step: step ?? null },
         }),
       );
-      toast.success('重试已受理');
+      toast.success(t('retryAccepted'));
       void queryClient.invalidateQueries({ queryKey: jobKey });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
     } finally {
       setBusy(false);
     }
@@ -60,17 +62,17 @@ export function PipelineDetailPage() {
   const stepsColumns: ColumnDef<JobRow, unknown>[] = [
     {
       accessorKey: 'job_type',
-      header: '阶段',
+      header: t('col.stage'),
       cell: ({ row }) => <Badge variant="outline">{row.original.job_type}</Badge>,
     },
     {
       accessorKey: 'status',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) => <Badge variant="outline">{row.original.status}</Badge>,
     },
     {
       id: 'duration',
-      header: '耗时',
+      header: t('col.duration'),
       cell: ({ row }) =>
         row.original.started_at && row.original.finished_at
           ? formatSeconds(
@@ -80,20 +82,20 @@ export function PipelineDetailPage() {
             )
           : '-',
     },
-    { accessorKey: 'attempts', header: '尝试' },
+    { accessorKey: 'attempts', header: t('col.attempts') },
     {
       accessorKey: 'started_at',
-      header: '开始',
+      header: t('col.startedAt'),
       cell: ({ row }) => formatDateTime(row.original.started_at),
     },
     {
       accessorKey: 'finished_at',
-      header: '结束',
+      header: t('col.finishedAt'),
       cell: ({ row }) => formatDateTime(row.original.finished_at),
     },
     {
       accessorKey: 'error',
-      header: '错误',
+      header: t('col.error'),
       cell: ({ row }) =>
         row.original.error ? (
           <span className="block max-w-80 truncate text-destructive" title={row.original.error}>
@@ -108,18 +110,18 @@ export function PipelineDetailPage() {
   return (
     <div className="space-y-4">
       <Button variant="ghost" size="sm" className="-ml-2" onClick={() => navigate('/pipeline')}>
-        <ArrowLeft /> 返回
+        <ArrowLeft /> {t('action.back')}
       </Button>
 
       <PageHeader
-        title={`任务 ${job?.id.slice(0, 8) ?? ''}…`}
+        title={t('taskTitle', { id: job?.id.slice(0, 8) ?? '' })}
         description={job?.job_type}
         actions={
           <ConfirmAction
             trigger={
-              <Button disabled={!canWrite || !job || job.status !== 'failed'}>重试任务</Button>
+              <Button disabled={!canWrite || !job || job.status !== 'failed'}>{t('retryTask')}</Button>
             }
-            title="确认重试该任务？"
+            title={t('retryConfirmTitle')}
             loading={busy}
             onConfirm={() => void retry()}
           />
@@ -135,25 +137,29 @@ export function PipelineDetailPage() {
           ) : (
             <>
               <DescriptionList cols={2}>
-                <DescriptionItem label="任务 ID">{job?.id}</DescriptionItem>
-                <DescriptionItem label="状态">
+                <DescriptionItem label={t('col.taskId')}>{job?.id}</DescriptionItem>
+                <DescriptionItem label={t('field.status')}>
                   {job ? (
                     (() => {
-                      const m = jobStatusMeta(job.status);
-                      return <StatusBadge tone={m.tone}>{m.text}</StatusBadge>;
+                      const tone = jobStatusTone(job.status);
+                      return (
+                        <StatusBadge tone={tone}>
+                          {t(`jobStatus.${job.status}`, { defaultValue: job.status })}
+                        </StatusBadge>
+                      );
                     })()
                   ) : (
                     '-'
                   )}
                 </DescriptionItem>
-                <DescriptionItem label="资产">{job?.asset_name ?? '-'}</DescriptionItem>
-                <DescriptionItem label="资产 ID">{job?.asset_id ?? '-'}</DescriptionItem>
-                <DescriptionItem label="进度">
+                <DescriptionItem label={t('col.asset')}>{job?.asset_name ?? '-'}</DescriptionItem>
+                <DescriptionItem label={t('detailLabel.assetId')}>{job?.asset_id ?? '-'}</DescriptionItem>
+                <DescriptionItem label={t('col.progress')}>
                   {((job?.progress ?? 0) * 100).toFixed(0)}%
                 </DescriptionItem>
-                <DescriptionItem label="尝试次数">{job?.attempts ?? 0}</DescriptionItem>
-                <DescriptionItem label="开始时间">{formatDateTime(job?.started_at)}</DescriptionItem>
-                <DescriptionItem label="结束时间">
+                <DescriptionItem label={t('detailLabel.attemptCount')}>{job?.attempts ?? 0}</DescriptionItem>
+                <DescriptionItem label={t('detailLabel.startedAt')}>{formatDateTime(job?.started_at)}</DescriptionItem>
+                <DescriptionItem label={t('detailLabel.finishedAt')}>
                   {formatDateTime(job?.finished_at)}
                 </DescriptionItem>
               </DescriptionList>
@@ -167,7 +173,7 @@ export function PipelineDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>同资产各阶段（耗时分解）</CardTitle>
+          <CardTitle>{t('stepsTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
           <DataTable

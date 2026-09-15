@@ -1,0 +1,37 @@
+{
+  "brand": "LoomVec 运维端",
+  "notLoggedIn": "未登录",
+  "logout": "退出登录",
+  "logoutSuccess": "已退出登录",
+  "backToOverview": "返回总览",
+  "relogin": "重新登录",
+  "denied": {
+    "noPlatformRoleTitle": "无平台角色权限",
+    "noPlatformRoleDescription": "当前账号未被授予平台角色（super_admin / operator / auditor），无法进入运维端。",
+    "noAccessTitle": "无访问权限",
+    "noAccessDescription": "该页面仅 super_admin 可见。"
+  },
+  "menu": {
+    "overview": "总览",
+    "tenants": "租户管理",
+    "users": "用户与权限",
+    "spaces": "空间治理",
+    "reviews": "内容审核",
+    "pipeline": "管线监控",
+    "modelsGroup": "模型与检索",
+    "models": "重嵌入任务",
+    "retrieval": "索引状态",
+    "open": "开放平台",
+    "apiKeys": "API Key",
+    "oauth": "OAuth 应用",
+    "webhooks": "Webhook",
+    "settings": "系统配置",
+    "settingsAi": "AI 供方",
+    "settingsRetrieval": "检索参数",
+    "settingsUpload": "上传策略",
+    "settingsSso": "SSO/OIDC",
+    "settingsExtensions": "扩展插件",
+    "audit": "审计日志",
+    "system": "系统状态"
+  }
+}

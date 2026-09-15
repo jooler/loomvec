@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@loomvec/ui/components/ui/button';
 import {
   DropdownMenu,
@@ -44,6 +45,7 @@ export function ChatSessions() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('layout');
   const sessions = useChatSessions();
   // 重命名弹窗目标会话 + 标题草稿；删除确认目标会话
   const [renaming, setRenaming] = useState<ChatSessionItem | null>(null);
@@ -58,7 +60,7 @@ export function ChatSessions() {
         params: { path: { session_id: id } },
         body: { title },
       });
-      if (error) throw new Error(extractApiError(error, '重命名失败'));
+      if (error) throw new Error(extractApiError(error, t('finderData.renameFailed')));
     },
     onSuccess: () => {
       setRenaming(null);
@@ -72,7 +74,7 @@ export function ChatSessions() {
       const { error } = await api.DELETE('/api/v1/chat/sessions/{session_id}', {
         params: { path: { session_id: id } },
       });
-      if (error) throw new Error(extractApiError(error, '删除会话失败'));
+      if (error) throw new Error(extractApiError(error, t('chat.deleteFailed')));
     },
     onSuccess: (_, id) => {
       setDeleting(null);
@@ -92,7 +94,7 @@ export function ChatSessions() {
       <div className="px-2 pb-1">
         <Button className="w-full" onClick={() => navigate('/chat')}>
           <MessageSquarePlus className="size-4" />
-          新建对话
+          {t('chat.newChat')}
         </Button>
       </div>
       {/* 会话列表：占满侧栏剩余高度，滚动仅限此区域 */}
@@ -116,14 +118,14 @@ export function ChatSessions() {
                   )}
                   onClick={() => navigate(`/chat/${s.session_id}`)}
                 >
-                  {s.title || '新会话'}
+                  {s.title || t('chat.untitled')}
                 </button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`会话「${s.title || '新会话'}」更多操作`}
+                      aria-label={t('chat.moreActions', { title: s.title || t('chat.untitled') })}
                       className={cn(
                         'absolute top-1/2 right-1 size-6 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100',
                         active && 'opacity-100',
@@ -140,11 +142,11 @@ export function ChatSessions() {
                       }}
                     >
                       <Pencil />
-                      重命名
+                      {t('finder.rename')}
                     </DropdownMenuItem>
                     <DropdownMenuItem variant="destructive" onClick={() => setDeleting(s)}>
                       <Trash2 />
-                      删除
+                      {t('action.delete')}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -153,7 +155,7 @@ export function ChatSessions() {
           })
         )}
         {sessions.data && (sessions.data.items?.length ?? 0) === 0 && (
-          <p className="px-3 py-2 text-sm text-muted-foreground">暂无历史对话</p>
+          <p className="px-3 py-2 text-sm text-muted-foreground">{t('chat.noHistory')}</p>
         )}
       </nav>
 
@@ -166,8 +168,8 @@ export function ChatSessions() {
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>重命名会话</DialogTitle>
-            <DialogDescription>修改在侧栏中展示的会话标题。</DialogDescription>
+            <DialogTitle>{t('chat.renameTitle')}</DialogTitle>
+            <DialogDescription>{t('chat.renameDesc')}</DialogDescription>
           </DialogHeader>
           <Input
             value={renameDraft}
@@ -183,7 +185,7 @@ export function ChatSessions() {
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenaming(null)}>
-              取消
+              {t('action.cancel')}
             </Button>
             <Button
               disabled={
@@ -196,7 +198,7 @@ export function ChatSessions() {
               }}
             >
               {rename.isPending && <Spinner className="size-4" />}
-              保存
+              {t('action.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -211,13 +213,13 @@ export function ChatSessions() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除会话？</AlertDialogTitle>
+            <AlertDialogTitle>{t('chat.deleteTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              将删除「{deleting?.title || '新会话'}」及其全部消息，操作不可恢复。
+              {t('chat.deleteDesc', { title: deleting?.title || t('chat.untitled') })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t('action.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               disabled={remove.isPending}
@@ -228,7 +230,7 @@ export function ChatSessions() {
               }}
             >
               {remove.isPending && <Spinner className="size-4" />}
-              删除
+              {t('action.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

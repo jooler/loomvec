@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { useMe, useSpaceCategories } from '@/hooks';
 import { extractApiError } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -19,7 +20,6 @@ import { MarkdownView } from '@loomvec/ui/components/markdown-view';
 import { OriginalFileViewer } from '@loomvec/ui/components/original-file-viewer';
 import { MediaPlayer } from '@/components/media-player';
 import { ReviewStatusTag } from '@/components/review-status-tag';
-import { JOB_TYPE_LABEL } from './constants';
 import { StepTimeline } from './StepTimeline';
 import { JobsCard } from './JobsCard';
 import { ImagePanel } from './ImagePanel';
@@ -43,6 +43,7 @@ export function AssetDetailPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useTranslation('assetDetail');
 
   // P3-WEB-02/03：检索命中视频/音频单元时经 ?t=<秒> seek 到时间点
   const seekTo = numberParam(searchParams.get('t'));
@@ -64,7 +65,7 @@ export function AssetDetailPage() {
       const { data, error } = await api.GET('/api/v1/spaces/{space_id}', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载空间失败'));
+      if (error) throw new Error(extractApiError(error, t('loadSpaceFailed')));
       return data;
     },
   });
@@ -78,7 +79,7 @@ export function AssetDetailPage() {
       const { data, error } = await api.GET('/api/v1/spaces/{space_id}/metadata-fields', {
         params: { path: { space_id: spaceId! } },
       });
-      if (error) throw new Error(extractApiError(error, '加载元数据 schema 失败'));
+      if (error) throw new Error(extractApiError(error, t('loadMetadataFailed')));
       return data;
     },
   });
@@ -118,10 +119,10 @@ export function AssetDetailPage() {
         params: { path: { asset_id: assetId! } },
         body: { step },
       });
-      if (error) throw new Error(extractApiError(error, '重试失败'));
+      if (error) throw new Error(extractApiError(error, t('finderData.retryFailed')));
     },
     onSuccess: () => {
-      toast.success('已重新入队');
+      toast.success(t('finderData.requeued'));
       void asset.refetch();
       void jobs.refetch();
     },
@@ -133,10 +134,10 @@ export function AssetDetailPage() {
       const { error } = await api.DELETE('/api/v1/assets/{asset_id}', {
         params: { path: { asset_id: assetId! } },
       });
-      if (error) throw new Error(extractApiError(error, '删除失败'));
+      if (error) throw new Error(extractApiError(error, t('finderData.deleteFailed')));
     },
     onSuccess: () => {
-      toast.success('已删除（含向量清理）');
+      toast.success(t('deletedCleaned'));
       void queryClient.invalidateQueries({ queryKey: ['assets'] });
       navigate(spaceId ? `/s/${spaceId}/assets` : '/assets');
     },
@@ -167,7 +168,7 @@ export function AssetDetailPage() {
   if (!a)
     return (
       <Card>
-        <CardContent className="text-sm text-muted-foreground">资产不存在</CardContent>
+        <CardContent className="text-sm text-muted-foreground">{t('notFound')}</CardContent>
       </Card>
     );
 
@@ -214,7 +215,8 @@ export function AssetDetailPage() {
             <div className="flex flex-wrap items-center gap-2">
               {a.status === 'failed' && (
                 <Button size="sm" onClick={() => retry.mutate(failedStep)}>
-                  从失败步骤重跑{failedStep ? `（${JOB_TYPE_LABEL[failedStep]}）` : ''}
+                  {t('rerunFromFailed')}
+                  {failedStep ? `（${t(`jobType.${failedStep}`, { defaultValue: failedStep })}）` : ''}
                 </Button>
               )}
               <Button
@@ -225,17 +227,17 @@ export function AssetDetailPage() {
                   void jobs.refetch();
                 }}
               >
-                <RefreshCw /> 刷新
+                <RefreshCw /> {t('action.refresh')}
               </Button>
               <ConfirmAction
                 trigger={
                   <Button variant="destructive" size="sm" disabled={remove.isPending}>
-                    <Trash2 /> 删除
+                    <Trash2 /> {t('action.delete')}
                   </Button>
                 }
-                title="删除资产？"
-                description="将级联清理语义单元与向量，不可恢复。"
-                confirmText="删除"
+                title={t('deleteTitle')}
+                description={t('deleteDesc')}
+                confirmText={t('action.delete')}
                 danger
                 onConfirm={() => remove.mutate()}
               />
@@ -244,40 +246,45 @@ export function AssetDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <DescriptionList cols={3}>
-            <DescriptionItem label="类型">{a.mime_type}</DescriptionItem>
-            <DescriptionItem label="大小">{(a.size_bytes / 1024).toFixed(1)} KB</DescriptionItem>
-            <DescriptionItem label="页数">{a.page_count ?? '-'}</DescriptionItem>
-            <DescriptionItem label="状态">
+            <DescriptionItem label={t('typeLabel')}>{a.mime_type}</DescriptionItem>
+            <DescriptionItem label={t('sizeLabel')}>{(a.size_bytes / 1024).toFixed(1)} KB</DescriptionItem>
+            <DescriptionItem label={t('pagesLabel')}>{a.page_count ?? '-'}</DescriptionItem>
+            <DescriptionItem label={t('field.status')}>
               <StatusBadge tone={a.status === 'ready' ? 'green' : a.status === 'failed' ? 'red' : 'blue'}>
                 {a.status}
               </StatusBadge>
             </DescriptionItem>
-            <DescriptionItem label="审核">
+            <DescriptionItem label={t('reviewLabel')}>
               <span className="flex flex-wrap items-center gap-2">
                 <ReviewStatusTag status={a.review_status} />
                 {a.review_reason && <span className="text-xs text-amber-600">{a.review_reason}</span>}
               </span>
             </DescriptionItem>
-            <DescriptionItem label="分片方式">{a.chunk_method ?? '-'}</DescriptionItem>
-            <DescriptionItem label="创建时间">{new Date(a.created_at).toLocaleString()}</DescriptionItem>
-            <DescriptionItem label="标签">
+            <DescriptionItem label={t('chunkMethodLabel')}>{a.chunk_method ?? '-'}</DescriptionItem>
+            <DescriptionItem label={t('field.createdAt')}>{new Date(a.created_at).toLocaleString()}</DescriptionItem>
+            <DescriptionItem label={t('tagsLabel')}>
               {a.tags.length > 0 ? (
                 <span className="flex flex-wrap gap-1">
-                  {a.tags.map((t) => (
-                    <StatusBadge key={t.id} tone="blue">
-                      {t.name}
+                  {a.tags.map((tag) => (
+                    <StatusBadge key={tag.id} tone="blue">
+                      {tag.name}
                     </StatusBadge>
                   ))}
                 </span>
               ) : null}
             </DescriptionItem>
-            <DescriptionItem label="上传者">{a.created_by ?? '-'}</DescriptionItem>
+            <DescriptionItem label={t('uploaderLabel')}>{a.created_by ?? '-'}</DescriptionItem>
           </DescriptionList>
-          {a.status_reason && <p className="text-sm text-destructive">失败原因：{a.status_reason}</p>}
+          {a.status_reason && (
+            <p className="text-sm text-destructive">
+              {t('failReasonLabel')}
+              {a.status_reason}
+            </p>
+          )}
           <StepTimeline
             steps={['parse', 'chunk', 'embed', 'index'].map((step) => ({
               key: step,
-              label: JOB_TYPE_LABEL[step],
+              label: t(`jobType.${step}`, { defaultValue: step }),
               state: stepStatus(step),
               description: latestByStep.get(step)?.error?.slice(0, 80),
             }))}
@@ -299,19 +306,19 @@ export function AssetDetailPage() {
       {/* 内容查看：原始文件（embedpdf/office/图片/文本）× MinerU 解析结果（Markdown 渲染） */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">内容查看</CardTitle>
+          <CardTitle className="text-base">{t('contentTitle')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {isMedia && <MediaPlayer assetId={assetId!} seekTo={seekTo} />}
           {preview.isError ? (
             <p className="text-sm text-destructive">{(preview.error as Error).message}</p>
           ) : !preview.data ? (
-            <p className="text-sm text-muted-foreground">解析完成后可预览。</p>
+            <p className="text-sm text-muted-foreground">{t('previewPending')}</p>
           ) : (
             <Tabs defaultValue={preview.data.mode === 'markdown' ? 'parsed' : 'original'}>
               <TabsList>
-                <TabsTrigger value="original">原始文件</TabsTrigger>
-                <TabsTrigger value="parsed">解析结果（MinerU）</TabsTrigger>
+                <TabsTrigger value="original">{t('viewer.tabOriginal')}</TabsTrigger>
+                <TabsTrigger value="parsed">{t('viewer.tabParsed')}</TabsTrigger>
               </TabsList>
               <TabsContent value="original" className="mt-3">
                 <OriginalFileViewer
@@ -333,9 +340,7 @@ export function AssetDetailPage() {
                     <Spinner className="size-5 text-muted-foreground" />
                   </div>
                 ) : (
-                  <p className="py-6 text-center text-sm text-muted-foreground">
-                    该类型不走文档解析（图片/音视频/纯文本），解析结果与原始内容一致或见上方播放器。
-                  </p>
+                  <p className="py-6 text-center text-sm text-muted-foreground">{t('noParseHint')}</p>
                 )}
               </TabsContent>
             </Tabs>

@@ -3,33 +3,33 @@ import { createHash } from 'node:crypto';
 import { extractApiError, formatBytes, quotaReasonOf, sha256Hex } from './utils';
 
 describe('extractApiError', () => {
-  it('提取后端 message 字段', () => {
-    expect(extractApiError({ code: 'x', message: '空间不存在' })).toBe('空间不存在');
+  it('extracts backend message field', () => {
+    expect(extractApiError({ code: 'x', message: 'space not found' })).toBe('space not found');
   });
 
-  it('提取 FastAPI 422 校验错误', () => {
+  it('extracts FastAPI 422 validation error', () => {
     expect(extractApiError({ detail: [{ msg: 'field required', loc: [], type: 'missing' }] })).toBe(
       'field required',
     );
   });
 
-  it('兜底默认文案', () => {
-    expect(extractApiError(null, '加载失败')).toBe('加载失败');
-    expect(extractApiError(new Error('网络错误'))).toBe('网络错误');
+  it('falls back to default message', () => {
+    expect(extractApiError(null, 'load failed')).toBe('load failed');
+    expect(extractApiError(new Error('network error'))).toBe('network error');
   });
 });
 
 describe('quotaReasonOf', () => {
-  it('读取 details.quota_reason', () => {
-    expect(quotaReasonOf({ message: '配额超限', details: { quota_reason: 'space_file_count_exceeded' } })).toBe(
-      'space_file_count_exceeded',
-    );
-    expect(quotaReasonOf({ message: '配额超限' })).toBeNull();
+  it('reads details.quota_reason', () => {
+    expect(
+      quotaReasonOf({ message: 'quota exceeded', details: { quota_reason: 'space_file_count_exceeded' } }),
+    ).toBe('space_file_count_exceeded');
+    expect(quotaReasonOf({ message: 'quota exceeded' })).toBeNull();
   });
 });
 
 describe('formatBytes', () => {
-  it('按阶梯格式化', () => {
+  it('formats by magnitude ladder', () => {
     expect(formatBytes(512)).toBe('512 B');
     expect(formatBytes(2048)).toBe('2.0 KB');
     expect(formatBytes(5 * 1024 * 1024)).toBe('5.0 MB');
@@ -38,7 +38,7 @@ describe('formatBytes', () => {
 });
 
 describe('sha256Hex', () => {
-  it('与后端口径一致（sha256(bytes).hexdigest()）', { skip: typeof crypto?.subtle === 'undefined' }, async () => {
+  it('matches backend convention sha256(bytes).hexdigest()', { skip: typeof crypto?.subtle === 'undefined' }, async () => {
     const raw = 'hello loomvec';
     const expected = createHash('sha256').update(raw).digest('hex');
     await expect(sha256Hex(new Blob([raw]))).resolves.toBe(expected);

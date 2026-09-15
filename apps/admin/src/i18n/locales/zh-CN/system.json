@@ -1,0 +1,24 @@
+{
+  "title": "系统状态",
+  "componentsTitle": "组件健康详情",
+  "queuesTitle": "队列与心跳",
+  "backupTitle": "备份状态",
+  "platformTitle": "平台信息",
+  "noRecords": "暂无记录",
+  "deadLetterQueue": "死信队列",
+  "workerHeartbeat": "worker 心跳",
+  "noHeartbeat": "无心跳（worker 未运行）",
+  "apiVersion": "API 组件版本",
+  "unknown": "未知",
+  "storage": "存储用量",
+  "storageUsage": "{{size}}（{{count}} 文件）",
+  "generatedAt": "状态生成时间",
+  "status": {
+    "ok": "正常",
+    "error": "异常"
+  },
+  "col": {
+    "component": "组件",
+    "detail": "版本 / 详情 / 错误"
+  }
+}

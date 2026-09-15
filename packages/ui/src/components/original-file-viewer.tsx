@@ -1,8 +1,10 @@
 import { lazy, useEffect, useRef, useState } from 'react';
 import { FileQuestion } from 'lucide-react';
 import { useTheme } from 'next-themes';
+import { useTranslation } from 'react-i18next';
 
 import { cn } from 'cn';
+import { t } from '../i18n';
 import { Spinner } from './ui/spinner';
 import { Button } from './ui/button';
 
@@ -140,13 +142,13 @@ function DocxPane({ url }: { url: string }) {
           import('docx-preview'),
           fetch(url),
         ]);
-        if (!res.ok) throw new Error(`加载失败（HTTP ${res.status}）`);
+        if (!res.ok) throw new Error(t('originalViewer.loadFailedHttp', { status: res.status }));
         const blob = await res.blob();
         if (cancelled || !containerRef.current) return;
         containerRef.current.innerHTML = '';
         await renderAsync(blob, containerRef.current, undefined, { inWrapper: true });
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : '预览加载失败');
+        if (!cancelled) setError(e instanceof Error ? e.message : t('originalViewer.loadFailed'));
       }
     })();
     return () => {
@@ -174,7 +176,7 @@ function SheetPane({ url }: { url: string }) {
     void (async () => {
       try {
         const [XLSX, res] = await Promise.all([import('xlsx'), fetch(url)]);
-        if (!res.ok) throw new Error(`加载失败（HTTP ${res.status}）`);
+        if (!res.ok) throw new Error(t('originalViewer.loadFailedHttp', { status: res.status }));
         const workbook = XLSX.read(await res.arrayBuffer(), { type: 'array' });
         if (cancelled) return;
         const parsed = workbook.SheetNames.map((name) => {
@@ -186,7 +188,7 @@ function SheetPane({ url }: { url: string }) {
         });
         setSheets(parsed);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : '预览加载失败');
+        if (!cancelled) setError(e instanceof Error ? e.message : t('originalViewer.loadFailed'));
       }
     })();
     return () => {
@@ -228,14 +230,14 @@ function TextPane({ url }: { url: string }) {
     let cancelled = false;
     void fetch(url)
       .then((r) => {
-        if (!r.ok) throw new Error(`加载失败（HTTP ${r.status}）`);
+        if (!r.ok) throw new Error(t('originalViewer.loadFailedHttp', { status: r.status }));
         return r.text();
       })
-      .then((t) => {
-        if (!cancelled) setText(t);
+      .then((content) => {
+        if (!cancelled) setText(content);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : '预览加载失败');
+        if (!cancelled) setError(e instanceof Error ? e.message : t('originalViewer.loadFailed'));
       });
     return () => {
       cancelled = true;
@@ -251,13 +253,14 @@ function TextPane({ url }: { url: string }) {
 }
 
 function ViewerError({ message, url }: { message: string; url: string }) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
       <FileQuestion className="size-8" />
       <p>{message}</p>
       <Button variant="outline" size="sm" asChild>
         <a href={url} target="_blank" rel="noreferrer">
-          新窗口打开原始文件
+          {t('originalViewer.openInNewWindow')}
         </a>
       </Button>
     </div>
@@ -282,21 +285,22 @@ export function OriginalFileViewer({
   className?: string;
 }) {
   const kind = resolveViewerKind(mime_type, ext);
+  const { t } = useTranslation();
   const cls = cn('h-full w-full overflow-hidden rounded-md border bg-background', className);
   if (!url)
     return (
       <div className={cn(cls, 'grid place-items-center text-sm text-muted-foreground')}>
-        该资产没有原始文件（文本直摄内容见「解析结果」）。
+        {t('originalViewer.noOriginalFile')}
       </div>
     );
   if (kind === 'unsupported')
     return (
       <div className={cn(cls, 'flex flex-col items-center justify-center gap-2')}>
         <FileQuestion className="size-8 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">该格式暂不支持在线预览。</p>
+        <p className="text-sm text-muted-foreground">{t('originalViewer.unsupportedFormat')}</p>
         <Button variant="outline" size="sm" asChild>
           <a href={url} target="_blank" rel="noreferrer">
-            新窗口打开原始文件
+            {t('originalViewer.openInNewWindow')}
           </a>
         </Button>
       </div>
@@ -308,7 +312,7 @@ export function OriginalFileViewer({
       {kind === 'sheet' && <SheetPane url={url} />}
       {kind === 'image' && (
         <div className="grid h-full place-items-center overflow-auto p-2">
-          <img src={url} alt="原始图片" className="max-h-full max-w-full object-contain" />
+          <img src={url} alt={t('originalViewer.imageAlt')} className="max-h-full max-w-full object-contain" />
         </div>
       )}
       {kind === 'text' && <TextPane url={url} />}

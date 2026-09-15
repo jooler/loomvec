@@ -3,6 +3,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { Search } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
 import { Badge } from '@loomvec/ui/components/ui/badge';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -25,6 +26,7 @@ const PAGE_SIZE = 20;
 /** 空间治理列表：全量空间（含个人空间）+ 类型/封禁筛选（docs/04 §5.4）。 */
 export function SpaceListPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation('spaces');
   const [q, setQ] = useState('');
   const [draftQ, setDraftQ] = useState('');
   const [spaceType, setSpaceType] = useState<string | undefined>();
@@ -60,7 +62,7 @@ export function SpaceListPage() {
   const columns: ColumnDef<SpaceRow, unknown>[] = [
     {
       accessorKey: 'name',
-      header: '空间',
+      header: t('col.space'),
       cell: ({ row }) => (
         <button
           className="text-sm font-medium hover:underline"
@@ -75,58 +77,58 @@ export function SpaceListPage() {
     },
     {
       accessorKey: 'space_type',
-      header: '类型',
+      header: t('col.type'),
       cell: ({ row }) =>
         row.original.space_type === 'personal' ? (
-          <StatusBadge tone="blue">个人</StatusBadge>
+          <StatusBadge tone="blue">{t('type.personal')}</StatusBadge>
         ) : (
-          <Badge variant="secondary">共享</Badge>
+          <Badge variant="secondary">{t('type.shared')}</Badge>
         ),
     },
     {
       accessorKey: 'tenant_id',
-      header: '所属租户',
-      cell: ({ row }) => row.original.tenant_id ?? '—（平台级）',
+      header: t('col.tenant'),
+      cell: ({ row }) => row.original.tenant_id ?? t('platformLevel'),
     },
     { accessorKey: 'owner_name', header: 'Owner', cell: ({ row }) => row.original.owner_name ?? '-' },
-    { accessorKey: 'member_count', header: '成员数' },
-    { accessorKey: 'asset_count', header: '资产数' },
+    { accessorKey: 'member_count', header: t('col.memberCount') },
+    { accessorKey: 'asset_count', header: t('col.assetCount') },
     {
       accessorKey: 'storage_bytes',
-      header: '存储',
+      header: t('col.storage'),
       cell: ({ row }) => formatBytes(row.original.storage_bytes),
     },
     {
       accessorKey: 'review_required',
-      header: '先审后见',
+      header: t('col.reviewRequired'),
       cell: ({ row }) =>
         row.original.review_required ? (
-          <StatusBadge tone="amber">开启</StatusBadge>
+          <StatusBadge tone="amber">{t('toggle.on')}</StatusBadge>
         ) : (
-          <Badge variant="outline">关闭</Badge>
+          <Badge variant="outline">{t('toggle.off')}</Badge>
         ),
     },
     {
       accessorKey: 'banned',
-      header: '状态',
+      header: t('field.status'),
       cell: ({ row }) =>
         row.original.banned ? (
-          <StatusBadge tone="red">已封禁</StatusBadge>
+          <StatusBadge tone="red">{t('status.banned')}</StatusBadge>
         ) : (
-          <StatusBadge tone="green">正常</StatusBadge>
+          <StatusBadge tone="green">{t('status.normal')}</StatusBadge>
         ),
     },
     {
       accessorKey: 'created_at',
-      header: '创建时间',
+      header: t('field.createdAt'),
       cell: ({ row }) => formatDateTime(row.original.created_at),
     },
     {
       id: 'actions',
-      header: '操作',
+      header: t('field.actions'),
       cell: ({ row }) => (
         <Button variant="link" size="xs" className="px-0" onClick={() => navigate(`/spaces/${row.original.id}`)}>
-          详情
+          {t('viewDetail')}
         </Button>
       ),
     },
@@ -134,18 +136,18 @@ export function SpaceListPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="空间治理" />
+      <PageHeader title={t('title')} />
       <div className="flex flex-wrap items-center gap-2">
         <Input
           className="w-64"
-          placeholder="按名称/slug 搜索"
+          placeholder={t('searchPlaceholder')}
           value={draftQ}
           onChange={(e) => setDraftQ(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') applySearch();
           }}
         />
-        <Button variant="outline" size="icon" aria-label="搜索" onClick={applySearch}>
+        <Button variant="outline" size="icon" aria-label={t('action.search')} onClick={applySearch}>
           <Search />
         </Button>
         <Select
@@ -156,12 +158,12 @@ export function SpaceListPage() {
           }}
         >
           <SelectTrigger className="w-36">
-            <SelectValue placeholder="空间类型" />
+            <SelectValue placeholder={t('filter.typePlaceholder')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">全部</SelectItem>
-            <SelectItem value="shared">共享空间</SelectItem>
-            <SelectItem value="personal">个人空间</SelectItem>
+            <SelectItem value="all">{t('action.all')}</SelectItem>
+            <SelectItem value="shared">{t('type.sharedSpace')}</SelectItem>
+            <SelectItem value="personal">{t('type.personalSpace')}</SelectItem>
           </SelectContent>
         </Select>
         <Select
@@ -172,12 +174,12 @@ export function SpaceListPage() {
           }}
         >
           <SelectTrigger className="w-36">
-            <SelectValue placeholder="封禁状态" />
+            <SelectValue placeholder={t('filter.banPlaceholder')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">全部</SelectItem>
-            <SelectItem value="yes">已封禁</SelectItem>
-            <SelectItem value="no">正常</SelectItem>
+            <SelectItem value="all">{t('action.all')}</SelectItem>
+            <SelectItem value="yes">{t('status.banned')}</SelectItem>
+            <SelectItem value="no">{t('status.normal')}</SelectItem>
           </SelectContent>
         </Select>
       </div>

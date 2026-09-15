@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Waypoints } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
 import { api } from '@loomvec/sdk-ts';
+import { useTranslation } from 'react-i18next';
 import { useMySpaces, useSpaceCategories, useSpaceTags } from '@/hooks';
 import { extractApiError, formatClock } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -22,10 +23,14 @@ import { StatusBadge } from '@loomvec/ui/components/status-badge';
  * /search 与 /s/:spaceId/search 共用本组件。
  */
 
-const UNIT_TYPE_LABEL: Record<string, { tone: 'gray' | 'blue' | 'purple'; text: string }> = {
-  text: { tone: 'gray', text: '文本' },
-  table: { tone: 'blue', text: '表格' },
-  image: { tone: 'purple', text: '图片' },
+/** 语义单元类型 → 徽标 tone 与文案 key（复用 ui 命名空间 chunks.type*）。 */
+const UNIT_TYPE_META: Record<
+  string,
+  { tone: 'gray' | 'blue' | 'purple'; key: 'typeText' | 'typeTable' | 'typeImage' }
+> = {
+  text: { tone: 'gray', key: 'typeText' },
+  table: { tone: 'blue', key: 'typeTable' },
+  image: { tone: 'purple', key: 'typeImage' },
 };
 
 /** 分类筛选的“不过滤”哨兵值（Radix Select 不允许空串 value）。 */
@@ -63,6 +68,7 @@ interface EvidencePath {
 
 /** P3-WEB-04 图谱证据链（实体→关系→实体路径）可展开面板。 */
 function EvidencePanel({ evidence }: { evidence: EvidencePath[] }) {
+  const { t } = useTranslation('search');
   const [open, setOpen] = useState(false);
   if (evidence.length === 0) return null;
   return (
@@ -74,7 +80,7 @@ function EvidencePanel({ evidence }: { evidence: EvidencePath[] }) {
       >
         {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         <Waypoints className="size-3" />
-        图谱证据链（{evidence.length} 条路径）
+        {t('evidenceCount', { count: evidence.length })}
       </button>
       {open && (
         <ul className="mt-1 space-y-1 rounded-md bg-muted/60 p-2">
@@ -85,7 +91,9 @@ function EvidencePanel({ evidence }: { evidence: EvidencePath[] }) {
                 {ev.relation.type}
               </span>
               <span className="font-medium">{ev.tail.name}</span>
-              {ev.hops > 1 && <span className="ml-1 text-muted-foreground">（{ev.hops} 跳）</span>}
+              {ev.hops > 1 && (
+                <span className="ml-1 text-muted-foreground">{t('hops', { count: ev.hops })}</span>
+              )}
             </li>
           ))}
         </ul>
@@ -97,6 +105,7 @@ function EvidencePanel({ evidence }: { evidence: EvidencePath[] }) {
 export function SearchPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
+  const { t } = useTranslation('search');
   const [query, setQuery] = useState('');
   const [rerank, setRerank] = useState<boolean | undefined>(undefined);
   const [imageSearch, setImageSearch] = useState<boolean | undefined>(undefined);
@@ -130,7 +139,7 @@ export function SearchPage() {
           category_id: categoryId || undefined,
         },
       });
-      if (error) throw new Error(extractApiError(error, '检索失败'));
+      if (error) throw new Error(extractApiError(error, t('searchFailed')));
       return data;
     },
   });
@@ -155,10 +164,10 @@ export function SearchPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Select value={spaceId ?? ALL_SPACES} onValueChange={switchSpace}>
               <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="选择空间" />
+                <SelectValue placeholder={t('spacePlaceholder')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_SPACES}>全部空间（聚合）</SelectItem>
+                <SelectItem value={ALL_SPACES}>{t('allSpaces')}</SelectItem>
                 {(spaces.data ?? []).map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}
@@ -168,22 +177,22 @@ export function SearchPage() {
             </Select>
             <MultiSelect
               className="w-[200px]"
-              placeholder="类型（text/table/image）"
+              placeholder={t('unitTypePlaceholder')}
               value={unitTypes}
               options={[
-                { value: 'text', label: '文本' },
-                { value: 'table', label: '表格' },
-                { value: 'image', label: '图片' },
+                { value: 'text', label: t('chunks.typeText') },
+                { value: 'table', label: t('chunks.typeTable') },
+                { value: 'image', label: t('chunks.typeImage') },
               ]}
               onChange={setUnitTypes}
             />
             {spaceId && (
               <MultiSelect
                 className="min-w-40"
-                placeholder="标签"
+                placeholder={t('tagPlaceholder')}
                 loading={tags.isLoading}
                 value={tagIds}
-                options={(tags.data ?? []).map((t) => ({ value: t.id, label: t.name }))}
+                options={(tags.data ?? []).map((tag) => ({ value: tag.id, label: tag.name }))}
                 onChange={setTagIds}
               />
             )}
@@ -193,10 +202,10 @@ export function SearchPage() {
                 onValueChange={(v) => setCategoryId(v === ALL ? undefined : v)}
               >
                 <SelectTrigger className="w-36">
-                  <SelectValue placeholder="分类" />
+                  <SelectValue placeholder={t('categoryPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL}>全部</SelectItem>
+                  <SelectItem value={ALL}>{t('action.all')}</SelectItem>
                   {(categories.data ?? []).map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name}
@@ -206,14 +215,14 @@ export function SearchPage() {
               </Select>
             )}
             <span className="flex items-center gap-2 text-sm">
-              以文搜图
+              {t('imageSearchLabel')}
               <Switch
                 checked={imageSearch === true}
                 onCheckedChange={(v) => setImageSearch(v || undefined)}
               />
             </span>
             <span className="flex items-center gap-2 text-sm">
-              图谱召回
+              {t('graphRecallLabel')}
               <Switch checked={useGraph} onCheckedChange={setUseGraph} />
             </span>
           </div>
@@ -224,8 +233,10 @@ export function SearchPage() {
                 className="h-10 pl-9"
                 placeholder={
                   spaceId
-                    ? `在「${spaceNameById.get(spaceId) ?? '该空间'}」内语义检索`
-                    : '语义检索：命中语义单元并回溯到来源页码'
+                    ? t('inSpacePlaceholder', {
+                        name: spaceNameById.get(spaceId) ?? t('thisSpace'),
+                      })
+                    : t('globalPlaceholder')
                 }
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -235,17 +246,17 @@ export function SearchPage() {
               />
             </div>
             <Button size="lg" disabled={search.isPending} onClick={runSearch}>
-              检索
+              {t('searchButton')}
             </Button>
           </div>
           <p className="text-sm text-muted-foreground">
-            dense + BM25 混合召回，RRF 融合，cross-encoder 精排。
+            {t('recallDesc')}
             <button
               type="button"
               className="ml-3 text-primary hover:underline"
               onClick={() => setRerank(rerank === false ? undefined : false)}
             >
-              {rerank === false ? '已关闭精排（A/B 对比）' : '关闭精排对比'}
+              {rerank === false ? t('rerankOff') : t('rerankToggle')}
             </button>
           </p>
         </CardContent>
@@ -254,12 +265,14 @@ export function SearchPage() {
       <Card className="py-4">
         <CardHeader className="items-center border-b pb-3">
           <CardTitle className="text-base">
-            {spaceId ? `空间内检索 · ${spaceNameById.get(spaceId) ?? ''}` : '全部空间聚合检索'}
+            {spaceId
+              ? t('spaceScopeTitle', { name: spaceNameById.get(spaceId) ?? '' })
+              : t('allScopeTitle')}
           </CardTitle>
           {search.data && (
             <CardAction>
               <Button variant="outline" size="sm" onClick={() => search.reset()}>
-                <RefreshCw /> 清空结果
+                <RefreshCw /> {t('clearResults')}
               </Button>
             </CardAction>
           )}
@@ -272,7 +285,7 @@ export function SearchPage() {
           ) : search.isError ? (
             <p className="text-sm text-destructive">{(search.error as Error).message}</p>
           ) : search.data && hits.length === 0 ? (
-            <EmptyState title="没有命中的语义单元" />
+            <EmptyState title={t('emptyHits')} />
           ) : (
             <div className="divide-y">
               {hits.map((hit, i) => {
@@ -283,7 +296,7 @@ export function SearchPage() {
                 if (page !== undefined) params.set('page', String(page + 1));
                 if (tStart !== undefined) params.set('t', String(tStart));
                 const qs = params.toString();
-                const unitMeta = UNIT_TYPE_LABEL[hit.unit_type];
+                const unitMeta = UNIT_TYPE_META[hit.unit_type];
                 return (
                   <div
                     key={`${hit.asset_id}-${hit.unit_id}-${i}`}
@@ -291,13 +304,17 @@ export function SearchPage() {
                     onClick={() => navigate(`/a/${hit.asset_id}${qs ? `?${qs}` : ''}`)}
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium">{hit.title || '(无标题片段)'}</span>
-                      {unitMeta && <StatusBadge tone={unitMeta.tone}>{unitMeta.text}</StatusBadge>}
+                      <span className="text-sm font-medium">{hit.title || t('untitledHit')}</span>
+                      {unitMeta && (
+                        <StatusBadge tone={unitMeta.tone}>{t(`chunks.${unitMeta.key}`)}</StatusBadge>
+                      )}
                       {!spaceId && hit.space_name && (
                         <StatusBadge tone="blue">{hit.space_name}</StatusBadge>
                       )}
                       <StatusBadge>score {hit.score.toFixed(4)}</StatusBadge>
-                      {hit.scores?.graph !== undefined && <StatusBadge tone="green">图谱路径</StatusBadge>}
+                      {hit.scores?.graph !== undefined && (
+                        <StatusBadge tone="green">{t('graphPathBadge')}</StatusBadge>
+                      )}
                     </div>
                     <div
                       className="mt-1.5 max-h-20 overflow-hidden text-sm"
@@ -306,11 +323,15 @@ export function SearchPage() {
                       }}
                     />
                     <p className="mt-1.5 text-sm text-muted-foreground">
-                      来源：{hit.asset_name}
-                      {page !== undefined && ` · 第 ${page + 1} 页`}
-                      {tStart !== undefined && ` · ${formatClock(tStart)} 起`}
+                      {t('sourceLabel')}
+                      {hit.asset_name}
+                      {page !== undefined && ` · ${t('chunks.pageLocator', { pages: page + 1 })}`}
+                      {tStart !== undefined && ` · ${t('fromTime', { time: formatClock(tStart) })}`}
                       {locator?.start_line !== undefined &&
-                        ` · 行 ${locator.start_line}-${locator.end_line}`}
+                        ` · ${t('chunks.lineLocator', {
+                          start: locator.start_line,
+                          end: locator.end_line ?? '',
+                        })}`}
                     </p>
                     <EvidencePanel evidence={(hit.graph_evidence ?? []) as unknown as EvidencePath[]} />
                   </div>
