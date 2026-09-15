@@ -54,6 +54,25 @@ class GraphStatus(enum.StrEnum):
     SKIPPED = "skipped"
 
 
+class AssetFolder(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
+    """资产文件夹：空间内树形目录（parent_id 自引用；root = parent_id 为空）。
+
+    Finder 式资产管理（迁移 0009）：结构与资产多对多解耦——asset.folder_id
+    单选挂靠；删除文件夹由服务层级联软删子文件夹与资产（FK RESTRICT 兜底）。
+    """
+
+    __tablename__ = "asset_folder"
+
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("space.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("asset_folder.id", ondelete="RESTRICT"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+
 class Asset(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
     """资产：一个用户可见的文件/文本条目；内容演进走 asset_version。"""
 
@@ -66,6 +85,13 @@ class Asset(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
     mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
     ext: Mapped[str] = mapped_column(String(16), nullable=False, default="")
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # 所在文件夹（空 = 空间根目录）；移动仅改此列，删除文件夹时级联软删
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("asset_folder.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     # 原始对象在 raw bucket 的 key（文本摄取时内容直接入库，此列为空）
     storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)  # sha256
@@ -239,6 +265,7 @@ class UnitType(enum.StrEnum):
 class ChunkMethod(enum.StrEnum):
     LLM_MARKERS = "llm_markers"
     STRUCTURAL_FALLBACK = "structural_fallback"
+    MANUAL = "manual"  # 前端 chunk 管理手动新增/人工补片（迁移 0008）
 
 
 class SemanticUnit(UuidPkMixin, TenantMixin, TimestampMixin, Base):

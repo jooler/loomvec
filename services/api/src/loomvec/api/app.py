@@ -24,16 +24,20 @@ from loomvec.api.routes.admin import admin_api_router
 from loomvec.api.routes.api_keys import router as api_keys_router
 from loomvec.api.routes.assets import router as assets_router
 from loomvec.api.routes.auth_oidc import router as oidc_router
+from loomvec.api.routes.folders import router as folders_router
 from loomvec.api.routes.health import router as health_router
 from loomvec.api.routes.jobs import router as jobs_router
 from loomvec.api.routes.me import router as me_router
 from loomvec.api.routes.members import router as members_router
 from loomvec.api.routes.notifications import router as notifications_router
 from loomvec.api.routes.oauth import router as oauth_router
+from loomvec.api.routes.ops import ops_api_router
 from loomvec.api.routes.playback import router as playback_router
+from loomvec.api.routes.public_spaces import router as public_spaces_router
 from loomvec.api.routes.review import router as review_router
 from loomvec.api.routes.search import router as search_router
 from loomvec.api.routes.spaces import router as spaces_router
+from loomvec.api.routes.units import router as units_router
 from loomvec.api.routes.uploads import router as uploads_router
 from loomvec.core.ai import AiGateway
 from loomvec.core.config import Env, Settings, get_settings
@@ -112,10 +116,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(members_router)
     app.include_router(uploads_router)
     app.include_router(assets_router)
+    app.include_router(folders_router)  # Finder 文件夹域（目录树/移动/复制/级联删除）
+    app.include_router(units_router)  # chunk 管理（查看/新增/编辑/批删，即时向量化）
     app.include_router(jobs_router)
     app.include_router(review_router)
     app.include_router(search_router)
     app.include_router(chat_routes.router)  # P3-API-01 问答（SSE）
+    app.include_router(public_spaces_router)  # P5 公共空间链接（用户端开关）
+    app.include_router(ops_api_router)  # P5 运营 API 域（公共空间/用户分组）
     app.include_router(graph_routes.router)  # P3-API-03 图谱管理
     app.include_router(playback_router)  # P3-API-04 播放（懒转码/关键帧/字幕）
     app.include_router(notifications_router)

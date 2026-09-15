@@ -871,6 +871,8 @@ export interface paths {
         /**
          * List Assets
          * @description 资产列表：指定空间（成员校验）或聚合我的全部空间（viewer 可见性过滤）。
+         *
+         *     Finder 目录浏览经 folder_id 过滤（根目录用 'root' 哨兵）。
          */
         get: operations["list_assets_api_v1_assets_get"];
         put?: never;
@@ -950,6 +952,26 @@ export interface paths {
         patch: operations["patch_asset_api_v1_assets__asset_id__patch"];
         trace?: never;
     };
+    "/api/v1/assets/{asset_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy Asset
+         * @description 复制资产：默认同空间同文件夹；可指定目标空间（editor+）与目标文件夹。
+         */
+        post: operations["copy_asset_api_v1_assets__asset_id__copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assets/{asset_id}/jobs": {
         parameters: {
             query?: never;
@@ -965,6 +987,26 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assets/{asset_id}/location": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Move Asset
+         * @description 移动资产（同空间内）：folder_id 指定目标文件夹；unset_folder=True 移到根目录。
+         */
+        patch: operations["move_asset_api_v1_assets__asset_id__location_patch"];
         trace?: never;
     };
     "/api/v1/assets/{asset_id}/playback": {
@@ -994,6 +1036,9 @@ export interface paths {
         /**
          * Preview Asset
          * @description 预览与定位：PDF 原文 / Markdown 产物 / 内联文本 / 图片原图。
+         *
+         *     original_url 恒为原始对象入口（解析类资产可同时呈现原文与 MinerU 结果；
+         *     前端原始文件查看器按 ext 分派 embedpdf / office 预览 / 文本）。
          */
         get: operations["preview_asset_api_v1_assets__asset_id__preview_get"];
         put?: never;
@@ -1065,6 +1110,67 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assets/{asset_id}/units": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Units */
+        get: operations["list_units_api_v1_assets__asset_id__units_get"];
+        put?: never;
+        /**
+         * Create Unit
+         * @description 手动补片：追加 chunk 并即时向量化入索引。
+         */
+        post: operations["create_unit_api_v1_assets__asset_id__units_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assets/{asset_id}/units/bulk-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk Delete Units
+         * @description 批删 chunk：PG 行 + 向量缓存条目 + Milvus 向量即时清理。
+         */
+        post: operations["bulk_delete_units_api_v1_assets__asset_id__units_bulk_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assets/{asset_id}/units/{unit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Unit
+         * @description 编辑 chunk：标题/内容变更即重新向量化。
+         */
+        patch: operations["update_unit_api_v1_assets__asset_id__units__unit_id__patch"];
         trace?: never;
     };
     "/api/v1/auth/dev/token": {
@@ -1204,6 +1310,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/folders/{folder_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Folder
+         * @description 删除文件夹：级联软删后代文件夹与其中资产（向量/图谱/配额联动清理）。
+         */
+        delete: operations["delete_folder_api_v1_folders__folder_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Folder */
+        patch: operations["rename_folder_api_v1_folders__folder_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/folders/{folder_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy Folder
+         * @description 递归复制文件夹树（含资产）：目标父下同名文件夹并入（合并语义）。
+         */
+        post: operations["copy_folder_api_v1_folders__folder_id__copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/folders/{folder_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Folder
+         * @description 移动文件夹（同空间内）：parent_id 空 + unset_parent=True 移到根目录。
+         */
+        post: operations["move_folder_api_v1_folders__folder_id__move_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -1316,6 +1483,237 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ops/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Groups */
+        get: operations["list_groups_api_v1_ops_groups_get"];
+        put?: never;
+        /** Create Group */
+        post: operations["create_group_api_v1_ops_groups_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ops/groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Group
+         * @description 删除分组（软删）：显式清除可见性勾选行（软删不触发 FK 级联）；
+         *     用户链接行保留但即时失效（授权判定过滤已删分组）。
+         */
+        delete: operations["delete_group_api_v1_ops_groups__group_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Group */
+        patch: operations["update_group_api_v1_ops_groups__group_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/ops/groups/{group_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Group Members */
+        get: operations["list_group_members_api_v1_ops_groups__group_id__members_get"];
+        put?: never;
+        /**
+         * Add Group Member
+         * @description 按用户名加入分组（与空间邀请同交互形态）；重复加入 409。
+         */
+        post: operations["add_group_member_api_v1_ops_groups__group_id__members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ops/groups/{group_id}/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Group Member */
+        delete: operations["remove_group_member_api_v1_ops_groups__group_id__members__user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ops/spaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Public Spaces
+         * @description 公共空间列表（运营端左侧栏；仅 space_type=public）。
+         */
+        get: operations["list_public_spaces_api_v1_ops_spaces_get"];
+        put?: never;
+        /**
+         * Create Public Space
+         * @description 创建公共空间：创建者（运营者）成为 owner，类型固定为 public。
+         */
+        post: operations["create_public_space_api_v1_ops_spaces_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ops/spaces/{space_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Public Space Detail */
+        get: operations["get_public_space_detail_api_v1_ops_spaces__space_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Public Space
+         * @description 删除公共空间：级联清理 PG + Milvus 向量 + 对象存储（同用户域 owner 删除）。
+         */
+        delete: operations["delete_public_space_api_v1_ops_spaces__space_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Public Space
+         * @description 公共空间设置（运营域）：名称/描述/审核开关/模型预设/空间级配额。
+         */
+        patch: operations["update_public_space_api_v1_ops_spaces__space_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/ops/spaces/{space_id}/groups/{group_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Group Members For Space
+         * @description 指定分组内的用户列表（只读，成员管理入口在 /ops/groups）。
+         */
+        get: operations["list_group_members_for_space_api_v1_ops_spaces__space_id__groups__group_id__members_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ops/spaces/{space_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Public Space Usage */
+        get: operations["public_space_usage_api_v1_ops_spaces__space_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ops/spaces/{space_id}/visibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Space Visibility
+         * @description 全部分组 + 当前空间的勾选状态（可见性页签数据源）。
+         */
+        get: operations["get_space_visibility_api_v1_ops_spaces__space_id__visibility_get"];
+        /**
+         * Set Space Visibility
+         * @description 全量替换可见分组集合（勾选提交）；显式审计 before/after。
+         */
+        put: operations["set_space_visibility_api_v1_ops_spaces__space_id__visibility_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public-spaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Public Spaces
+         * @description 当前用户经分组可见的公共空间（含链接状态；不可进入，仅可开关）。
+         */
+        get: operations["list_public_spaces_api_v1_public_spaces_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public-spaces/{space_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Space Link
+         * @description 链接/断开公共空间（幂等开关）。
+         *
+         *     资格校验与列表同口径：空间存在且为有效公共空间 × 用户分组被勾选；
+         *     分组被移出后再开启 → 403（既有链接行的检索有效性由 authz 即时求交保证）。
+         */
+        put: operations["set_space_link_api_v1_public_spaces__space_id__link_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -1393,6 +1791,27 @@ export interface paths {
         get: operations["list_categories_api_v1_spaces__space_id__categories_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/{space_id}/folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Folders
+         * @description 空间内全部活文件夹（扁平列表，前端组树/算面包屑）。
+         */
+        get: operations["list_folders_api_v1_spaces__space_id__folders_get"];
+        put?: never;
+        /** Create Folder */
+        post: operations["create_folder_api_v1_spaces__space_id__folders_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1805,12 +2224,27 @@ export interface components {
             /** Scopes */
             scopes: string[];
         };
+        /**
+         * AssetCopyRequest
+         * @description 复制资产：同空间内复制到目标文件夹；跨空间须为目标空间成员（editor+）。
+         */
+        AssetCopyRequest: {
+            /** Target Folder Id */
+            target_folder_id?: string | null;
+            /** Target Space Id */
+            target_space_id?: string | null;
+        };
         /** AssetCreateRequest */
         AssetCreateRequest: {
             /** Content Type */
             content_type?: string | null;
             /** Filename */
             filename: string;
+            /**
+             * Folder Id
+             * @description 目标文件夹（空 = 空间根目录）
+             */
+            folder_id?: string | null;
             /**
              * Key
              * @description POST /uploads 返回的 key
@@ -1845,6 +2279,8 @@ export interface components {
             created_by?: string | null;
             /** Ext */
             ext: string;
+            /** Folder Id */
+            folder_id?: string | null;
             /**
              * Id
              * Format: uuid
@@ -1905,6 +2341,20 @@ export interface components {
             /** Next Cursor */
             next_cursor?: string | null;
         };
+        /**
+         * AssetMoveRequest
+         * @description 移动资产（同空间内）：folder_id 为空 = 移到根目录。
+         */
+        AssetMoveRequest: {
+            /** Folder Id */
+            folder_id?: string | null;
+            /**
+             * Unset Folder
+             * @description 移到空间根目录
+             * @default false
+             */
+            unset_folder: boolean;
+        };
         /** AssetOut */
         AssetOut: {
             /** Checksum */
@@ -1918,6 +2368,8 @@ export interface components {
             created_by?: string | null;
             /** Ext */
             ext: string;
+            /** Folder Id */
+            folder_id?: string | null;
             /**
              * Id
              * Format: uuid
@@ -1948,10 +2400,14 @@ export interface components {
         /**
          * AssetPatchRequest
          * @description P2-API-03 资产编辑：名称 / 标签 / 分类 / 元数据（按空间 schema 校验）。
+         *
+         *     Finder 文件管理：folder_id / unset_folder 移动资产（目标文件夹须同空间）。
          */
         AssetPatchRequest: {
             /** Category Id */
             category_id?: string | null;
+            /** Folder Id */
+            folder_id?: string | null;
             /** Metadata */
             metadata?: {
                 [key: string]: unknown;
@@ -1968,11 +2424,22 @@ export interface components {
              * @default false
              */
             unset_category: boolean;
+            /**
+             * Unset Folder
+             * @description 移动回空间根目录
+             * @default false
+             */
+            unset_folder: boolean;
         };
         /** AssetTextRequest */
         AssetTextRequest: {
             /** Content */
             content: string;
+            /**
+             * Folder Id
+             * @description 目标文件夹（空 = 空间根目录）
+             */
+            folder_id?: string | null;
             /** Name */
             name: string;
             /** Space Id */
@@ -2116,6 +2583,158 @@ export interface components {
             items: components["schemas"]["EntityOut"][];
             /** Total */
             total: number;
+        };
+        /**
+         * FolderCopyRequest
+         * @description 复制文件夹（递归，含资产）：目标父文件夹（同空间；空 = 根目录）。
+         */
+        FolderCopyRequest: {
+            /** Parent Id */
+            parent_id?: string | null;
+        };
+        /** FolderCreateRequest */
+        FolderCreateRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Parent Id
+             * @description 父文件夹（空 = 根目录）
+             */
+            parent_id?: string | null;
+        };
+        /**
+         * FolderMoveRequest
+         * @description 移动文件夹（同空间内）：parent_id 为空 = 移到根目录。
+         */
+        FolderMoveRequest: {
+            /** Parent Id */
+            parent_id?: string | null;
+            /**
+             * Unset Parent
+             * @description 移到空间根目录
+             * @default false
+             */
+            unset_parent: boolean;
+        };
+        /**
+         * FolderOut
+         * @description 文件夹（Finder 目录树节点）。
+         */
+        FolderOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Parent Id */
+            parent_id?: string | null;
+            /**
+             * Space Id
+             * Format: uuid
+             */
+            space_id: string;
+        };
+        /** FolderRenameRequest */
+        FolderRenameRequest: {
+            /** Name */
+            name: string;
+        };
+        /** GroupCreateRequest */
+        GroupCreateRequest: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name: string;
+        };
+        /** GroupListOut */
+        GroupListOut: {
+            /** Items */
+            items: components["schemas"]["GroupOut"][];
+        };
+        /** GroupMemberAddRequest */
+        GroupMemberAddRequest: {
+            /** Username */
+            username: string;
+        };
+        /** GroupMemberListOut */
+        GroupMemberListOut: {
+            /** Items */
+            items: components["schemas"]["GroupMemberOut"][];
+        };
+        /** GroupMemberOut */
+        GroupMemberOut: {
+            /** Display Name */
+            display_name: string | null;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Username */
+            username: string | null;
+        };
+        /** GroupOut */
+        GroupOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Member Count */
+            member_count: number;
+            /** Name */
+            name: string;
+            /** Space Count */
+            space_count: number;
+        };
+        /** GroupUpdateRequest */
+        GroupUpdateRequest: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /** GroupVisibilityItem */
+        GroupVisibilityItem: {
+            /** Description */
+            description: string | null;
+            /**
+             * Group Id
+             * Format: uuid
+             */
+            group_id: string;
+            /** Member Count */
+            member_count: number;
+            /** Name */
+            name: string;
+            /** Visible */
+            visible: boolean;
+        };
+        /** GroupVisibilityListOut */
+        GroupVisibilityListOut: {
+            /** Items */
+            items: components["schemas"]["GroupVisibilityItem"][];
+        };
+        /** GroupVisibilityRequest */
+        GroupVisibilityRequest: {
+            /** Group Ids */
+            group_ids?: string[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2359,6 +2978,98 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** OpsSpaceCreateRequest */
+        OpsSpaceCreateRequest: {
+            /**
+             * Chunk Preset
+             * @description 白名单：['balanced', 'fine', 'long']
+             */
+            chunk_preset?: string | null;
+            /** Description */
+            description?: string | null;
+            /**
+             * Embedding Model
+             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'mock']
+             */
+            embedding_model?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Review Required
+             * @default false
+             */
+            review_required: boolean;
+        };
+        /** OpsSpaceListOut */
+        OpsSpaceListOut: {
+            /** Items */
+            items: components["schemas"]["OpsSpaceOut"][];
+        };
+        /** OpsSpaceOut */
+        OpsSpaceOut: {
+            /** Chunk Preset */
+            chunk_preset: string | null;
+            /** Created At */
+            created_at: unknown;
+            /** Description */
+            description: string | null;
+            /** Embedding Model */
+            embedding_model: string | null;
+            /** File Count */
+            file_count: number;
+            /** Group Count */
+            group_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Member Count */
+            member_count: number;
+            /** Name */
+            name: string;
+            /** Owner Id */
+            owner_id: string | null;
+            /** Review Required */
+            review_required: boolean;
+            /** Slug */
+            slug: string;
+            /** Storage Bytes */
+            storage_bytes: number;
+        };
+        /** OpsSpaceUpdateRequest */
+        OpsSpaceUpdateRequest: {
+            /** Chunk Preset */
+            chunk_preset?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Embedding Model */
+            embedding_model?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Quota File Count */
+            quota_file_count?: number | null;
+            /** Quota Storage Bytes */
+            quota_storage_bytes?: number | null;
+            /** Review Required */
+            review_required?: boolean | null;
+        };
+        /** OpsSpaceUsageOut */
+        OpsSpaceUsageOut: {
+            /** File Count */
+            file_count: number;
+            /** Quota File Count */
+            quota_file_count: number;
+            /** Quota Storage Bytes */
+            quota_storage_bytes: number;
+            /**
+             * Space Id
+             * Format: uuid
+             */
+            space_id: string;
+            /** Storage Bytes */
+            storage_bytes: number;
+        };
         /** OwnerTransferRequest */
         OwnerTransferRequest: {
             /**
@@ -2408,10 +3119,37 @@ export interface components {
              * @enum {string}
              */
             mode: "pdf" | "markdown" | "image";
+            /** Original Url */
+            original_url?: string | null;
             /** Page Count */
             page_count?: number | null;
+            /** Parsed Url */
+            parsed_url?: string | null;
             /** Url */
             url?: string | null;
+        };
+        /** PublicSpaceListOut */
+        PublicSpaceListOut: {
+            /** Items */
+            items: components["schemas"]["PublicSpaceOut"][];
+        };
+        /** PublicSpaceOut */
+        PublicSpaceOut: {
+            /** Created At */
+            created_at: unknown;
+            /** Description */
+            description: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Linked */
+            linked: boolean;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
         };
         /** ReasonRequest */
         ReasonRequest: {
@@ -2635,6 +3373,21 @@ export interface components {
             /** @default shared */
             space_type: components["schemas"]["SpaceType"];
         };
+        /** SpaceLinkOut */
+        SpaceLinkOut: {
+            /** Linked */
+            linked: boolean;
+            /**
+             * Space Id
+             * Format: uuid
+             */
+            space_id: string;
+        };
+        /** SpaceLinkRequest */
+        SpaceLinkRequest: {
+            /** Linked */
+            linked: boolean;
+        };
         /** SpaceListOut */
         SpaceListOut: {
             /** Items */
@@ -2696,7 +3449,7 @@ export interface components {
          * SpaceType
          * @enum {string}
          */
-        SpaceType: "shared" | "personal";
+        SpaceType: "shared" | "personal" | "public";
         /** SpaceUpdateRequest */
         SpaceUpdateRequest: {
             /** Chunk Preset */
@@ -2906,12 +3659,101 @@ export interface components {
              */
             token_type: string;
         };
+        /** UnitBulkDeleteRequest */
+        UnitBulkDeleteRequest: {
+            /** Unit Ids */
+            unit_ids: string[];
+        };
+        /**
+         * UnitCreateRequest
+         * @description 新增 chunk（RAGFlow 式手动补片）：创建后同步向量化并写入索引。
+         */
+        UnitCreateRequest: {
+            /** Content */
+            content: string;
+            /** Keywords */
+            keywords?: string[] | null;
+            /** Title */
+            title?: string | null;
+            /**
+             * Unit Type
+             * @description text / table
+             * @default text
+             */
+            unit_type: string;
+        };
+        /** UnitListOut */
+        UnitListOut: {
+            /** Items */
+            items: components["schemas"]["UnitOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * UnitOut
+         * @description 语义单元（chunk）只读字段 + 管理状态（embed_model_version 判断是否已向量化）。
+         */
+        UnitOut: {
+            /** Char Count */
+            char_count: number;
+            /** Chunk Method */
+            chunk_method: string;
+            /** Content */
+            content: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Embed Model Version */
+            embed_model_version?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Keywords
+             * @default []
+             */
+            keywords: unknown[];
+            /**
+             * Locator
+             * @default {}
+             */
+            locator: {
+                [key: string]: unknown;
+            };
+            /** Order Index */
+            order_index: number;
+            /** Title */
+            title?: string | null;
+            /** Unit Type */
+            unit_type: string;
+        };
+        /**
+         * UnitPatchRequest
+         * @description 编辑 chunk：内容变更后重新向量化（原模型版本清零 → 同步重嵌）。
+         */
+        UnitPatchRequest: {
+            /** Content */
+            content?: string | null;
+            /** Keywords */
+            keywords?: string[] | null;
+            /** Title */
+            title?: string | null;
+        };
         /** UploadRequest */
         UploadRequest: {
             /** Content Type */
             content_type?: string | null;
             /** Filename */
             filename: string;
+            /**
+             * Folder Id
+             * @description 目标文件夹（空 = 空间根目录）
+             */
+            folder_id?: string | null;
             /** Size */
             size: number;
             /** Space Id */
@@ -5100,6 +5942,8 @@ export interface operations {
                 category_id?: string | null;
                 review_status?: string | null;
                 space_id?: string | null;
+                /** @description 目录浏览过滤：'root' 仅根目录；uuid 仅该文件夹内；缺省不过滤 */
+                folder_id?: string | null;
             };
             header?: {
                 "X-API-Key"?: string | null;
@@ -5334,6 +6178,43 @@ export interface operations {
             };
         };
     };
+    copy_asset_api_v1_assets__asset_id__copy_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetCopyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_jobs_api_v1_assets__asset_id__jobs_get: {
         parameters: {
             query?: never;
@@ -5354,6 +6235,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_asset_api_v1_assets__asset_id__location_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetMoveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetOut"];
                 };
             };
             /** @description Validation Error */
@@ -5527,6 +6445,156 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_units_api_v1_assets__asset_id__units_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                /** @description text / table / image */
+                unit_type?: string | null;
+                /** @description 内容/标题关键词 */
+                q?: string | null;
+            };
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnitListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_unit_api_v1_assets__asset_id__units_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnitCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnitOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bulk_delete_units_api_v1_assets__asset_id__units_bulk_delete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnitBulkDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_unit_api_v1_assets__asset_id__units__unit_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                asset_id: string;
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnitPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnitOut"];
                 };
             };
             /** @description Validation Error */
@@ -5883,6 +6951,148 @@ export interface operations {
             };
         };
     };
+    delete_folder_api_v1_folders__folder_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_folder_api_v1_folders__folder_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copy_folder_api_v1_folders__folder_id__copy_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderCopyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_folder_api_v1_folders__folder_id__move_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderMoveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     me_api_v1_me_get: {
         parameters: {
             query?: never;
@@ -6103,6 +7313,616 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TokenOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_groups_api_v1_ops_groups_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_group_api_v1_ops_groups_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_group_api_v1_ops_groups__group_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_group_api_v1_ops_groups__group_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_group_members_api_v1_ops_groups__group_id__members_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupMemberListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_group_member_api_v1_ops_groups__group_id__members_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupMemberAddRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupMemberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_group_member_api_v1_ops_groups__group_id__members__user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                user_id: string;
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_public_spaces_api_v1_ops_spaces_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsSpaceListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_public_space_api_v1_ops_spaces_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpsSpaceCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsSpaceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_public_space_detail_api_v1_ops_spaces__space_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsSpaceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_public_space_api_v1_ops_spaces__space_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_public_space_api_v1_ops_spaces__space_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpsSpaceUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsSpaceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_group_members_for_space_api_v1_ops_spaces__space_id__groups__group_id__members_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                group_id: string;
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    public_space_usage_api_v1_ops_spaces__space_id__usage_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsSpaceUsageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_space_visibility_api_v1_ops_spaces__space_id__visibility_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupVisibilityListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_space_visibility_api_v1_ops_spaces__space_id__visibility_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupVisibilityRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupVisibilityListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_public_spaces_api_v1_public_spaces_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicSpaceListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_space_link_api_v1_public_spaces__space_id__link_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpaceLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceLinkOut"];
                 };
             };
             /** @description Validation Error */
@@ -6338,6 +8158,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CategoryOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_folders_api_v1_spaces__space_id__folders_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_folder_api_v1_spaces__space_id__folders_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"];
                 };
             };
             /** @description Validation Error */

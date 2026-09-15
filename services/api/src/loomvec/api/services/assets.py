@@ -138,8 +138,11 @@ async def register_file_asset(
     size: int,
     content_type: str | None,
     space: Space,
+    folder_id: uuid.UUID | None = None,
 ) -> Asset:
     """登记已直传的文件资产：对象存在校验 → 两级配额闸门 → 计量 + v1。"""
+    from loomvec.api.services.folders import validate_folder_in_space
+
     policy = await upload_policy(session, settings)
     ext = validate_upload(policy, filename, size)
     info = await storage.head_object(settings.storage.bucket_raw, key)
@@ -147,6 +150,7 @@ async def register_file_asset(
         raise ValidationError("对象尚未上传或已过期", key=key)
     size = info.get("ContentLength") or size
 
+    folder_id = await validate_folder_in_space(session, space.id, folder_id)
     await check_upload_quota(session, space=space, incoming_bytes=size)
     asset = _new_file_asset(
         session,
@@ -157,6 +161,7 @@ async def register_file_asset(
         ext=ext,
         size_bytes=size,
         storage_key=key,
+        folder_id=folder_id,
     )
     await session.flush()
     session.add(
@@ -182,14 +187,18 @@ async def register_text_asset(
     name: str,
     content: str,
     space: Space,
+    folder_id: uuid.UUID | None = None,
 ) -> Asset:
     """文本/Markdown 直接摄取（inline_text，无需对象存储）。"""
+    from loomvec.api.services.folders import validate_folder_in_space
+
     size = len(content.encode())
     policy = await upload_policy(session, settings)
     if size > policy.max_size_bytes:
         raise ValidationError("文本超过大小上限", size=size)
     if "." not in name:
         name = f"{name}.md"
+    folder_id = await validate_folder_in_space(session, space.id, folder_id)
     await check_upload_quota(session, space=space, incoming_bytes=size)
 
     asset = _new_file_asset(
@@ -200,6 +209,7 @@ async def register_text_asset(
         mime_type=EXT_TO_MIME[".md"],
         ext=".md",
         size_bytes=size,
+        folder_id=folder_id,
     )
     await session.flush()
     session.add(
@@ -231,12 +241,25 @@ async def update_asset(
     category_id: uuid.UUID | None = None,
     unset_category: bool = False,
     user_meta: dict | None = None,
+    folder_id: uuid.UUID | None = None,
+    unset_folder: bool = False,
 ) -> Asset:
-    """编辑资产：名称 / 标签（get_or_create）/ 分类（空间内校验）/ 元数据（schema 校验）。"""
+    """编辑资产：名称 / 标签（get_or_create）/ 分类（空间内校验）/ 元数据（schema 校验）。
+
+    Finder 移动：folder_id / unset_folder（目标文件夹须同空间；空间内移动不改配额）。
+    """
     if name is not None:
         if not name.strip():
             raise ValidationError("资产名不能为空")
         asset.name = name.strip()
+
+    if unset_folder or folder_id is not None:
+        from loomvec.api.services.folders import validate_folder_in_space
+
+        if unset_folder:
+            asset.folder_id = None
+        else:
+            asset.folder_id = await validate_folder_in_space(session, asset.space_id, folder_id)
 
     if unset_category or category_id is not None:
         if unset_category:
@@ -284,8 +307,10 @@ async def delete_asset_cascade(session: AsyncSession, *, milvus, asset_id: uuid.
 
     try:
         age = AgeStore()
-        touched = await age.delete_asset_edges(session, str(asset.space_id), asset_id)
-        await age.delete_orphan_nodes(session, str(asset.space_id), touched)
+        # SAVEPOINT 内清理：AGE 异常只回滚保存点，主事务（软删+配额）不受牵连
+        async with session.begin_nested():
+            touched = await age.delete_asset_edges(session, str(asset.space_id), asset_id)
+            await age.delete_orphan_nodes(session, str(asset.space_id), touched)
     except Exception as e:  # AGE 不可用不阻断删除（图可由主表重建）
         import structlog
 
@@ -343,6 +368,7 @@ def asset_out(asset: Asset, *, my_role: SpaceRole | str | None = None) -> dict:
         "is_image": is_image_mime(asset.mime_type),
         "page_count": asset.asset_meta.get("page_count"),
         "checksum": asset.checksum,
+        "folder_id": asset.folder_id,
         "created_at": asset.created_at,
         "created_by": asset.created_by,
     }

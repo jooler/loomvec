@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loomvec.core.config import Settings
 from loomvec.core.db.models import (
     Asset,
+    AssetFolder,
     AssetRendition,
     AssetTag,
     AssetVersion,
@@ -75,6 +76,51 @@ class SpaceMemberRepo(Repository[SpaceMember]):
         return list((await self.session.execute(stmt)).scalars().all())
 
 
+class AssetFolderRepo(Repository[AssetFolder]):
+    """文件夹仓储：树形结构遍历与重名/环校验的取数入口（结构不变量在服务层）。"""
+
+    model = AssetFolder
+
+    async def get_live(self, folder_id: uuid.UUID) -> AssetFolder | None:
+        return await self.get(folder_id)
+
+    async def list_for_space(self, space_id: uuid.UUID) -> list[AssetFolder]:
+        stmt = self._base_select(space_id=space_id).order_by(AssetFolder.created_at.asc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def children_of(
+        self, folder_id: uuid.UUID | None, space_id: uuid.UUID
+    ) -> list[AssetFolder]:
+        stmt = self._base_select(space_id=space_id).where(AssetFolder.parent_id == folder_id)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def find_sibling_name(
+        self, space_id: uuid.UUID, parent_id: uuid.UUID | None, name: str
+    ) -> AssetFolder | None:
+        """同父下同名活文件夹（重名校验）。"""
+        stmt = self._base_select(space_id=space_id, name=name).where(
+            AssetFolder.parent_id == parent_id
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def descendant_ids(self, folder_id: uuid.UUID, *, space_id: uuid.UUID) -> list[uuid.UUID]:
+        """递归收集后代文件夹 id（含自身；软删行也计入，防悬挂引用）。"""
+        all_rows = await self.session.execute(
+            # 含软删：环检测/删除级联需全集；文件夹树不跨空间，按空间收敛
+            select(AssetFolder.id, AssetFolder.parent_id).where(AssetFolder.space_id == space_id)
+        )
+        children: dict[uuid.UUID | None, list[uuid.UUID]] = {}
+        for fid, parent in all_rows:
+            children.setdefault(parent, []).append(fid)
+        result: list[uuid.UUID] = [folder_id]
+        queue = [folder_id]
+        while queue:
+            for child in children.get(queue.pop(), []):
+                result.append(child)
+                queue.append(child)
+        return result
+
+
 class AssetRepo(Repository[Asset]):
     model = Asset
 
@@ -108,8 +154,13 @@ class AssetRepo(Repository[Asset]):
         tag_ids: list[uuid.UUID] | None = None,
         category_id: uuid.UUID | None = None,
         review_status: str | None = None,
+        folder_id: str | None = None,
     ) -> list[Asset]:
-        """跨空间游标列表：P2 资产列表/聚合检索的统一取数入口。"""
+        """跨空间游标列表：P2 资产列表/聚合检索的统一取数入口。
+
+        folder_id（Finder 目录浏览）：'root' 仅根目录（folder_id IS NULL）、
+        uuid 仅该文件夹内；缺省不过滤（全空间聚合视图）。
+        """
         if not space_ids:
             return []
         stmt = (
@@ -117,6 +168,10 @@ class AssetRepo(Repository[Asset]):
             .where(Asset.space_id.in_(space_ids))
             .order_by(Asset.created_at.desc(), Asset.id.desc())
         )
+        if folder_id == "root":
+            stmt = stmt.where(Asset.folder_id.is_(None))
+        elif folder_id:
+            stmt = stmt.where(Asset.folder_id == uuid.UUID(folder_id))
         review = self._review_filter(include_unreviewed, strict_review)
         if review is not None:
             stmt = stmt.where(review)
@@ -152,6 +207,7 @@ class AssetRepo(Repository[Asset]):
         tag_ids: list[uuid.UUID] | None = None,
         category_id: uuid.UUID | None = None,
         review_status: str | None = None,
+        folder_id: str | None = None,
     ) -> list[Asset]:
         return await self.list_in_spaces(
             [space_id],
@@ -165,6 +221,7 @@ class AssetRepo(Repository[Asset]):
             tag_ids=tag_ids,
             category_id=category_id,
             review_status=review_status,
+            folder_id=folder_id,
         )
 
     async def find_by_checksum(self, space_id: uuid.UUID, checksum: str) -> list[Asset]:
@@ -172,6 +229,13 @@ class AssetRepo(Repository[Asset]):
         stmt = self._base_select(space_id=space_id, checksum=checksum).order_by(
             Asset.created_at.desc()
         )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_in_folders(self, folder_ids: list[uuid.UUID]) -> list[Asset]:
+        """文件夹级联删除/复制：这些文件夹（含后代）下的活资产。"""
+        if not folder_ids:
+            return []
+        stmt = self._base_select().where(Asset.folder_id.in_(folder_ids))
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_for_space_cleanup(self, space_id: uuid.UUID) -> list[Asset]:

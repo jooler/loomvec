@@ -70,6 +70,7 @@ async def create_asset(
         size=body.size,
         content_type=body.content_type,
         space=space,
+        folder_id=body.folder_id,
     )
     asset_service.enqueue_pipeline(celery, str(asset.id))
     return AssetOut(**asset_service.asset_out(asset))
@@ -92,6 +93,7 @@ async def create_text_asset(
         name=body.name,
         content=body.content,
         space=space,
+        folder_id=body.folder_id,
     )
     asset_service.enqueue_pipeline(celery, str(asset.id))
     return AssetOut(**asset_service.asset_out(asset))

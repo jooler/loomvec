@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from loomvec.core.db.models.asset import (
     Asset,
+    AssetFolder,
     AssetRendition,
     AssetStatus,
     AssetTag,
@@ -53,6 +54,8 @@ from loomvec.core.db.models.identity import (
     Tenant,
     TenantStatus,
     User,
+    UserGroup,
+    UserGroupMember,
     UserRole,
     UserStatus,
 )
@@ -66,6 +69,8 @@ from loomvec.core.db.models.pipeline import (
 from loomvec.core.db.models.space import (
     Notification,
     Space,
+    SpaceGroupVisibility,
+    SpaceLink,
     SpaceMember,
     SpaceRole,
     SpaceType,
@@ -75,6 +80,7 @@ from loomvec.core.db.models.space import (
 __all__ = [
     "ApiKey",
     "Asset",
+    "AssetFolder",
     "AssetRendition",
     "AssetStatus",
     "AssetTag",
@@ -108,6 +114,8 @@ __all__ = [
     "Role",
     "SemanticUnit",
     "Space",
+    "SpaceGroupVisibility",
+    "SpaceLink",
     "SpaceMember",
     "SpaceRole",
     "SpaceType",
@@ -119,6 +127,8 @@ __all__ = [
     "TenantStatus",
     "UnitType",
     "User",
+    "UserGroup",
+    "UserGroupMember",
     "UserRole",
     "UserStatus",
     "WebhookDelivery",

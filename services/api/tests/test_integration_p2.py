@@ -39,6 +39,7 @@ async def db(pg_url):
                         "space",
                         "space_member",
                         "asset",
+                        "asset_folder",
                         "asset_version",
                         "semantic_unit",
                         "space_usage",

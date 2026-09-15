@@ -60,10 +60,16 @@ async def list_assets(
     category_id: uuid.UUID | None = None,
     review_status: str | None = None,
     space_id: uuid.UUID | None = None,
+    folder_id: str | None = Query(
+        default=None, description="目录浏览过滤：'root' 仅根目录；uuid 仅该文件夹内；缺省不过滤"
+    ),
     identity: Identity = Depends(require_scope("read")),
     session: AsyncSession = Depends(get_session),
 ) -> AssetListOut:
-    """资产列表：指定空间（成员校验）或聚合我的全部空间（viewer 可见性过滤）。"""
+    """资产列表：指定空间（成员校验）或聚合我的全部空间（viewer 可见性过滤）。
+
+    Finder 目录浏览经 folder_id 过滤（根目录用 'root' 哨兵）。
+    """
     from loomvec.core.db.pagination import Cursor
 
     cur = Cursor.decode(cursor) if cursor else None
@@ -95,6 +101,7 @@ async def list_assets(
         tag_ids=tag_id_list,
         category_id=category_id,
         review_status=review_status,
+        folder_id=folder_id,
     )
     next_cursor = asset_service.encode_cursor(rows[-1]) if len(rows) > limit else None
     return AssetListOut(
@@ -194,6 +201,8 @@ async def patch_asset(
         category_id=body.category_id,
         unset_category=body.unset_category,
         user_meta=body.metadata,
+        folder_id=body.folder_id,
+        unset_folder=body.unset_folder,
     )
     return await _build_detail(session, asset, settings, storage)
 
@@ -232,28 +241,57 @@ async def preview_asset(
     settings: Settings = Depends(service_settings),
     storage: ObjectStorage = Depends(get_storage),
 ) -> PreviewOut:
-    """预览与定位：PDF 原文 / Markdown 产物 / 内联文本 / 图片原图。"""
+    """预览与定位：PDF 原文 / Markdown 产物 / 内联文本 / 图片原图。
+
+    original_url 恒为原始对象入口（解析类资产可同时呈现原文与 MinerU 结果；
+    前端原始文件查看器按 ext 分派 embedpdf / office 预览 / 文本）。
+    """
     _access, asset = await _load_asset_detail(session, asset_id, identity)
     version = await AssetVersionRepo(session).latest_for(asset_id)
     if version is None:
         raise NotFoundError(resource="asset_version", id=str(asset_id))
 
+    def _original_url() -> str | None:
+        if not asset.storage_key:
+            return None
+        try:
+            return storage.presign_get(settings.storage.bucket_raw, asset.storage_key)
+        except Exception:  # 预签名失败不阻塞预览主链路
+            return None
+
+    def _parsed_url() -> str | None:
+        md_key = parse_meta.get("md_key")
+        if not md_key:
+            return None
+        try:
+            return storage.presign_get(settings.storage.bucket_derived, md_key)
+        except Exception:
+            return None
+
     parse_meta = (version.version_meta or {}).get("parse") or {}
     if asset.storage_key and (
         asset.mime_type == "application/pdf" or asset.mime_type.startswith("image/")
     ):
+        url = _original_url()
         return PreviewOut(
             mode="image" if asset.mime_type.startswith("image/") else "pdf",
-            url=storage.presign_get(settings.storage.bucket_raw, asset.storage_key),
+            url=url,
             page_count=parse_meta.get("page_count"),
+            original_url=url,
+            parsed_url=_parsed_url(),
         )
     md_key = parse_meta.get("md_key")
     if md_key:
+        parsed = storage.presign_get(settings.storage.bucket_derived, md_key)
         return PreviewOut(
             mode="markdown",
-            url=storage.presign_get(settings.storage.bucket_derived, md_key),
+            url=parsed,
             page_count=parse_meta.get("page_count"),
+            original_url=_original_url(),
+            parsed_url=parsed,
         )
     if version.inline_text is not None:
-        return PreviewOut(mode="markdown", content=version.inline_text, page_count=1)
+        return PreviewOut(
+            mode="markdown", content=version.inline_text, page_count=1, original_url=None
+        )
     raise NotFoundError(resource="preview", id=str(asset_id))
