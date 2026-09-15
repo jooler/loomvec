@@ -80,7 +80,8 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        // wrap-anywhere：长 token（JSON/URL/key）可断行，且不影响自动布局的列最小宽度，避免撑出横向滚动
+        "p-2 align-middle wrap-anywhere [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
       {...props}
