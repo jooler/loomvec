@@ -64,7 +64,7 @@ SAMPLE = """# 企业关系说明（图谱集成测试）
 
 @pytest.fixture
 def deps() -> PipelineDeps:
-    settings = Settings()
+    settings = Settings(_env_file=None)  # 不继承仓库根 .env（测试确定性）
     settings.env = settings.env.__class__.TEST
     settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:5433/loomvec"
     settings.ai.mock = True
