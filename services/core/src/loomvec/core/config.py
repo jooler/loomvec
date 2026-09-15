@@ -1,14 +1,25 @@
 """P0-CORE-01 分级配置体系（pydantic-settings）。
 
-约定：
-- 所有环境变量统一前缀 `LOOMVEC_`，嵌套字段用 `__` 分隔
-  （如 `LOOMVEC_POSTGRES__URL`）；
-- 各服务（api/worker）从各自的入口加载同一份 `Settings`；
-- `.env.example` 与文档随配置项同步更新（阶段通用退出标准）。
+配置分三层，**来源唯一**（同一参数只在一处定义，不做跨层兜底）：
+
+- **环境变量 / `.env`（基础设施与运行环境）**：数据库/Redis/Milvus/对象存储连接、
+  运行环境（ENV）、日志、认证密钥、限流、worker 运行参数、OTel、**服务端口**；
+  统一前缀 `LOOMVEC_`，嵌套字段用 `__` 分隔（如 `LOOMVEC_POSTGRES__URL`）；
+- **`config/loomvec.json`（应用运行参数，应用自管理）**：AI 供方（地址/密钥/模型）、
+  MinerU、检索、管线分片、上传白名单、图片处理、图谱、媒体、转写、问答；
+  路径经 `LOOMVEC_APP_CONFIG` 指定（缺省 `<仓库根>/config/loomvec.json`），
+  文件不存在时使用内置默认值；模板见 `config/loomvec.example.json`；
+- **DB `system_config`（admin 动态配置，显式管理覆盖）**：经管理端集中配置的
+  运营可调项（检索/上传/图谱开关/AI 供方/SSO），DB 有值即生效，
+  未配置回落 AppConfig 默认——回落目标是文件默认而非环境变量。
+
+各服务（api/worker）从各自的入口加载同一份 `Settings` + `AppConfig`。
 """
 
 from __future__ import annotations
 
+import json
+import os
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -25,14 +36,31 @@ def _find_env_file() -> str | None:
     services/api 执行）会静默回退到内置默认值，可能指向与 API 不同的
     数据库；环境变量优先级始终高于 .env，部署注入不受影响。
     """
+    root = _find_repo_root()
+    if root is None:
+        return None
+    env = root / ".env"
+    return str(env) if env.is_file() else None
+
+
+def _find_repo_root() -> Path | None:
+    """从 cwd 向上定位仓库根（.git 所在目录）；找不到返回 None。"""
     directory = Path.cwd().resolve()
     while True:
-        if (directory / ".git").exists() or (directory / ".env").is_file():
-            env = directory / ".env"
-            return str(env) if env.is_file() else None
+        if (directory / ".git").exists():
+            return directory
         if directory.parent == directory:
             return None
         directory = directory.parent
+
+
+def _resolve_app_config_path() -> Path:
+    """应用参数文件路径：LOOMVEC_APP_CONFIG 优先，缺省仓库根 config/loomvec.json。"""
+    override = os.environ.get("LOOMVEC_APP_CONFIG")
+    if override:
+        return Path(override)
+    root = _find_repo_root()
+    return (root / "config" / "loomvec.json") if root else Path("config/loomvec.json")
 
 
 class Env(StrEnum):
@@ -348,7 +376,34 @@ class SecuritySettings(BaseModel):
     anonymous_write_allowed: bool = False
 
 
+class AppConfig(BaseModel):
+    """应用运行参数（config/loomvec.json，应用自管理）。
+
+    与环境变量解耦：AI 供方（地址/密钥/模型）、MinerU、检索、管线分片、
+    上传白名单、图片处理、图谱、媒体、转写、问答。文件支持部分覆盖
+    （未写的键取内置默认）；admin 动态配置（DB）未覆盖时以此为生效值。
+    """
+
+    ai: AiSettings = Field(default_factory=AiSettings)
+    mineru: MineruSettings = Field(default_factory=MineruSettings)
+    search: SearchSettings = Field(default_factory=SearchSettings)
+    pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
+    upload: UploadSettings = Field(default_factory=UploadSettings)
+    image: ImageSettings = Field(default_factory=ImageSettings)
+    graph: GraphSettings = Field(default_factory=GraphSettings)
+    media: MediaSettings = Field(default_factory=MediaSettings)
+    transcribe: TranscribeSettings = Field(default_factory=TranscribeSettings)
+    qa: QaSettings = Field(default_factory=QaSettings)
+
+
 class Settings(BaseSettings):
+    """基础设施与运行环境（env / .env 单源；不含应用运行参数）。
+
+    应用参数段（ai/mineru/search/...）以只读 property 委托 AppConfig，
+    仅为既有消费方提供 `settings.ai` 形态的访问；配置来源仍是
+    config/loomvec.json，环境变量无法覆盖（来源唯一）。
+    """
+
     model_config = SettingsConfigDict(
         env_prefix="LOOMVEC_",
         env_nested_delimiter="__",
@@ -364,28 +419,82 @@ class Settings(BaseSettings):
     log_json: bool = True
     # P1 单空间运行：默认空间 slug（seed 于迁移 0002，P2 展开空间语义）
     default_space_slug: str = "default"
+    # 应用参数文件路径（仅路径属运行环境；文件内容见 AppConfig）
+    app_config_path: str = ""
+
+    # ---- 服务端口（部署时经 env 灵活调整） ----
+    api_port: int = 8080
+    web_port: int = 5173
+    admin_port: int = 5174
+    ops_port: int = 5175
 
     otel: OtelSettings = Field(default_factory=OtelSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     milvus: MilvusSettings = Field(default_factory=MilvusSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
-    mineru: MineruSettings = Field(default_factory=MineruSettings)
-    ai: AiSettings = Field(default_factory=AiSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
-    search: SearchSettings = Field(default_factory=SearchSettings)
-    pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     worker: WorkerSettings = Field(default_factory=WorkerSettings)
-    upload: UploadSettings = Field(default_factory=UploadSettings)
-    image: ImageSettings = Field(default_factory=ImageSettings)
-    graph: GraphSettings = Field(default_factory=GraphSettings)
-    media: MediaSettings = Field(default_factory=MediaSettings)
-    transcribe: TranscribeSettings = Field(default_factory=TranscribeSettings)
-    qa: QaSettings = Field(default_factory=QaSettings)
+
+    # ---- 应用参数段：委托 AppConfig（config/loomvec.json），env 不可覆盖 ----
+
+    @property
+    def ai(self) -> AiSettings:
+        return get_app_config().ai
+
+    @property
+    def mineru(self) -> MineruSettings:
+        return get_app_config().mineru
+
+    @property
+    def search(self) -> SearchSettings:
+        return get_app_config().search
+
+    @property
+    def pipeline(self) -> PipelineSettings:
+        return get_app_config().pipeline
+
+    @property
+    def upload(self) -> UploadSettings:
+        return get_app_config().upload
+
+    @property
+    def image(self) -> ImageSettings:
+        return get_app_config().image
+
+    @property
+    def graph(self) -> GraphSettings:
+        return get_app_config().graph
+
+    @property
+    def media(self) -> MediaSettings:
+        return get_app_config().media
+
+    @property
+    def transcribe(self) -> TranscribeSettings:
+        return get_app_config().transcribe
+
+    @property
+    def qa(self) -> QaSettings:
+        return get_app_config().qa
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """进程级单例入口；测试中可用 get_settings.cache_clear() 重置。"""
     return Settings()
+
+
+@lru_cache(maxsize=1)
+def get_app_config() -> AppConfig:
+    """应用参数单例：加载 LOOMVEC_APP_CONFIG（缺省 config/loomvec.json）。
+
+    文件不存在时使用内置默认值（等价 config/loomvec.example.json）；
+    JSON 支持部分覆盖（未写的键取默认）。测试可用 get_app_config.cache_clear()。
+    """
+    path = Path(os.environ.get("LOOMVEC_APP_CONFIG") or _resolve_app_config_path())
+    if not path.is_file():
+        return AppConfig()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return AppConfig.model_validate(data)

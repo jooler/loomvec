@@ -46,48 +46,49 @@ config:
     bucketRaw: loomvec-raw
     bucketDerived: loomvec-derived
 
-  mineru:
-    # MinerU 解析服务不随本 chart 部署（大镜像、可选依赖）；
-    # 关闭后不再注入 LOOMVEC_MINERU__*。
-    enabled: true
-    # LOOMVEC_MINERU__BASE_URL：集群内/外 MinerU 服务地址
-    baseUrl: ""
-    # LOOMVEC_MINERU__BACKEND
-    backend: pipeline
-
-  ai:
-    # LOOMVEC_AI__MOCK：生产禁止开启（全部通道走确定性本地实现）
-    mock: true
-    # 其余 LOOMVEC_AI__* 直传项，键名 = LOOMVEC_AI__<键>（嵌套用 __）。
-    # 例：
-    #   EMBEDDING__BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-    #   EMBEDDING__MODEL: text-embedding-v4
-    #   EMBEDDING__DIM: "1024"
-    #   EMBEDDING__BATCH_SIZE: "16"
-    #   LLM__BASE_URL: ""
-    #   LLM__MODEL: ""
-    #   RERANK__API_STYLE: openai
-    #   CLIP__DIM: "512"
-    #   VLM__MODEL: ""
-    #   MOCK_IMPL__CHUNK_WINDOW_LINES: "12"
-    # API 密钥（EMBEDDING__API_KEY / LLM__API_KEY / RERANK__API_KEY / CLIP__API_KEY / VLM__API_KEY）
-    # 不要写在这里 —— 放 secret.stringData（见下），经 Secret 注入。
-    extra: {}
-
-  # 其它 LOOMVEC_ 直传项，键名 = LOOMVEC_<键>。例：
-  #   SEARCH__DEFAULT_TOP_K: "10"
-  #   SEARCH__RERANK_ENABLED: "true"
-  #   SEARCH__IMAGE_SEARCH_ENABLED: "true"
-  #   PIPELINE__CHUNK_MAX_CHARS: "2000"
-  #   PIPELINE__EMBED_BATCH_SIZE: "16"
-  #   PIPELINE__SUMMARY_ENABLED: "false"
+  # 其它 LOOMVEC_ 直传项（仅基础设施/运行环境有效；应用参数经上方 appConfig，
+  # 环境变量 LOOMVEC_SEARCH__* 等已不生效）。例：
   #   WORKER__TASK_TIME_LIMIT: "3600"
-  #   UPLOAD__MAX_SIZE_BYTES: "209715200"
-  #   IMAGE__THUMBNAIL_FORMAT: webp
+  #   LOG_LEVEL: DEBUG
   #   OTEL__ENDPOINT: http://otel-collector.observability:4317
   # 注意：LOOMVEC_MILVUS__URI / LOOMVEC_STORAGE__ENDPOINT / LOOMVEC_POSTGRES__URL /
   #       LOOMVEC_REDIS__URL 由下方依赖段计算，不可在此覆盖。
   extraEnv: {}
+
+# ---------- 应用运行参数（config/loomvec.json 的集群形态） ----------
+# 经 Secret 渲染为 app-config.json 挂载（LOOMVEC_APP_CONFIG=/etc/loomvec/app-config.json）；
+# 来源唯一：应用参数不经 LOOMVEC_* 环境变量注入。支持部分覆盖（未写键取内置默认）。
+appConfig:
+  ai:
+    mock: true # 生产禁止开启（全部通道走确定性本地实现）
+    llm:
+      base_url: ""
+      api_key: ""
+      model: ""
+    embedding:
+      base_url: ""
+      api_key: ""
+      model: ""
+      dim: 1024
+      batch_size: 16
+    rerank:
+      base_url: ""
+      api_key: ""
+      model: ""
+      api_style: openai
+    clip:
+      base_url: ""
+      api_key: ""
+      model: ""
+      dim: 1024
+      api_style: openai
+    vlm:
+      base_url: ""
+      api_key: ""
+      model: ""
+  mineru:
+    base_url: ""
+    backend: pipeline
 
 # ---------- 敏感配置（Secret 注入） ----------
 secret:

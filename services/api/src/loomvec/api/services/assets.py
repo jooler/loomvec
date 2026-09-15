@@ -54,8 +54,11 @@ class UploadPolicy:
 async def upload_policy(session: AsyncSession | None, settings: Settings) -> UploadPolicy:
     """读上传策略：动态配置（即时生效）优先，未配置回落进程 Settings。"""
 
+    # 来源唯一：应用参数回落 config/loomvec.json；DB 动态值为显式管理覆盖
+    from loomvec.core.config import get_app_config
+
+    u = get_app_config().upload
     if session is None:
-        u = settings.upload
         return UploadPolicy(
             settings,
             allowed_extensions=u.allowed_extensions,
@@ -64,7 +67,6 @@ async def upload_policy(session: AsyncSession | None, settings: Settings) -> Upl
         )
     from loomvec.api.services.admin_settings import effective_value
 
-    u = settings.upload
     max_size = await effective_value(session, "upload.max_size_bytes")
     exts = await effective_value(session, "upload.allowed_extensions")
     presign = await effective_value(session, "upload.presign_expires_seconds")

@@ -36,5 +36,5 @@ App version:   {{ .Chart.AppVersion }}
 
 3. {{ if .Values.ingress.enabled }}Ingress 已启用：{{ range .Values.ingress.hosts }}{{ .host }}{{ end }}{{ else }}Ingress 未启用（values.ingress.enabled=true 开启）{{ end }}。
 
-4. 生产前必改：secret.jwtSecret、AI 密钥（secret.stringData）、config.ai.mock=false、
+4. 生产前必改：secret.jwtSecret、应用参数密钥（appConfig.ai.*.api_key）、appConfig.ai.mock=false、
    postgres/redis 指向托管实例。备份恢复见 scripts/backup/。

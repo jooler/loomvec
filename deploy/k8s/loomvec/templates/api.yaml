@@ -40,6 +40,17 @@ spec:
               containerPort: {{ .Values.api.port }}
           env:
             {{- include "loomvec.env" . | nindent 12 }}
+          volumeMounts:
+            - name: app-config
+              mountPath: /etc/loomvec
+              readOnly: true
+        volumes:
+          - name: app-config
+            secret:
+              secretName: {{ include "loomvec.secretName" . }}
+              items:
+                - key: app-config.json
+                  path: app-config.json
           {{- with .Values.api.extraEnvFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}

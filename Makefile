@@ -9,7 +9,7 @@ age-src:
 	git clone --depth 1 --branch PG18 https://github.com/apache/age.git deploy/compose/postgres-age/age-src
 
 api:
-	uv run uvicorn loomvec.api.main:app --reload --port 8080
+	uv run python -m loomvec.api --reload  # 端口单源 LOOMVEC_API_PORT（.env）
 
 migrate:
 	cd services/api && uv run --project ../.. alembic upgrade head

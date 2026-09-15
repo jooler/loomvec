@@ -18,7 +18,16 @@ cd "$ROOT"
 LOG_DIR="$ROOT/tmp"; PID_FILE="$LOG_DIR/dev.pids"; mkdir -p "$LOG_DIR"
 COMPOSE="docker compose -f deploy/compose/compose.yaml --profile observability"
 
-API_PORT=8080; WEB_PORT=5173; ADMIN_PORT=5174; OPS_PORT=5175
+# 服务端口单源 .env（LOOMVEC_API_PORT/WEB/ADMIN/OPS_PORT；缺省 8080/5173/5174/5175）
+load_env_var() {  # load_env_var KEY DEFAULT —— 从仓库根 .env 读取（存在时）
+  local val
+  val=$(grep -E "^$1=" "$ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"'"')
+  echo "${val:-$2}"
+}
+API_PORT=$(load_env_var LOOMVEC_API_PORT 8080)
+WEB_PORT=$(load_env_var LOOMVEC_WEB_PORT 5173)
+ADMIN_PORT=$(load_env_var LOOMVEC_ADMIN_PORT 5174)
+OPS_PORT=$(load_env_var LOOMVEC_OPS_PORT 5175)
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; DIM=$'\033[2m'; RST=$'\033[0m'
 ok()   { echo "${GRN}✓${RST} $*"; }
 warn() { echo "${YLW}!${RST} $*"; }
@@ -63,7 +72,7 @@ do_stop() {
 }
 
 do_status() {
-  for probe in "PostgreSQL:5433" "Redis:6379" "RustFS:9000" "Milvus:19530" "MinerU:8000" "Grafana:3002" "Prometheus:9090" "API:8080" "Web:5173" "Admin:5174" "Ops:5175"; do
+  for probe in "PostgreSQL:5433" "Redis:6379" "RustFS:9000" "Milvus:19530" "MinerU:8000" "Grafana:3002" "Prometheus:9090" "API:$API_PORT" "Web:$WEB_PORT" "Admin:$ADMIN_PORT" "Ops:$OPS_PORT"; do
     port_up "${probe##*:}" && ok "$probe" || fail "$probe"
   done
   if alive worker; then ok "worker（本脚本启动）"
@@ -143,7 +152,7 @@ start_bg() { # $1=名称 $2=pid名 $3=端口 $4=命令...
 }
 
 step "应用进程"
-start_bg api    api    "$API_PORT"    uv run uvicorn loomvec.api.main:app --reload --port "$API_PORT"
+start_bg api    api    "$API_PORT"    uv run python -m loomvec.api --reload  # 端口单源 LOOMVEC_API_PORT
 external_worker=$(pgrep -f "loomvec.worker.celery_app" | head -1)
 if [ -n "$external_worker" ]; then
   if alive worker; then ok "worker 运行中（本脚本）"
@@ -163,7 +172,7 @@ else
 fi
 
 step "就绪等待"
-wait_http "API (8080)"  "http://localhost:8080/readyz" 1 120
+wait_http "API ($API_PORT)"  "http://localhost:$API_PORT/readyz" 1 120
 wait_http "Web (5173)"  "http://localhost:$WEB_PORT/"  1 60
 wait_http "Admin (5174)" "http://localhost:$ADMIN_PORT/" 1 60
 wait_http "Ops (5175)"  "http://localhost:$OPS_PORT/"   1 60

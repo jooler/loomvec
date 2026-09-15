@@ -38,3 +38,6 @@ tmp/
 # Celery beat 本地调度状态（运行时产物）
 celerybeat-schedule.db
 celerybeat-schedule.*.db
+
+# 应用运行参数（含密钥；模板 config/loomvec.example.json 入库）
+config/loomvec.json

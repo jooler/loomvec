@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { apiTarget, loomvecPort } from './vite.env';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -11,11 +12,11 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    // 端口单源 LOOMVEC_WEB_PORT（.env，默认 5173）；API 代理目标单源 LOOMVEC_API_PORT
+    port: loomvecPort('LOOMVEC_WEB_PORT', 5173),
     proxy: {
-      // dev 下 API 代理到本地 FastAPI（Makefile 默认端口 8080）
-      '/api': { target: 'http://localhost:8080', changeOrigin: true },
-      '/metrics': { target: 'http://localhost:8080', changeOrigin: true },
+      '/api': { target: apiTarget, changeOrigin: true },
+      '/metrics': { target: apiTarget, changeOrigin: true },
     },
   },
 });

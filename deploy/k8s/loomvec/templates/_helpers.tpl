@@ -171,18 +171,10 @@ http://{{ include "loomvec.fullname" . }}-rustfs:{{ .Values.storage.internal.por
 - name: LOOMVEC_{{ $k }}
   value: {{ $v | toString | quote }}
 {{- end }}
-{{- range $k, $v := $root.Values.config.ai.extra }}
-- name: LOOMVEC_AI__{{ $k }}
-  value: {{ $v | toString | quote }}
-{{- end }}
-- name: LOOMVEC_AI__MOCK
-  value: {{ $root.Values.config.ai.mock | toString | quote }}
-{{- if $root.Values.config.mineru.enabled }}
-- name: LOOMVEC_MINERU__BASE_URL
-  value: {{ $root.Values.config.mineru.baseUrl | quote }}
-- name: LOOMVEC_MINERU__BACKEND
-  value: {{ $root.Values.config.mineru.backend | quote }}
-{{- end }}
+{{- /* 应用参数（AI/MinerU/检索/分片/上传等）不经环境变量：经 app-config.json 挂载
+      （secret 的 app-config.json 键 + LOOMVEC_APP_CONFIG，见各 deployment volume） */}}
+- name: LOOMVEC_APP_CONFIG
+  value: /etc/loomvec/app-config.json
 - name: LOOMVEC_AUTH__DEV_MODE
   value: {{ $root.Values.config.auth.devMode | toString | quote }}
 - name: LOOMVEC_AUTH__JWT_SECRET

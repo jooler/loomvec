@@ -43,7 +43,7 @@ deploy/k8s/loomvec/
   ```
 
   外部/云托管 Milvus 时设 `milvus.enabled=false` + `milvus.external.uri`。
-- MinerU（可选）：大镜像不随 chart 部署，`config.mineru.baseUrl` 指向
+- MinerU（可选）：大镜像不随 chart 部署，`appConfig.mineru.base_url` 指向
   已部署的解析服务（镜像构建见 `deploy/compose/mineru`）。
 - 监控：Prometheus Operator 部署后开 `serviceMonitor.enabled=true`；
   无 Operator 时沿用 `deploy/monitoring/prometheus.yml`，把静态 target 改为
@@ -61,7 +61,7 @@ helm install loomvec deploy/k8s/loomvec \
   --set postgres.url='postgresql+asyncpg://loomvec:<pw>@pg-host:5432/loomvec' \
   --set redis.url='redis://redis-host:6379/0' \
   --set secret.jwtSecret='<强随机串>' \
-  --set config.ai.mock=false \
+  --set appConfig.ai.mock=false \
   --set secret.stringData.LOOMVEC_AI__EMBEDDING__API_KEY=sk-xxx
 
 # 3) 校验
@@ -87,11 +87,11 @@ helm uninstall loomvec -n loomvec                     # PVC 不会自动删除�
 | `LOOMVEC_STORAGE__ENDPOINT` | `storage.mode=external` 时 `storage.external.endpoint`；internal 指向内置 RustFS |
 | `LOOMVEC_STORAGE__ACCESS_KEY` / `__SECRET_KEY` | `secret.storageAccessKey` / `secret.storageSecretKey`（或 `storage.external.existingSecret`） |
 | `LOOMVEC_STORAGE__BUCKET_RAW` / `__BUCKET_DERIVED` | `config.storage.bucketRaw` / `bucketDerived` |
-| `LOOMVEC_MINERU__BASE_URL` / `__BACKEND` | `config.mineru.baseUrl` / `config.mineru.backend` |
+| （应用参数不再经环境变量） | `appConfig`（渲染为 app-config.json 挂载） |
 | `LOOMVEC_AUTH__DEV_MODE` | `config.auth.devMode`（生产必须 false） |
 | `LOOMVEC_AUTH__JWT_SECRET` | `secret.jwtSecret`（或 `secret.existingSecret` 键 `auth-jwt-secret`） |
-| `LOOMVEC_AI__MOCK` | `config.ai.mock`（生产必须 false） |
-| `LOOMVEC_AI__*` 其余项 | `config.ai.extra`（键名如 `EMBEDDING__MODEL`）；API 密钥放 `secret.stringData`（键名如 `LOOMVEC_AI__EMBEDDING__API_KEY`） |
+| （应用参数不再经环境变量） | `appConfig.ai.mock`（生产必须 false） |
+| （应用参数不再经环境变量） | `appConfig`（含全部 AI 通道；密钥直接写在 appConfig 内，经 Secret 渲染挂载） |
 | 检索/管线/上传/图片/Worker 等其余项 | `config.extraEnv`（键名为 `LOOMVEC_` 之后的部分，如 `SEARCH__RRF_K`） |
 
 ## 扩缩容与滚动更新

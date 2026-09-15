@@ -1,0 +1,177 @@
+{
+  "$comment": "应用运行参数模板：复制为 config/loomvec.json 使用（该文件不入库）。支持部分覆盖——未写的键取内置默认；来源唯一：这些参数不经环境变量配置，admin 动态配置（DB）有值时优先于此处默认值。",
+  "ai": {
+    "mock": false,
+    "llm": {
+      "base_url": "https://api.deepseek.com",
+      "api_key": "sk-xxx",
+      "model": "deepseek-chat",
+      "temperature": 0.2,
+      "json_retries": 2,
+      "timeout_seconds": 120.0,
+      "api_style": "openai"
+    },
+    "embedding": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key": "sk-xxx",
+      "model": "text-embedding-v4",
+      "dim": 1024,
+      "dimensions": null,
+      "batch_size": 16,
+      "api_style": "openai",
+      "timeout_seconds": 120.0
+    },
+    "rerank": {
+      "base_url": "https://dashscope.aliyuncs.com/api/v1",
+      "api_key": "sk-xxx",
+      "model": "qwen3-vl-rerank",
+      "api_style": "dashscope",
+      "timeout_seconds": 120.0
+    },
+    "clip": {
+      "base_url": "https://dashscope.aliyuncs.com/api/v1",
+      "api_key": "sk-xxx",
+      "model": "multimodal-embedding-v1",
+      "dim": 1024,
+      "api_style": "dashscope"
+    },
+    "vlm": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key": "sk-xxx",
+      "model": "qwen3-vl-plus",
+      "api_style": "openai"
+    },
+    "mock_impl": {
+      "chunk_window_lines": 12
+    }
+  },
+  "mineru": {
+    "base_url": "http://localhost:8000",
+    "backend": "pipeline",
+    "timeout_seconds": 1800.0
+  },
+  "search": {
+    "default_top_k": 10,
+    "max_top_k": 50,
+    "dense_top_k": 50,
+    "sparse_top_k": 50,
+    "rrf_k": 60,
+    "rerank_enabled": true,
+    "rerank_candidates": 30,
+    "image_search_enabled": true,
+    "graph_enabled": true,
+    "filter_scan_limit": 10000
+  },
+  "pipeline": {
+    "parser_version": "mineru-3.4.5",
+    "prompt_version": "chunk-graph-v2",
+    "chunk_min_chars": 120,
+    "chunk_max_chars": 2000,
+    "llm_batch_chars": 6000,
+    "embed_batch_size": 16,
+    "embed_text_max_chars": 6000,
+    "index_text_max_chars": 30000,
+    "summary_enabled": false
+  },
+  "upload": {
+    "max_size_bytes": 209715200,
+    "allowed_extensions": [
+      ".pdf",
+      ".docx",
+      ".pptx",
+      ".xlsx",
+      ".txt",
+      ".md",
+      ".markdown",
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".webp",
+      ".gif",
+      ".bmp",
+      ".mp4",
+      ".mov",
+      ".webm",
+      ".mkv",
+      ".mp3",
+      ".wav",
+      ".m4a",
+      ".flac"
+    ],
+    "presign_expires_seconds": 3600
+  },
+  "image": {
+    "thumbnail_max_width": 480,
+    "thumbnail_max_height": 480,
+    "thumbnail_format": "webp",
+    "thumbnail_quality": 82,
+    "caption_enabled": true,
+    "exif_whitelist": [
+      "Make",
+      "Model",
+      "LensModel",
+      "DateTimeOriginal",
+      "ExposureTime",
+      "FNumber",
+      "ISO",
+      "FocalLength",
+      "Orientation",
+      "GPSLatitude",
+      "GPSLongitude",
+      "ImageWidth",
+      "ImageHeight"
+    ]
+  },
+  "graph": {
+    "enabled": true,
+    "extraction_enabled": true,
+    "entity_link_threshold": 0.9,
+    "merge_threshold": 0.94,
+    "merge_name_distance": 2,
+    "merge_min_candidates": 1,
+    "merge_trigger_delta": 20,
+    "expand_hops": 2,
+    "link_top_k": 4,
+    "graph_top_k": 30,
+    "adjacency_enabled": true,
+    "adjacency_top_k": 8,
+    "max_entities_per_asset": 300,
+    "max_relations_per_asset": 600,
+    "merge_interval_seconds": 1800.0,
+    "community_interval_seconds": 3600.0
+  },
+  "media": {
+    "scene_threshold": 27.0,
+    "min_scene_seconds": 3.0,
+    "max_scenes_per_asset": 200,
+    "keyframe_width": 640,
+    "keyframe_format": "jpg",
+    "transcode_enabled": true,
+    "transcode_height": 720,
+    "transcode_crf": 23,
+    "transcode_preset": "veryfast",
+    "native_video_mimes": [
+      "video/mp4",
+      "video/webm"
+    ],
+    "probe_timeout_seconds": 60.0,
+    "transcode_timeout_seconds": 3600.0
+  },
+  "transcribe": {
+    "enabled": true,
+    "model_size": "base",
+    "device": "cpu",
+    "compute_type": "int8",
+    "language": null,
+    "segment_max_chars": 400,
+    "segment_max_seconds": 60.0
+  },
+  "qa": {
+    "enabled": true,
+    "retrieval_top_k": 8,
+    "history_messages": 6,
+    "max_question_chars": 2000,
+    "max_answer_tokens": 1024,
+    "session_max_messages": 200
+  }
+}

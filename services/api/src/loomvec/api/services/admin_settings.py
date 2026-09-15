@@ -1,9 +1,12 @@
 """P4-API-05 动态配置服务：可写配置注册表、脱敏回显、生效方式标注、TTL 缓存。
 
-- key 注册表单源（SETTING_REGISTRY）：未入库的键回落默认值；
+- key 注册表单源（SETTING_REGISTRY）：未入库的键回落 AppConfig 默认值；
 - sensitive 键回显脱敏（`******`），写入保留明文（密钥只写不读）；
 - effect="immediate" 经 effective_value() 即时生效（进程内 5s TTL 缓存）；
-  effect="restart" 仅落库提示，需重启读取（启动项单源仍在 Settings/env）。
+  effect="restart" 仅落库提示，需重启读取（infra 启动项单源仍在 Settings/env）。
+
+配置来源唯一：DB 有值即生效；未配置回落 config/loomvec.json（AppConfig），
+不回落环境变量——应用参数（模型/检索/上传/图谱）不经 env 配置。
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loomvec.core.config import get_settings
+from loomvec.core.config import get_app_config, get_settings
 from loomvec.core.constants import CHUNK_PRESETS, EMBEDDING_MODELS
 from loomvec.core.db.models import SystemConfig
 from loomvec.core.errors import NotFoundError, ValidationError
@@ -47,7 +50,8 @@ class SettingDef:
 
 
 def _build_registry() -> dict[str, SettingDef]:
-    s = get_settings()
+    s = get_app_config()  # 应用参数默认值单源：config/loomvec.json（非 env）
+
     defs: list[SettingDef] = [
         # 模型与检索（P4-ADM-05 白名单）
         SettingDef(
@@ -200,8 +204,8 @@ def _build_registry() -> dict[str, SettingDef]:
         SettingDef(
             "infra.postgres_url",
             group="infra",
-            description="PG 连接（需重启）",
-            default=s.postgres.url,
+            description="PG 连接（需重启；单源为环境变量，此处仅展示）",
+            default=get_settings().postgres.url,
             effect="restart",
             sensitive=True,
             admin_only=True,
@@ -209,8 +213,8 @@ def _build_registry() -> dict[str, SettingDef]:
         SettingDef(
             "infra.milvus_uri",
             group="infra",
-            description="Milvus URI（需重启）",
-            default=s.milvus.uri,
+            description="Milvus URI（需重启；单源为环境变量，此处仅展示）",
+            default=get_settings().milvus.uri,
             effect="restart",
             admin_only=True,
         ),

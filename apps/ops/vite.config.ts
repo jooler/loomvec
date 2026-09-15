@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { apiTarget, loomvecPort } from './vite.env';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -13,11 +14,11 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5175,
+    // 端口单源 LOOMVEC_OPS_PORT（.env，默认 5175）；API 代理目标单源 LOOMVEC_API_PORT
+    port: loomvecPort('LOOMVEC_OPS_PORT', 5175),
     proxy: {
-      // dev 下 API 代理到本地 FastAPI（Makefile 默认端口 8080；8000 被 MinerU 占用）
-      '/api': { target: 'http://localhost:8080', changeOrigin: true },
-      '/metrics': { target: 'http://localhost:8080', changeOrigin: true },
+      '/api': { target: apiTarget, changeOrigin: true },
+      '/metrics': { target: apiTarget, changeOrigin: true },
     },
   },
   build: {
