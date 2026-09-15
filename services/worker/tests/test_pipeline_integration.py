@@ -60,7 +60,7 @@ QX-7 型采集器开机前需确认电源电压 220V，接地良好。\n首次�
 
 @pytest.fixture
 def deps() -> PipelineDeps:
-    settings = Settings()
+    settings = Settings(_env_file=None)  # 不继承仓库根 .env（测试确定性）
     settings.env = settings.env.__class__.TEST
     settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:5433/loomvec"
     settings.ai.mock = True
@@ -83,16 +83,36 @@ def deps() -> PipelineDeps:
 
 async def test_full_pipeline_and_retrieval(deps: PipelineDeps):
     pytest.importorskip("sqlalchemy")
-    DEFAULT_SPACE = uuid.UUID("0198bec0-0000-7000-8000-000000000001")
+    from sqlalchemy import delete as sa_delete
 
-    # ---- 登记：文本资产（inline_text）----
+    from loomvec.core.db.models import Space, SpaceType
+
+    # 每次运行独立空间：默认空间会被历史运行污染（近重复资产累积后，
+    # mock 向量 + BM25 的 RRF 排序不再稳定），独立空间保证断言确定性；
+    # 运行结束级联清理（PG 行 + Milvus 向量），不留测试残留。
     async with deps.session_factory() as session, session.begin():
         try:
             await session.execute(__import__("sqlalchemy").text("SELECT 1 FROM asset LIMIT 1"))
         except Exception as e:
             pytest.skip(f"迁移未执行（先 make migrate）：{e}")
+        tenant_id = (
+            await session.execute(
+                __import__("sqlalchemy").text(
+                    "SELECT tenant_id FROM space WHERE id = '0198bec0-0000-7000-8000-000000000001'"
+                )
+            )
+        ).scalar_one()
+        space = Space(
+            tenant_id=tenant_id,
+            slug=f"pipeline-it-{uuid.uuid4().hex[:12]}",
+            name="管线集成测试",
+            space_type=SpaceType.PERSONAL,
+        )
+        session.add(space)
+        await session.flush()
+        space_id = space.id
         asset = Asset(
-            space_id=DEFAULT_SPACE,
+            space_id=space_id,
             name="QX-7采集器操作手册.md",
             mime_type="text/markdown",
             ext=".md",
@@ -138,16 +158,36 @@ async def test_full_pipeline_and_retrieval(deps: PipelineDeps):
     # ---- 混合检索：语义 + 精确词两路 ----
     retriever = Retriever(deps.milvus, deps.ai, deps.settings.search)
     hits: list[SemanticHit] = await retriever.search(
-        space_ids=[DEFAULT_SPACE], query="采集器校准周期是多久"
+        space_ids=[space_id], query="采集器校准周期是多久"
     )
     assert hits, "检索无结果"
     assert any("零点校准" in h.text for h in hits), "语义命中失败"
 
-    hits_bm25 = await retriever.search(space_ids=[DEFAULT_SPACE], query="E-41")
+    hits_bm25 = await retriever.search(space_ids=[space_id], query="E-41")
     assert any("E-41" in h.text for h in hits_bm25), "BM25 精确词命中失败"
 
     # locator 由 API 服务层从 PG 补全（unit 行已断言 start_line 存在，见上）
 
     # rerank 开关 A/B：两种模式均有结果（质量对比在 evals 回归中量化）
-    hits_norr = await retriever.search(space_ids=[DEFAULT_SPACE], query="校准流程", rerank=False)
+    hits_norr = await retriever.search(space_ids=[space_id], query="校准流程", rerank=False)
     assert hits_norr
+
+    # ---- 级联清理：不留测试残留（try/finally：断言失败也要清；向量先清，PG 行后清）----
+    try:
+        pass  # 断言在上方；finally 保证清理执行
+    finally:
+        await deps.milvus.async_delete_space_units(space_id)
+        await deps.milvus.async_delete_space_entities(space_id)
+        async with deps.session_factory() as session, session.begin():
+            # 图谱侧产物：entity/community/merge_log 的 space_id 为普通列（无 FK 级联）
+            from loomvec.core.db.models import Community, Entity, EntityMergeLog
+
+            await session.execute(
+                sa_delete(EntityMergeLog).where(EntityMergeLog.space_id == space_id)
+            )
+            await session.execute(sa_delete(Entity).where(Entity.space_id == space_id))
+            await session.execute(sa_delete(Community).where(Community.space_id == space_id))
+            await session.execute(sa_delete(SemanticUnit).where(SemanticUnit.space_id == space_id))
+            await session.execute(sa_delete(AssetVersion).where(AssetVersion.asset_id == asset_id))
+            await session.execute(sa_delete(Asset).where(Asset.id == asset_id))
+            await session.execute(sa_delete(Space).where(Space.id == space_id))

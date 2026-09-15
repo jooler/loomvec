@@ -28,6 +28,8 @@ from loomvec.core.authz import SpaceAccess, require_space_role
 from loomvec.core.config import Settings, get_settings
 from loomvec.core.constants import (
     PLATFORM_ROLE_AUDITOR,
+    PLATFORM_ROLE_OPERATOR,
+    PLATFORM_ROLE_SUPER_ADMIN,
     SCOPE_ADMIN_READ,
     SCOPE_ADMIN_WRITE,
     SCOPE_READ,
@@ -185,43 +187,68 @@ def require_admin(scope: str):
     return _check
 
 
+def require_ops(scope: str):
+    """依赖工厂：运营域统一闸门（P5 运营端）= operator/super_admin + admin scope。
+
+    运营端是内容运营语义（公共知识库维护），与系统运维（admin 域三角色）分离：
+    auditor 不进入运营域；普通用户（无平台角色）不可见。
+    """
+
+    async def _check(
+        identity: Identity = Depends(
+            require_platform_role(PLATFORM_ROLE_OPERATOR, PLATFORM_ROLE_SUPER_ADMIN)
+        ),
+    ) -> Identity:
+        if scope not in identity.scopes:
+            raise PermissionDeniedError(required_scope=scope)
+        return identity
+
+    return _check
+
+
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
-async def admin_audit(
-    request: Request,
-    identity: Identity = Depends(get_identity),
-    session: AsyncSession = Depends(get_session),
-) -> Identity:
-    """管理域审计兜底依赖（挂 /api/v1/admin 路由域级 dependencies）。
+def _make_domain_audit(object_type: str):
+    """域级审计兜底依赖工厂（admin 域 / ops 域共用，object_type 区分来源）。"""
 
-    写方法（POST/PUT/PATCH/DELETE）成功返回后落一条兜底审计（方法+路由模板+
-    路径参数）；端点内的显式 record_audit（含 before/after/reason）与之并存，
-    重复动作用 "auto:" 前缀区分。路由抛错（4xx/5xx）不记成功审计。
-    """
-    yield identity
-    if request.method not in _WRITE_METHODS:
-        return
-    route = request.scope.get("route")
-    path_template = getattr(route, "path", request.url.path)
-    action = f"auto:{request.method.lower()}:{path_template}"
-    try:
-        await record_audit(
-            session,
-            identity=identity,
-            action=action,
-            object_type="admin_request",
-            object_id=request.url.path.rsplit("/", 1)[-1] or None,
-            after={"path_params": {k: str(v) for k, v in request.path_params.items()}},
-            request=request,
-            commit=True,
-        )
-    except Exception:  # 审计兜底失败不影响响应（结构化日志告警）
-        from loomvec.core.logging import get_logger
+    async def _domain_audit(
+        request: Request,
+        identity: Identity = Depends(get_identity),
+        session: AsyncSession = Depends(get_session),
+    ) -> Identity:
+        yield identity
+        if request.method not in _WRITE_METHODS:
+            return
+        route = request.scope.get("route")
+        path_template = getattr(route, "path", request.url.path)
+        action = f"auto:{request.method.lower()}:{path_template}"
+        try:
+            await record_audit(
+                session,
+                identity=identity,
+                action=action,
+                object_type=object_type,
+                object_id=request.url.path.rsplit("/", 1)[-1] or None,
+                after={"path_params": {k: str(v) for k, v in request.path_params.items()}},
+                request=request,
+                commit=True,
+            )
+        except Exception:  # 审计兜底失败不影响响应（结构化日志告警）
+            from loomvec.core.logging import get_logger
 
-        get_logger("loomvec.api.audit").warning(
-            "admin_audit_record_failed", action=action, path=request.url.path
-        )
+            get_logger("loomvec.api.audit").warning(
+                "domain_audit_record_failed", action=action, path=request.url.path
+            )
+
+    return _domain_audit
+
+
+# 管理域审计兜底依赖（挂 /api/v1/admin 路由域级 dependencies）：写方法成功返回后
+# 落一条兜底审计（方法+路由模板+路径参数，"auto:" 前缀与端点内显式审计区分），
+# 路由抛错（4xx/5xx）不记成功审计；运营域（ops）同构复用，object_type 区分来源。
+admin_audit = _make_domain_audit("admin_request")
+ops_audit = _make_domain_audit("ops_request")  # P5 运营端 /api/v1/ops 域级兜底
 
 
 # ---------------------------------------------------------------------------

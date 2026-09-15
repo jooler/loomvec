@@ -36,11 +36,32 @@ class ObjectStorage:
     # ---------- bucket 管理 ----------
 
     def ensure_buckets(self) -> None:
+        """确保 bucket 存在，并应用浏览器直传所需的桶级 CORS（幂等，随启动覆盖）。
+
+        预签名 URL 的鉴权在查询串签名中，直传请求不携带 cookie，
+        因此 AllowedOrigins 允许通配（生产经 storage.cors_allowed_origins 收紧）。
+        """
+
         for bucket in (self._settings.bucket_raw, self._settings.bucket_derived):
             try:
                 self._client.head_bucket(Bucket=bucket)
             except ClientError:
                 self._client.create_bucket(Bucket=bucket)
+            self._client.put_bucket_cors(
+                Bucket=bucket,
+                CORSConfiguration={
+                    "CORSRules": [
+                        {
+                            "AllowedOrigins": self._settings.cors_allowed_origins,
+                            # PUT 直传 + GET 预签名下载分发
+                            "AllowedMethods": ["GET", "PUT"],
+                            "AllowedHeaders": ["*"],
+                            "ExposeHeaders": ["ETag"],
+                            "MaxAgeSeconds": 3600,
+                        }
+                    ]
+                },
+            )
 
     # ---------- 基础对象操作 ----------
 

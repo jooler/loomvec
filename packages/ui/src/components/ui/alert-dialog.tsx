@@ -26,12 +26,14 @@ function AlertDialogPortal({
   )
 }
 
-function AlertDialogOverlay({
-  className,
-  ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
+// React 18 兼容：radix-ui 的 Portal(asChild) 会向 Portal 子元素传 ref。升级 React 19 后可移除。
+const AlertDialogOverlay = React.forwardRef<
+  React.ComponentRef<typeof AlertDialogPrimitive.Overlay>,
+  React.ComponentProps<typeof AlertDialogPrimitive.Overlay>
+>(function AlertDialogOverlay({ className, ...props }, ref) {
   return (
     <AlertDialogPrimitive.Overlay
+      ref={ref}
       data-slot="alert-dialog-overlay"
       className={cn(
         "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
@@ -40,7 +42,7 @@ function AlertDialogOverlay({
       {...props}
     />
   )
-}
+})
 
 function AlertDialogContent({
   className,

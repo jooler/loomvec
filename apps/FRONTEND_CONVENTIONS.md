@@ -1,17 +1,17 @@
-# 前端编码规范（apps/admin 与 apps/web 通用）
+# 前端编码规范（apps/web · apps/admin · apps/ops 通用）
 
-本文是两个前端的统一编码规范（2026-09 起）。两个 app 组件/页面代码同构，除路由器（web 用 BrowserRouter，admin 用 HashRouter）外无差异。
+本文是三个前端的统一编码规范（2026-09 起）。三个 app 组件/页面代码同构，除路由器（web 用 BrowserRouter，admin/ops 用 HashRouter）外无差异。运营端（apps/ops，P5）定位与信息架构见 docs/12。
 
 ## 1. 技术栈与导入
 
 - React 18 + TS strict + Vite 6 + react-router 7 + @tanstack/react-query 5（main.tsx 已配好，重试 1 次 / staleTime 30s）。
-- **共享组件包 `@loomvec/ui`**（`packages/ui`，2026-09-13 起单源）：shadcn/ui 基础组件（`@loomvec/ui/components/ui/*`）、跨 app 业务组件（ConfirmAction/DataTable/DescriptionList/EmptyState/PageHeader/StatCard/StatusBadge，`@loomvec/ui/components/*`）、共享工具（`@loomvec/ui/lib/format`：extractApiError/formatBytes/formatDateTime/formatQuota/formatSeconds/sha256Hex）与 use-mobile hook。包内为 TS 源码直出（无构建产物），各 app 的 vite/vitest/tsconfig 已配好 `@loomvec/ui/*` 解析；**新增共享组件改 `packages/ui`，禁止再往两个 app 各拷一份**。
-- app 本地组件仍在 `@/components/*`（web：ReviewStatusTag/media-player/multi-select；admin：ReasonModal/SecretModal）。各 app 的 `utils.ts` 是再导出层 + 应用专属业务字典（web：配额/审核/角色文案）。
+- **共享组件包 `@loomvec/ui`**（`packages/ui`，2026-09-13 起单源）：shadcn/ui 基础组件（`@loomvec/ui/components/ui/*`）、跨 app 业务组件（ConfirmAction/DataTable/DescriptionList/EmptyState/PageHeader/StatCard/StatusBadge，`@loomvec/ui/components/*`）、共享工具（`@loomvec/ui/lib/format`：extractApiError/formatBytes/formatDateTime/formatQuota/formatSeconds/sha256Hex）与 use-mobile hook。包内为 TS 源码直出（无构建产物），各 app 的 vite/vitest/tsconfig 已配好 `@loomvec/ui/*` 解析；**新增共享组件改 `packages/ui`，禁止再往各 app 拷贝**。跨 app 共享的业务模块也在 ui 包：`@loomvec/ui/lib/upload`（三步直传管线，P5 自 web 提升）、`@loomvec/ui/components/review-status-tag`（审核徽标，P5 自 web 提升）。
+- app 本地组件仍在 `@/components/*`（web：media-player/multi-select；admin：ReasonModal/SecretModal）。各 app 的 `utils.ts` 是再导出层 + 应用专属业务字典（web：配额/审核/角色文案）。
 - Tailwind v4 类扫描：两 app 的 `index.css` 已 `@source` 指向 `packages/ui/src`，新组件无需额外配置。
 - **禁止引入 antd / @ant-design/***；**禁止内联 `style={{}}`**（一律 Tailwind 类）；**禁止新增 CSS 文件**。
 - `cn` 从 `cn` 包导入：`import { cn } from 'cn'`。
 - 路径别名 `@/` → `src/`（`@/auth`、`@/api`、`@/utils`、`@/components/...`）。
-- API：`import { api, unwrap } from '@/api'`（admin）/ `import { api } from '@loomvec/sdk-ts'`（web，见 hooks）。openapi-fetch 用法不变。
+- API：`import { api, unwrap } from '@/api'`（admin/ops）/ `import { api } from '@loomvec/sdk-ts'`（web，见 hooks）。openapi-fetch 用法不变。
 - react-query 查询 key 与缓存语义保持稳定，改动需评估所有消费方。
 
 ## 2. 页面骨架
@@ -74,7 +74,7 @@ const columns: ColumnDef<TenantRow, unknown>[] = [
 
 - 彩色状态 → `StatusBadge tone="green|red|amber|blue|purple|gray"`（`@/components/status-badge`）：green=成功/正常、red=失败/危险、amber=待处理/警告、blue=进行中/信息、purple=特殊、gray=中性。
 - 无色标签 → `<Badge variant="outline">` 或 `<Badge variant="secondary">`。
-- web 端审核状态用现成的 `ReviewStatusTag`。
+- 审核状态用现成的 `ReviewStatusTag`（`@loomvec/ui/components/review-status-tag`，web/ops 共用）。
 
 ## 6. 表单（react-hook-form + zod）
 
@@ -116,7 +116,7 @@ const form = useForm<z.infer<typeof schema>>({ resolver: zodResolver(schema), de
 - 标题/正文/次要文本：语义标签 + Tailwind（`text-lg font-semibold` / `text-sm` / `text-muted-foreground`）；行内代码 `<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">`。
 - 可复制文本 → code + Copy 按钮（参考 `ReasonModal.tsx` 的 SecretModal 实现）。
 - 下拉菜单 → `DropdownMenu`；页签/分段 → `Tabs`；气泡提示 → ui `Tooltip`；提示条 → ui `Alert`。
-- 文件拖拽上传：手写拖拽区（`onDragOver` preventDefault + `onDrop`），内嵌 `<input type="file" className="hidden">` + Button 触发，进度用 ui `Progress`；上传逻辑在 `@/upload.ts`（web）。
+- 文件拖拽上传：手写拖拽区（`onDragOver` preventDefault + `onDrop`），内嵌 `<input type="file" className="hidden">` + Button 触发，进度用 ui `Progress`；上传逻辑用 `uploadFile`（`@loomvec/ui/lib/upload`；web 的 `@/upload.ts` 为再导出兼容层）。
 - 图标一律 `lucide-react`。
 - **React 18 注意**：shadcn registry 新版组件默认面向 React 19；本项目仍在 React 18，`Input`/`Textarea` 必须保留 `forwardRef`（RHF register 依赖 ref 取值），升级 React 19 前不得移除。
 

@@ -27,6 +27,7 @@ from loomvec.core.db.models._common import enum_values
 class SpaceType(enum.StrEnum):
     SHARED = "shared"  # 协作空间（默认）
     PERSONAL = "personal"  # 个人空间
+    PUBLIC = "public"  # 公共空间（运营端创建维护，按用户分组公开）
 
 
 class Space(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
@@ -85,6 +86,43 @@ class SpaceMember(UuidPkMixin, TenantMixin, TimestampMixin, Base):
         default=SpaceRole.VIEWER,
     )
     invited_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+
+class SpaceGroupVisibility(UuidPkMixin, TimestampMixin, Base):
+    """公共空间 × 用户分组可见性（P5 运营端）：行存在即该分组对此空间可见。
+
+    公共空间不向用户开放内容浏览；可见性仅决定"可链接"资格（用户端开关），
+    检索生效还要求链接行存在（authz.linked_public_space_ids 即时求交）。
+    """
+
+    __tablename__ = "space_group_visibility"
+    __table_args__ = (
+        UniqueConstraint("space_id", "group_id", name="uq_space_group_visibility_pair"),
+    )
+
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("space.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("user_group.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class SpaceLink(UuidPkMixin, TimestampMixin, Base):
+    """用户 × 公共空间链接（P5 用户端开关）：链接后可作为问答检索源。"""
+
+    __tablename__ = "space_link"
+    __table_args__ = (UniqueConstraint("user_id", "space_id", name="uq_space_link_pair"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("space.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
 
 class Notification(UuidPkMixin, TenantMixin, TimestampMixin, Base):

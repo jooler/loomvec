@@ -59,6 +59,9 @@ class _BotoStub:
     def create_bucket(self, Bucket):
         self.calls.append(("create_bucket", Bucket))
 
+    def put_bucket_cors(self, Bucket, CORSConfiguration):
+        self.calls.append(("put_bucket_cors", Bucket))
+
 
 def test_storage_ensure_buckets(monkeypatch):
     stub = _BotoStub()
@@ -66,5 +69,12 @@ def test_storage_ensure_buckets(monkeypatch):
     storage = ObjectStorage(Settings(_env_file=None).storage)
     storage.ensure_buckets()
     actions = [c[0] for c in stub.calls]
-    # 每个 bucket：head 404 → create（逐桶处理）
-    assert actions == ["head_bucket", "create_bucket", "head_bucket", "create_bucket"]
+    # 每个 bucket：head 404 → create → 应用直传 CORS（逐桶处理）
+    assert actions == [
+        "head_bucket",
+        "create_bucket",
+        "put_bucket_cors",
+        "head_bucket",
+        "create_bucket",
+        "put_bucket_cors",
+    ]

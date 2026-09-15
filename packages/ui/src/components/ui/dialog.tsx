@@ -31,12 +31,15 @@ function DialogClose({
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
-function DialogOverlay({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+// React 18 兼容：radix-ui 的 Portal(asChild) 会向 Portal 子元素传 ref（供 Presence 处理退出动画），
+// 函数组件接不住会触发 "Function components cannot be given refs" 警告。升级 React 19 后可移除。
+const DialogOverlay = React.forwardRef<
+  React.ComponentRef<typeof DialogPrimitive.Overlay>,
+  React.ComponentProps<typeof DialogPrimitive.Overlay>
+>(function DialogOverlay({ className, ...props }, ref) {
   return (
     <DialogPrimitive.Overlay
+      ref={ref}
       data-slot="dialog-overlay"
       className={cn(
         "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
@@ -45,7 +48,7 @@ function DialogOverlay({
       {...props}
     />
   )
-}
+})
 
 function DialogContent({
   className,

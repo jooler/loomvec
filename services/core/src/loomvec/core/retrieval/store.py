@@ -155,6 +155,20 @@ class MilvusStore:
         client.delete(COLLECTION_SEMANTIC_UNITS, filter=f'asset_id == "{asset_id}"')
         client.flush(COLLECTION_SEMANTIC_UNITS)
 
+    def delete_unit_ids(self, unit_ids: list[uuid.UUID]) -> None:
+        """chunk 管理单删/批删：按主键精确移除向量（行已在 PG 侧删除）。"""
+        if not unit_ids:
+            return
+        client = self._ensure_client()
+        if not client.has_collection(COLLECTION_SEMANTIC_UNITS):
+            return
+        # 分批删除：filter 表达式长度有上界，通用批量接口不假设调用方规模
+        batch = 1000
+        for i in range(0, len(unit_ids), batch):
+            ids = [str(u) for u in unit_ids[i : i + batch]]
+            client.delete(COLLECTION_SEMANTIC_UNITS, filter=_in_expr("id", ids))
+        client.flush(COLLECTION_SEMANTIC_UNITS)
+
     def delete_space_units(self, space_id: uuid.UUID) -> None:
         """空间删除级联：清理该空间全部向量。"""
         client = self._ensure_client()
@@ -392,6 +406,9 @@ class MilvusStore:
 
     async def async_delete_asset_units(self, asset_id: uuid.UUID) -> None:
         await asyncio.to_thread(self._guarded, lambda: self.delete_asset_units(asset_id))
+
+    async def async_delete_unit_ids(self, unit_ids: list[uuid.UUID]) -> None:
+        await asyncio.to_thread(self._guarded, lambda: self.delete_unit_ids(unit_ids))
 
     async def async_delete_space_units(self, space_id: uuid.UUID) -> None:
         await asyncio.to_thread(self._guarded, lambda: self.delete_space_units(space_id))

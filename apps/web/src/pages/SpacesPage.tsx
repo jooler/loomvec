@@ -7,7 +7,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
-import { useMySpaces } from '@/hooks';
+import { useMySpaces, usePublicSpaces, useSpaceLinkToggle } from '@/hooks';
 import { CHUNK_PRESETS, EMBEDDING_MODELS, extractApiError, formatBytes, ROLE_META, ROLE_TONE } from '@/utils';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
@@ -17,6 +17,7 @@ import {
   Card,
   CardAction,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from '@loomvec/ui/components/ui/card';
@@ -42,6 +43,7 @@ import { Textarea } from '@loomvec/ui/components/ui/textarea';
 
 /**
  * P2-WEB-01 空间管理：我的空间卡片（角色/审核/成员数）+ 创建空间向导。
+ * P5 增补「公共空间」区：仅可链接/断开（作为问答检索源），不可进入浏览内容。
  */
 
 /** Radix Select 不允许空串 value：此哨兵表示「默认（不指定）」。 */
@@ -226,6 +228,8 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
 export function SpacesPage() {
   const navigate = useNavigate();
   const spaces = useMySpaces();
+  const publicSpaces = usePublicSpaces();
+  const linkToggle = useSpaceLinkToggle();
   const [createOpen, setCreateOpen] = useState(false);
 
   return (
@@ -292,6 +296,75 @@ export function SpacesPage() {
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>公共空间</CardTitle>
+          <CardAction>
+            <Button variant="outline" onClick={() => publicSpaces.refetch()}>
+              <RefreshCw /> 刷新
+            </Button>
+          </CardAction>
+          <CardDescription>
+            由运营方维护的公共知识库。链接后可作为问答检索源（在对话页「召回空间」中选择）；
+            公共空间内容不开放浏览。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {publicSpaces.isLoading ? (
+            <div className="grid place-items-center py-10">
+              <Spinner className="size-5 text-muted-foreground" />
+            </div>
+          ) : publicSpaces.isError ? (
+            <p className="text-sm text-destructive">{(publicSpaces.error as Error).message}</p>
+          ) : (publicSpaces.data?.length ?? 0) === 0 ? (
+            <EmptyState description="暂无可链接的公共空间（未对你所在的分组公开）" />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {(publicSpaces.data ?? []).map((s) => (
+                <Card key={s.id} className="gap-3 py-4">
+                  <CardHeader>
+                    <CardTitle className="truncate">{s.name}</CardTitle>
+                    <CardAction>
+                      <StatusBadge tone="purple">公共</StatusBadge>
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">
+                      {s.description ?? '（无描述）'}
+                    </p>
+                    <div className="flex items-center justify-between rounded-lg border p-2.5">
+                      <div className="space-y-0.5">
+                        <Label htmlFor={`link-${s.id}`} className="text-sm">
+                          链接到此空间
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          {s.linked ? '已链接：可作为问答检索源' : '未链接'}
+                        </p>
+                      </div>
+                      <Switch
+                        id={`link-${s.id}`}
+                        checked={s.linked}
+                        disabled={linkToggle.isPending}
+                        onCheckedChange={(v) =>
+                          linkToggle.mutate(
+                            { spaceId: s.id, linked: v },
+                            {
+                              onSuccess: () =>
+                                toast.success(v ? `已链接「${s.name}」` : `已断开「${s.name}」`),
+                            },
+                          )
+                        }
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <CreateSpaceModal open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );

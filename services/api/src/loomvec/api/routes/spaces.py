@@ -24,6 +24,7 @@ from loomvec.core.authz import SpaceAccess
 from loomvec.core.constants import CHUNK_PRESETS, EMBEDDING_MODELS
 from loomvec.core.db.models import SpaceRole, SpaceType
 from loomvec.core.db.repos import SpaceMemberRepo
+from loomvec.core.errors import ValidationError
 from loomvec.core.storage import ObjectStorage
 
 router = APIRouter(prefix="/api/v1", tags=["spaces"])
@@ -112,6 +113,9 @@ async def create_space(
     session: AsyncSession = Depends(get_session),
 ) -> SpaceOut:
     """创建空间：创建者成为 owner，同事务建立成员与用量行。"""
+    if body.space_type == SpaceType.PUBLIC:
+        # 公共空间由运营端创建（POST /api/v1/ops/spaces），用户端入口关闭
+        raise ValidationError("公共空间由运营端创建", space_type=body.space_type.value)
     space = await space_service.create_space(
         session,
         identity=identity,

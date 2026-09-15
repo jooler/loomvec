@@ -17,7 +17,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-loomvec}
       POSTGRES_DB: ${POSTGRES_DB:-loomvec}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # 宿主机端口默认 5433：本机系统 PostgreSQL 占 5432，回退到 5432 会互相混淆
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./postgres-age/init:/docker-entrypoint-initdb.d:ro

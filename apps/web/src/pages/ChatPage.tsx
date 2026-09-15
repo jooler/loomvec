@@ -11,7 +11,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@loomvec/ui
 import { EmptyState } from '@loomvec/ui/components/empty-state';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { MultiSelect } from '@/components/multi-select';
-import { useChatSessions, useMySpaces } from '@/hooks';
+import { useChatSessions, useMySpaces, usePublicSpaces } from '@/hooks';
 import { extractApiError } from '@/utils';
 import { streamChatAnswer, type ChatCitation, type GraphEvidence } from '@/chat';
 
@@ -100,6 +100,8 @@ export function ChatPage() {
   const streamingRef = useRef(false);
 
   const spaces = useMySpaces();
+  // 已链接的公共空间也是合法检索源（P5）；与成员空间一起出现在召回范围选择器中
+  const publicSpaces = usePublicSpaces();
 
   const status = useQuery({
     queryKey: ['chat-status'],
@@ -255,7 +257,12 @@ export function ChatPage() {
   const chatDisabled = status.data?.enabled === false;
   const currentSession = (sessions.data?.items ?? []).find((s) => s.session_id === sessionId);
   const scopeIds = scopeOverride ?? currentSession?.scope_space_ids ?? [];
-  const spaceOptions = (spaces.data ?? []).map((s) => ({ value: s.id, label: s.name }));
+  const spaceOptions = [
+    ...(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name })),
+    ...(publicSpaces.data ?? [])
+      .filter((s) => s.linked)
+      .map((s) => ({ value: s.id, label: `${s.name}（公共）` })),
+  ];
 
   return (
     <div className="flex h-svh min-w-0 flex-col">
@@ -268,8 +275,8 @@ export function ChatPage() {
             <MultiSelect
               value={scopeIds}
               options={spaceOptions}
-              placeholder="全部空间（我的全部空间）"
-              loading={spaces.isLoading || sessions.isLoading}
+              placeholder="全部空间（我的全部可检索空间）"
+              loading={spaces.isLoading || publicSpaces.isLoading || sessions.isLoading}
               onChange={(v) => {
                 setScopeOverride(v);
                 updateScope.mutate(v);

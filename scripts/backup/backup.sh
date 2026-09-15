@@ -5,7 +5,7 @@
 #   ./scripts/backup/backup.sh <pg_url> <storage_endpoint> <backup_dir>
 # 示例（compose 环境）：
 #   ./scripts/backup/backup.sh \
-#     postgresql://loomvec:loomvec@localhost:5432/loomvec \
+#     postgresql://loomvec:loomvec@localhost:5433/loomvec \
 #     http://localhost:9000 /tmp/loomvec-backups
 #
 # 生产 PITR：PG 开启 archive_mode + WAL 归档至对象存储后，本脚本追加

@@ -201,9 +201,7 @@ def test_matrix_delete_with_reason_records_audit(client: TestClient):
     )
     assert resp.status_code == 201, resp.text
     client_db_id = resp.json()["id"]
-    resp = client.request(
-        "DELETE", f"/api/v1/admin/oauth/clients/{client_db_id}", headers=headers
-    )
+    resp = client.request("DELETE", f"/api/v1/admin/oauth/clients/{client_db_id}", headers=headers)
     assert resp.status_code == 204, resp.text
 
     # Webhook 订阅：带理由删除 → 审计留痕

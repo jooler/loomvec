@@ -11,10 +11,28 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _find_env_file() -> str | None:
+    """从 cwd 向上查找最近的 .env，止步于仓库根（.git 所在目录）。
+
+    配置加载原本只认 cwd 下的 .env，子目录命令（如 `make migrate` 在
+    services/api 执行）会静默回退到内置默认值，可能指向与 API 不同的
+    数据库；环境变量优先级始终高于 .env，部署注入不受影响。
+    """
+    directory = Path.cwd().resolve()
+    while True:
+        if (directory / ".git").exists() or (directory / ".env").is_file():
+            env = directory / ".env"
+            return str(env) if env.is_file() else None
+        if directory.parent == directory:
+            return None
+        directory = directory.parent
 
 
 class Env(StrEnum):
@@ -32,7 +50,9 @@ class OtelSettings(BaseModel):
 
 
 class PostgresSettings(BaseModel):
-    url: str = "postgresql+asyncpg://loomvec:loomvec@localhost:5432/loomvec"
+    # 默认对齐 compose 宿主机端口（deploy/compose/.env 的 POSTGRES_PORT）；
+    # 系统自带 PostgreSQL 占 5432，指向它会静默读写错误的库
+    url: str = "postgresql+asyncpg://loomvec:loomvec@localhost:5433/loomvec"
     pool_size: int = 10
     max_overflow: int = 20
     echo: bool = False
@@ -58,6 +78,10 @@ class StorageSettings(BaseModel):
     # bucket 约定：原始文件 / 派生物（缩略图、关键帧、解析产物等）
     bucket_raw: str = "loomvec-raw"
     bucket_derived: str = "loomvec-derived"
+    # 浏览器直传预签名 URL 依赖桶级 CORS（PUT/OPTIONS）。仅在 dev 启动时由
+    # ensure_buckets 自动写入（幂等）；生产桶由运维手工配置 CORS（收紧为前端
+    # 实际来源，如 ["https://web.example.com"]），本配置不生效。
+    cors_allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
 
 
 class MineruSettings(BaseModel):
@@ -328,7 +352,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LOOMVEC_",
         env_nested_delimiter="__",
-        env_file=".env",
+        env_file=_find_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
     )

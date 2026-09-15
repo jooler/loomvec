@@ -128,9 +128,11 @@ async def search(
             return SearchResponse(items=[], total=0)
 
     # 图谱总开关：SystemConfig 运行时覆盖 ∩ 请求参数（P3-API-02）
+    # 注意传完整 Settings（graph_switch 同时读 settings.graph 与 settings.search）
+    from loomvec.api.deps import service_settings
     from loomvec.api.services.search import graph_switch
 
-    global_graph = await graph_switch(session, get_retriever_settings(request))
+    global_graph = await graph_switch(session, service_settings(request))
     use_graph = global_graph and (body.use_graph if body.use_graph is not None else True)
 
     hits: list[SemanticHit] = await retriever.search(

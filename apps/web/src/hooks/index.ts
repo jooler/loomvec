@@ -33,6 +33,46 @@ export function useMySpaces() {
   });
 }
 
+/** 公共空间条目（P5）：经分组可见；仅可链接/断开，不可进入浏览。 */
+export interface PublicSpaceItem {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  linked: boolean;
+}
+
+/** 对我可见的公共空间列表（含链接状态；空间页/问答检索源共用缓存）。 */
+export function usePublicSpaces() {
+  return useQuery({
+    queryKey: ['public-spaces'],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/public-spaces');
+      if (error) throw new Error(extractApiError(error, '加载公共空间失败'));
+      return data.items as unknown as PublicSpaceItem[];
+    },
+  });
+}
+
+/** 公共空间链接开关（P5）：链接后该空间可作为问答检索源。 */
+export function useSpaceLinkToggle() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { spaceId: string; linked: boolean }) => {
+      const { data, error } = await api.PUT('/api/v1/public-spaces/{space_id}/link', {
+        params: { path: { space_id: vars.spaceId } },
+        body: { linked: vars.linked },
+      });
+      if (error) throw new Error(extractApiError(error, vars.linked ? '链接失败' : '断开失败'));
+      return data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['public-spaces'] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+}
+
 /** 对话会话条目（侧栏会话列表 / 对话页共用）。 */
 export interface ChatSessionItem {
   session_id: string;

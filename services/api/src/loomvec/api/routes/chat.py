@@ -8,9 +8,10 @@
 - `DELETE /chat/sessions/{sid}`               删除会话（软删）
 - `POST   /chat/sessions/{sid}/messages`      提问（SSE 流式响应）
 
-会话按用户隔离（仅创建者可见）；召回范围 scope_space_ids 为空列表 = 我的全部空间，
-提问时与用户当前可见空间取交集（被移出空间的内容即时剔除）。图谱联合召回常态开启，
-仅保留运维全局关停（SystemConfig graph.enabled）作为降级开关。
+会话按用户隔离（仅创建者可见）；召回范围 scope_space_ids 为空列表 = 我的全部可检索空间
+（成员空间 ∪ 已链接公共空间），提问时与当前可检索空间取交集（被移出/取消链接/分组
+收回即剔除）。图谱联合召回常态开启，仅保留运维全局关停（SystemConfig graph.enabled）
+作为降级开关。
 SSE 协议见 api/services/qa.py 模块注释。
 """
 
@@ -31,7 +32,11 @@ from loomvec.api.deps import get_ai, get_retriever, get_session, require_scope
 from loomvec.api.identity import user_uuid
 from loomvec.api.services.qa import QaService
 from loomvec.api.services.search import enrich_hits, graph_switch
-from loomvec.core.authz import SpaceRole, visible_space_ids
+from loomvec.core.authz import (
+    SpaceRole,
+    linked_public_space_ids,
+    visible_space_ids,
+)
 from loomvec.core.db.models import ChatMessage, ChatSession, Space
 from loomvec.core.db.repos import SpaceMemberRepo
 from loomvec.core.errors import ValidationError
@@ -100,28 +105,32 @@ def _scope_space_ids(raw: list[str] | None) -> list[uuid.UUID]:
 async def _assert_member_spaces(
     session: AsyncSession, user_id: uuid.UUID, space_ids: list[uuid.UUID]
 ) -> None:
-    """召回范围合法性：所选空间必须是用户当前可见（成员中）的空间。"""
-    visible = set(await visible_space_ids(session, user_id=user_id))
-    unknown = [s for s in space_ids if s not in visible]
+    """召回范围合法性：所选空间必须是成员空间，或已链接且当前可见的公共空间。"""
+    allowed = set(await visible_space_ids(session, user_id=user_id))
+    allowed.update(await linked_public_space_ids(session, user_id=user_id))
+    unknown = [s for s in space_ids if s not in allowed]
     if unknown:
-        raise ValidationError(
-            "存在无权访问的空间", space_ids=[str(s) for s in unknown[:5]]
-        )
+        raise ValidationError("存在无权访问的空间", space_ids=[str(s) for s in unknown[:5]])
 
 
 async def _resolve_chat_scope(
     session: AsyncSession, user_id: uuid.UUID, session_row: ChatSession
 ) -> tuple[list[uuid.UUID], uuid.UUID | None, dict[uuid.UUID, SpaceRole]]:
-    """会话召回范围 × 用户可见空间 → 有效空间集合、租户与角色映射（富集用）。"""
+    """会话召回范围 × 用户可检索空间 → 有效空间集合、租户与角色映射（富集用）。
+
+    可检索空间 = 成员空间 ∪ 已链接且当前可见的公共空间（P5）；
+    公共空间在富集时按 viewer 处理（enrich_hits 对无成员关系的空间取默认 viewer）。
+    """
     visible = await visible_space_ids(session, user_id=user_id)
+    visible.extend(await linked_public_space_ids(session, user_id=user_id))
+    # 既属成员又有链接的公共空间去重（保持原有次序）
+    visible = list(dict.fromkeys(visible))
     scope = set(_scope_space_ids(session_row.scope_space_ids))
     effective = [s for s in visible if not scope or s in scope]
     roles = {m.space_id: m.role for m in await SpaceMemberRepo(session).list_for_user(user_id)}
     tenant_ids = (
         list(
-            (
-                await session.execute(select(Space.tenant_id).where(Space.id.in_(effective)))
-            )
+            (await session.execute(select(Space.tenant_id).where(Space.id.in_(effective))))
             .scalars()
             .all()
         )
@@ -171,9 +180,7 @@ async def create_session(
     if scope:
         await _assert_member_spaces(session, user_id, scope)
     qa = QaService(session, None, None)
-    row = await qa.create_session(
-        user_id, (body.title if body else None), scope_space_ids=scope
-    )
+    row = await qa.create_session(user_id, (body.title if body else None), scope_space_ids=scope)
     await session.commit()
     return _session_out(row)
 

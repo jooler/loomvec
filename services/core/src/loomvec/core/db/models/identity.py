@@ -11,10 +11,12 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -99,6 +101,44 @@ class UserRole(UuidPkMixin, TenantMixin, TimestampMixin, Base):
     )
     role_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("role.id", ondelete="CASCADE"), nullable=False
+    )
+
+
+class UserGroup(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
+    """用户分组（P5 运营端维护）：公共空间可见性的授权单元，与空间角色解耦。
+
+    唯一性只约束活行（部分唯一索引）：软删行不占名，同名分组可重建。
+    """
+
+    __tablename__ = "user_group"
+    __table_args__ = (
+        Index(
+            "uq_user_group_tenant_name_live",
+            "tenant_id",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class UserGroupMember(UuidPkMixin, TimestampMixin, Base):
+    """分组-用户关联：一个用户可属多个分组（运营端按用户名添加）。"""
+
+    __tablename__ = "user_group_member"
+    __table_args__ = (UniqueConstraint("group_id", "user_id", name="uq_user_group_member_pair"),)
+
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("user_group.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
 

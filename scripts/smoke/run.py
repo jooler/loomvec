@@ -59,7 +59,7 @@ def main() -> int:
     pg = (
         f"postgresql://{env.get('POSTGRES_USER', 'loomvec')}"
         f":{env.get('POSTGRES_PASSWORD', 'loomvec')}"
-        f"@localhost:{env.get('POSTGRES_PORT', '5432')}"
+        f"@localhost:{env.get('POSTGRES_PORT', '5433')}"
         f"/{env.get('POSTGRES_DB', 'loomvec')}"
     )
     redis_url = f"redis://localhost:{env.get('REDIS_PORT', '6379')}/0"
