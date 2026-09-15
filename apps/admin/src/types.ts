@@ -194,7 +194,6 @@ export interface SettingItem {
   sensitive: boolean;
   effect: string; // immediate | restart
   admin_only: boolean;
-  overridden: boolean;
 }
 
 /** OAuth 应用。 */

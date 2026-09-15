@@ -242,7 +242,6 @@ async def list_settings(session: AsyncSession) -> list[dict[str, Any]]:
     overrides = await load_overrides(session)
     out = []
     for d in SETTING_REGISTRY.values():
-        has_override = d.key in overrides
         value = overrides.get(d.key, d.default)
         out.append(
             {
@@ -253,7 +252,6 @@ async def list_settings(session: AsyncSession) -> list[dict[str, Any]]:
                 "sensitive": d.sensitive,
                 "effect": d.effect,
                 "admin_only": d.admin_only,
-                "overridden": has_override,
             }
         )
     return out
@@ -275,7 +273,6 @@ async def get_setting(session: AsyncSession, key: str) -> dict[str, Any]:
         "sensitive": d.sensitive,
         "effect": d.effect,
         "admin_only": d.admin_only,
-        "overridden": row is not None,
     }
 
 

@@ -116,12 +116,7 @@ export function SettingsPage({ group }: { group: string }) {
       accessorKey: 'key',
       header: '配置键',
       cell: ({ row }) => (
-        <div className="flex flex-wrap items-center gap-2">
-          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{row.original.key}</code>
-          {row.original.overridden ? (
-            <StatusBadge tone="amber">已覆盖默认值</StatusBadge>
-          ) : null}
-        </div>
+        <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{row.original.key}</code>
       ),
     },
     { accessorKey: 'description', header: '说明' },
