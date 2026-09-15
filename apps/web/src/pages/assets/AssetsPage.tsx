@@ -153,9 +153,9 @@ export function AssetsPage() {
 
   return (
     <>
-      {/* Finder 高度上下文：视口减去 Finder 之外的页头（p-6 上 24 + 标题 28 + 间距 32 +
-          页签 37 + 底部 p-6 24 ≈ 145px），工具栏/筛选/内容区都在容器内 */}
-      <div className="flex h-[calc(100dvh-145px)] min-h-96 flex-col">
+      {/* Finder 高度上下文：视口减去 Finder 之外的页头（p-6 上 24 + 标题行 32（含返回按钮）
+          + 间距 32 + 页签 37 + 底部 p-6 24 ≈ 149px），工具栏/筛选/内容区都在容器内 */}
+      <div className="flex h-[calc(100dvh-149px)] min-h-96 flex-col">
         <Finder
         key={spaceId}
         spaceName={space?.name}

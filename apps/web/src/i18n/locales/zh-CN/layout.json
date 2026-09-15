@@ -5,6 +5,7 @@
     "notifications": "通知"
   },
   "notLoggedIn": "未登录",
+  "backToSpaces": "返回空间列表",
   "profileMenu": "个人中心",
   "logout": "退出登录",
   "spaceFallback": "空间",

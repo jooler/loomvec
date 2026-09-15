@@ -1,7 +1,9 @@
-import { NavLink, Outlet, useParams } from 'react-router';
+import { NavLink, Outlet, useNavigate, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import { ArrowLeft } from 'lucide-react';
 import { useMySpaces } from '@/hooks';
 import { ROLE_TONE } from '@/utils';
+import { Button } from '@loomvec/ui/components/ui/button';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { cn } from 'cn';
@@ -12,6 +14,7 @@ import { cn } from 'cn';
  */
 export function SpaceLayout() {
   const { spaceId } = useParams<{ spaceId: string }>();
+  const navigate = useNavigate();
   const spaces = useMySpaces();
   const { t } = useTranslation('layout');
   const space = (spaces.data ?? []).find((s) => s.id === spaceId);
@@ -43,6 +46,15 @@ export function SpaceLayout() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t('backToSpaces')}
+          title={t('backToSpaces')}
+          onClick={() => navigate('/spaces')}
+        >
+          <ArrowLeft />
+        </Button>
         {spaces.isLoading ? (
           <Spinner className="size-5 text-muted-foreground" />
         ) : (

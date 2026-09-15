@@ -116,10 +116,18 @@ function PdfPane({ url, page }: { url: string; page?: number }) {
         theme: { preference },
         // 界面语言简体中文（i18n 插件默认注册全部内置语言，含 zh-CN）
         i18n: { defaultLocale: 'zh-CN', fallbackLocale: 'en' },
-        // 只读查看器：snippet 的 UI schema 把全部编辑类入口（批注/形状/墨迹/图章/
-        // 签名/表单编辑/密文）挂在 annotation 与 redaction 根分类下，禁用分类
-        // 会同时从工具栏/菜单/选中菜单移除对应 UI 与命令
-        disabledCategories: ['annotation', 'redaction'],
+        // 只读查看器：分类禁用同时作用于 UI（工具栏/菜单/选中菜单）与命令系统——
+        // annotation/redaction = 批注/形状/墨迹/图章/签名/密文等编辑工具；
+        // insert/form = 顶栏「插入」「表单」下拉；panel-comment / panel-annotation-style
+        // = 「评论」侧栏与标注样式面板
+        disabledCategories: [
+          'annotation',
+          'redaction',
+          'insert',
+          'form',
+          'panel-comment',
+          'panel-annotation-style',
+        ],
         // 权限位兜底（第二道闸）：无论 PDF 自身如何声明，一律禁止改内容/改标注/
         // 填表单/重组文档——annotation 插件的 create/update/delete 均检查
         // ModifyAnnotations，表单交互检查 FillForms
