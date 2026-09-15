@@ -1,4 +1,4 @@
-.PHONY: infra age-src api worker web admin sdk smoke evals lint test backend-test frontend-test
+.PHONY: infra age-src api worker web admin ops sdk smoke evals lint test backend-test frontend-test
 
 # 基础设施栈
 infra:
@@ -22,6 +22,9 @@ web:
 
 admin:
 	pnpm dev:admin
+
+ops:
+	pnpm dev:ops
 
 # 契约导出 + SDK 生成（改 API 后执行）
 sdk:

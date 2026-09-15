@@ -41,9 +41,9 @@ third_party/mineru/        MinerU 3.4.5 vendored 源码（compose 镜像构建�
 ## 快速开始（本地开发）
 
 ```bash
-./dev.sh            # 一键启动全部：镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈 → 迁移 → api/worker/web/admin（幂等，已在跑的自动跳过）
+./dev.sh start      # 一键启动全部：镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈 → 迁移 → api/worker + 三个前端 web/admin/ops（幂等，已在跑的自动跳过）
 ./dev.sh status     # 查看各组件状态
-./dev.sh stop       # 停止四个应用进程（基础设施与监控容器保留；需停止容器用 docker compose -f deploy/compose/compose.yaml --profile observability stop）
+./dev.sh stop       # 关闭三个前端、api/worker 应用进程，并停止基础设施与监控容器（数据卷保留；彻底清理用 docker compose -f deploy/compose/compose.yaml --profile observability down）
 ```
 
 前置：Python 3.12（uv 自动管理）、Node 20+、pnpm、Docker。首次运行会自动生成
@@ -70,6 +70,7 @@ uv run python scripts/export_openapi.py && pnpm install && pnpm sdk:generate
 # 4) 前端
 pnpm dev:web    # 用户端 http://localhost:5173
 pnpm dev:admin  # 运维端 http://localhost:5174
+pnpm dev:ops    # 运营端 http://localhost:5175（公共知识库维护，docs/12）
 
 # 5) 冒烟 / 评测（API + worker 需已启动）
 uv run python scripts/smoke/run.py
@@ -78,7 +79,7 @@ make evals        # 检索评测回归（金标 66 条；rerank A/B：--no-reran
 
 </details>
 
-dev 登录：`POST /api/v1/auth/dev/token`（用户名任意，免密签发测试 JWT；运维端 dev 登录默认 super_admin）。
+dev 登录：`POST /api/v1/auth/dev/token`（用户名任意，免密签发测试 JWT；运维端 dev 登录默认 super_admin，运营端默认 operator）。
 
 AI 网关：默认 `LOOMVEC_AI__MOCK=true`（确定性本地实现，离线可跑通全链路）。
 接入云端供方时在 `.env` 配置 `LOOMVEC_AI__EMBEDDING__*` / `LLM__*` / `RERANK__*`

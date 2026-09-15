@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# LoomVec 开发环境一键启动（macOS/Linux）
+# LoomVec 开发环境管理脚本（macOS/Linux）
 #
-# 用法：
-#   ./dev.sh            # 一键启动全部：镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈 → 迁移 → api/worker/web/admin
-#   ./dev.sh stop       # 停止本脚本启动的四个应用进程（容器保留）
+# 用法（三个子命令，必须显式指定）：
+#   ./dev.sh start      # 一键启动全部：镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈 → 迁移 → api/worker + 三个前端（web/admin/ops）
+#   ./dev.sh stop       # 关闭三个前端、api/worker 应用进程，并停止基础设施+监控容器（数据卷保留）
 #   ./dev.sh status     # 查看各组件运行状态
 #
 # 行为约定：
 # - 幂等：已在运行的组件自动跳过，不会重复拉起；
 # - 监控栈（Grafana/Prometheus/Alertmanager/Loki/Promtail）随一键启动一起拉起；
-# - 日志：应用进程输出到 tmp/dev-{api,worker,web,admin}.log；
+# - 日志：应用进程输出到 tmp/dev-{api,worker,web,admin,ops}.log；
 # - MinerU 首次构建/启动较慢（模型下载 1~2GB），未就绪只告警不阻塞（解析功能暂不可用）。
 set -uo pipefail
 
@@ -18,7 +18,7 @@ cd "$ROOT"
 LOG_DIR="$ROOT/tmp"; PID_FILE="$LOG_DIR/dev.pids"; mkdir -p "$LOG_DIR"
 COMPOSE="docker compose -f deploy/compose/compose.yaml --profile observability"
 
-API_PORT=8080; WEB_PORT=5173; ADMIN_PORT=5174
+API_PORT=8080; WEB_PORT=5173; ADMIN_PORT=5174; OPS_PORT=5175
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; DIM=$'\033[2m'; RST=$'\033[0m'
 ok()   { echo "${GRN}✓${RST} $*"; }
 warn() { echo "${YLW}!${RST} $*"; }
@@ -44,17 +44,26 @@ save_pid(){
 }
 
 do_stop() {
-  if [ ! -f "$PID_FILE" ]; then echo "无运行记录（${PID_FILE} 不存在）"; exit 0; fi
-  while IFS= read -r line; do
-    pid_name="${line%%=*}"; pid="${line#*=}"
-    if kill -0 "$pid" 2>/dev/null; then kill "$pid" && ok "已停止 $pid_name (pid $pid)"; else echo "- $pid_name (pid $pid) 未在运行"; fi
-  done < "$PID_FILE"
-  rm -f "$PID_FILE"
-  echo "容器保留（含监控栈；需要停止：$COMPOSE stop）"
+  if [ -f "$PID_FILE" ]; then
+    while IFS= read -r line; do
+      pid_name="${line%%=*}"; pid="${line#*=}"
+      if kill -0 "$pid" 2>/dev/null; then kill "$pid" && ok "已停止 $pid_name (pid $pid)"; else echo "- $pid_name (pid $pid) 未在运行"; fi
+    done < "$PID_FILE"
+    rm -f "$PID_FILE"
+  else
+    echo "- 无本脚本启动的应用进程（${PID_FILE} 不存在）"
+  fi
+  step "停止基础设施 + 监控容器"
+  if docker info --format ok >/dev/null 2>&1; then
+    $COMPOSE stop || warn "compose stop 失败"
+    ok "基础设施与监控容器已停止（数据卷保留；彻底清理用 $COMPOSE down）"
+  else
+    warn "Docker 未运行，跳过容器停止"
+  fi
 }
 
 do_status() {
-  for probe in "PostgreSQL:5433" "Redis:6379" "RustFS:9000" "Milvus:19530" "MinerU:8000" "Grafana:3002" "Prometheus:9090" "API:8080" "Web:5173" "Admin:5174"; do
+  for probe in "PostgreSQL:5433" "Redis:6379" "RustFS:9000" "Milvus:19530" "MinerU:8000" "Grafana:3002" "Prometheus:9090" "API:8080" "Web:5173" "Admin:5174" "Ops:5175"; do
     port_up "${probe##*:}" && ok "$probe" || fail "$probe"
   done
   if alive worker; then ok "worker（本脚本启动）"
@@ -62,11 +71,11 @@ do_status() {
   else fail "worker"; fi
 }
 
-case "${1:-start}" in
+case "${1:-}" in
+  start)  : ;;
   stop)   do_stop; exit 0 ;;
   status) do_status; exit 0 ;;
-  start|"") : ;;
-  *) echo "用法: ./dev.sh [start|stop|status]"; echo "（obs 参数已移除：监控栈随默认一键启动）"; exit 1 ;;
+  *) echo "用法: ./dev.sh start|stop|status"; exit 1 ;;
 esac
 
 # ---------------------------------------------------------------- 前置检查
@@ -144,6 +153,7 @@ else
 fi
 start_bg web    web    "$WEB_PORT"    pnpm dev:web
 start_bg admin  admin  "$ADMIN_PORT"  pnpm dev:admin
+start_bg ops    ops    "$OPS_PORT"    pnpm dev:ops
 
 # worker 无端口，用进程+心跳判定
 if alive worker || docker exec loomvec-redis redis-cli exists loomvec:worker:heartbeat 2>/dev/null | grep -q 1; then
@@ -156,12 +166,14 @@ step "就绪等待"
 wait_http "API (8080)"  "http://localhost:8080/readyz" 1 120
 wait_http "Web (5173)"  "http://localhost:$WEB_PORT/"  1 60
 wait_http "Admin (5174)" "http://localhost:$ADMIN_PORT/" 1 60
+wait_http "Ops (5175)"  "http://localhost:$OPS_PORT/"   1 60
 
 step "完成"
 echo "  用户端     http://localhost:$WEB_PORT    （dev 登录：任意用户名）"
 echo "  运维端     http://localhost:$ADMIN_PORT  （dev 登录默认 super_admin）"
+echo "  运营端     http://localhost:$OPS_PORT    （dev 登录默认 operator）"
 echo "  API 文档   http://localhost:$API_PORT/docs"
 echo "  Grafana    http://localhost:3002 （admin，密码见 deploy/compose/.env 的 GRAFANA_ADMIN_PASSWORD，默认 admin）"
 echo "  Prometheus http://localhost:9090"
-echo "  日志       tmp/dev-{api,worker,web,admin}.log"
-echo "  停止应用   ./dev.sh stop（容器保留）"
+echo "  日志       tmp/dev-{api,worker,web,admin,ops}.log"
+echo "  停止全部   ./dev.sh stop（应用进程 + 基础设施/监控容器；数据卷保留）"

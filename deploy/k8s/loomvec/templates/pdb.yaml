@@ -1,5 +1,5 @@
-{{- /* PodDisruptionBudget：api / worker / web / admin 各自可开关 */ -}}
-{{- range $component := list "api" "worker" "web" "admin" -}}
+{{- /* PodDisruptionBudget：api / worker / web / admin / ops 各自可开关 */ -}}
+{{- range $component := list "api" "worker" "web" "admin" "ops" -}}
 {{- $cfg := index $.Values $component -}}
 {{- if $cfg.pdb.enabled }}
 apiVersion: policy/v1

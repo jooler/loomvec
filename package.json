@@ -5,6 +5,7 @@
   "scripts": {
     "dev:web": "pnpm --filter @loomvec/web dev",
     "dev:admin": "pnpm --filter @loomvec/admin dev",
+    "dev:ops": "pnpm --filter @loomvec/ops dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",

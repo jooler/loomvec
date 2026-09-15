@@ -296,6 +296,24 @@ admin:
   tolerations: []
   affinity: {}
 
+ops:
+  image:
+    repository: loomvec/ops
+    tag: "" # 默认取 .Chart.AppVersion
+  replicaCount: 1
+  port: 80
+  resources: {}
+  strategy:
+    type: RollingUpdate
+    maxSurge: 1
+    maxUnavailable: 0
+  pdb:
+    enabled: false
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 # ---------- 数据库迁移（alembic upgrade head） ----------
 migrate:
   image:
@@ -319,11 +337,16 @@ ingress:
   # nginx.ingress.kubernetes.io/proxy-body-size: 200m   # 对齐上传白名单上限
   hosts:
     - host: loomvec.example.com
+      # 注意：admin/ops 为 SPA（vite base: '/'，产物引用根路径资源），
+      # 经 path 前缀路由时必须为其配置独立域名，或给 ingress 加 rewrite 并同步
+      # vite base —— 否则页面能加载而静态资源落到 / 服务导致白屏。
       paths:
         - path: /
           service: web
         - path: /admin
           service: admin
+        - path: /ops
+          service: ops
         - path: /api
           service: api
   tls: []
