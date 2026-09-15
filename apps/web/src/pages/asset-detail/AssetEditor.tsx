@@ -98,6 +98,7 @@ export function AssetEditor(props: {
           tags: values.tags ?? [],
           category_id: values.category ? values.category : undefined,
           unset_category: !values.category,
+          unset_folder: false,
           metadata,
         },
       });

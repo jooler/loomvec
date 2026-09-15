@@ -1,19 +1,16 @@
-import { Image as ImageIcon, LayoutGrid, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loomvec/ui/components/ui/select';
-import { Tabs, TabsList, TabsTrigger } from '@loomvec/ui/components/ui/tabs';
 import { MultiSelect } from '@/components/multi-select';
 import { REVIEW_STATUS_META } from '@/utils';
 import { ALL, EXT_OPTIONS, STATUS_TONE } from './constants';
 import type { AssetFilters } from './use-assets-list';
 
-/** 资产多维筛选条 + 视图切换（列表/缩略图）。 */
+/** 资产多维筛选条（视图切换在 Finder 工具栏，此处仅筛选）。 */
 export function AssetsFiltersBar(props: {
   spaceId?: string;
   filters: AssetFilters;
   onFilterChange: (patch: Partial<AssetFilters>) => void;
-  view: 'list' | 'grid';
-  onViewChange: (view: 'list' | 'grid') => void;
   tags: { id: string; name: string }[];
   tagsLoading: boolean;
   categories: { id: string; name: string }[];
@@ -101,16 +98,6 @@ export function AssetsFiltersBar(props: {
           </SelectContent>
         </Select>
       )}
-      <Tabs value={props.view} onValueChange={(v) => props.onViewChange(v as 'list' | 'grid')}>
-        <TabsList>
-          <TabsTrigger value="list">
-            <LayoutGrid className="size-4" /> 列表
-          </TabsTrigger>
-          <TabsTrigger value="grid">
-            <ImageIcon className="size-4" /> 缩略图
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
       <Button variant="outline" onClick={props.onRefresh}>
         <RefreshCw /> 刷新
       </Button>

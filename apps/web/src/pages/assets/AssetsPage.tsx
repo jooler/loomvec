@@ -1,15 +1,21 @@
-import { useMemo, useRef, useState } from 'react';
-import { Image as ImageIcon, Inbox } from 'lucide-react';
-import type { ColumnDef } from '@tanstack/react-table';
-import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams } from 'react-router';
+import { useMemo, useState } from 'react';
+import { Link, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { ExternalLink } from 'lucide-react';
 import { api } from '@loomvec/sdk-ts';
-import { useSpaceCategories, useSpaceTags } from '@/hooks';
-import { extractApiError, formatBytes } from '@/utils';
-import { uploadFile } from '@/upload';
-import { Button } from '@loomvec/ui/components/ui/button';
-import { Card, CardContent } from '@loomvec/ui/components/ui/card';
+import { useMySpaces, useSpaceCategories, useSpaceTags } from '@/hooks';
+import {
+  AssetViewerOverlay,
+  Finder,
+  uploadFilesToFolder,
+  useColumnsFolderAssets,
+  useFinderAssets,
+  useFinderFolders,
+  useFinderMutations,
+  useFinderThumbs,
+  type FinderActions,
+  type FinderAsset,
+} from '@loomvec/ui/components/finder';
 import {
   Dialog,
   DialogContent,
@@ -18,280 +24,198 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@loomvec/ui/components/ui/dialog';
+import { Button } from '@loomvec/ui/components/ui/button';
 import { Progress } from '@loomvec/ui/components/ui/progress';
-import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
-import { DataTable } from '@loomvec/ui/components/data-table';
-import { EmptyState } from '@loomvec/ui/components/empty-state';
-import { ReviewStatusTag } from '@/components/review-status-tag';
-import { StatusBadge } from '@loomvec/ui/components/status-badge';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@loomvec/ui/components/ui/tooltip';
-import { ACCEPT_TYPES, STATUS_TONE } from './constants';
 import { AssetsFiltersBar } from './AssetsFiltersBar';
-import { AssetGridView } from './AssetGridView';
-import { EMPTY_FILTERS, useAssetsList, type AssetFilters, type AssetListItem } from './use-assets-list';
+import { EMPTY_FILTERS, type AssetFilters } from './use-assets-list';
 
 /**
- * 空间资产管理（挂在空间详情布局「资产」页签下）：多维筛选 + 双视图（列表/缩略图网格）+
- * 拖拽直传本空间（含同空间去重确认与配额错误提示）。
+ * 空间资产管理（Finder 式，挂在空间详情布局「资产」页签下）：目录树浏览
+ * （列表/图标/分栏三视图）+ 右键菜单（拷贝/剪切/粘贴/移动/删除）+ 拖拽
+ * （结构移动、拖拽上传到当前文件夹）+ 全幅覆盖层查看（替代跳转详情页；
+ * 深链 /a/:id 仍保留给检索命中）。
  */
 export function AssetsPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const [filters, setFilters] = useState<AssetFilters>(EMPTY_FILTERS);
-  const [view, setView] = useState<'list' | 'grid'>('list');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // 目录链受控（app 持有：当前文件夹取数 + 分栏每列取数都依赖它）
+  const [path, setPath] = useState<string[]>([]);
+  const currentFolderId = path.length > 0 ? path[path.length - 1] : null;
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   // 去重确认：resolve(true)=仍要上传，resolve(false)=放弃
   const [dupConfirm, setDupConfirm] = useState<{
     names: string[];
     resolve: (ok: boolean) => void;
   } | null>(null);
 
+  const spaces = useMySpaces();
+  const space = useMemo(
+    () => (spaces.data ?? []).find((s) => s.id === spaceId),
+    [spaces.data, spaceId],
+  );
+  // viewer 只读（Finder 隐藏全部写入口，后端权限兜底）
+  const canWrite = space?.my_role === 'owner' || space?.my_role === 'editor';
+
   const tags = useSpaceTags(spaceId);
   const categories = useSpaceCategories(spaceId);
 
-  const assets = useAssetsList(spaceId, filters);
-
-  // 缩略图网格：列表 API 不含 renditions，为图片资产批量取详情中的 thumbnail URL
-  const items = useMemo(() => assets.data?.items ?? [], [assets.data]);
-  const imageIds = useMemo(
-    () => items.filter((a) => a.is_image).slice(0, 24).map((a) => a.id),
-    [items],
+  const folders = useFinderFolders(api, spaceId);
+  const assets = useFinderAssets(api, spaceId, currentFolderId, {
+    ext: filters.ext,
+    status: filters.status,
+    review_status: filters.review_status,
+    tagIds: filters.tagIds,
+    categoryId: filters.categoryId,
+  });
+  // 分栏视图：列链上每级文件夹（含根）各一份资产查询（缓存与列表视图互通）
+  const columnsAssetsOf = useColumnsFolderAssets(
+    api,
+    spaceId,
+    [null, ...path],
+    {
+      ext: filters.ext,
+      status: filters.status,
+      review_status: filters.review_status,
+      tagIds: filters.tagIds,
+      categoryId: filters.categoryId,
+    },
   );
-  const thumbs = useQueries({
-    queries: imageIds.map((id) => ({
-      queryKey: ['asset-thumb', id],
-      queryFn: async () => {
-        const { data, error } = await api.GET('/api/v1/assets/{asset_id}', {
-          params: { path: { asset_id: id } },
-        });
-        if (error) throw new Error(extractApiError(error, '加载缩略图失败'));
-        return data.renditions.find((r) => r.kind === 'thumbnail')?.url ?? null;
+  const thumbFor = useFinderThumbs(api, assets.data?.items ?? []);
+  const m = useFinderMutations(api, spaceId);
+
+  // 覆盖层查看的上一/下一个（当前文件夹资产顺序）
+  const viewList = useMemo(() => assets.data?.items ?? [], [assets.data]);
+  const viewIndex = viewList.findIndex((a) => a.id === viewingId);
+
+  const actions: FinderActions = useMemo(
+    () => ({
+      createFolder: async (parentId, name) => {
+        await m.createFolder.mutateAsync({ parentId, name });
       },
-      staleTime: 10 * 60_000,
-    })),
-  });
-  const thumbById = useMemo(() => {
-    const map = new Map<string, string | null>();
-    imageIds.forEach((id, i) => map.set(id, thumbs[i]?.data ?? null));
-    return map;
-  }, [imageIds, thumbs]);
+      renameFolder: async (folderId, name) => {
+        await m.renameFolder.mutateAsync({ folderId, name });
+      },
+      renameAsset: async (assetId, name) => {
+        await m.renameAsset.mutateAsync({ assetId, name });
+      },
+      moveItems: async (folderIds, assetIds, target) => {
+        for (const fid of folderIds)
+          await m.moveFolder.mutateAsync({ folderId: fid, parentId: target });
+        for (const aid of assetIds)
+          await m.moveAsset.mutateAsync({ assetId: aid, folderId: target });
+        m.invalidateAll();
+      },
+      copyItems: async (folderIds, assetIds, target) => {
+        for (const fid of folderIds)
+          await m.copyFolder.mutateAsync({ folderId: fid, parentId: target });
+        for (const aid of assetIds)
+          await m.copyAsset.mutateAsync({ assetId: aid, folderId: target });
+        m.invalidateAll();
+        toast.success('复制任务已开始（资产重新走解析管线）');
+      },
+      deleteFolders: async (folderIds) => {
+        for (const fid of folderIds) await m.deleteFolder.mutateAsync(fid);
+      },
+      deleteAssets: async (assetIds) => {
+        for (const aid of assetIds) await m.deleteAsset.mutateAsync(aid);
+        m.invalidateAll();
+        toast.success(`已删除 ${assetIds.length} 个资产（含向量清理）`);
+      },
+      retryAssets: async (assetIds) => {
+        for (const aid of assetIds) await m.retryAsset.mutateAsync(aid);
+      },
+    }),
+    [m],
+  );
 
-  const retry = useMutation({
-    mutationFn: async (assetId: string) => {
-      const { error } = await api.POST('/api/v1/assets/{asset_id}/retry', {
-        params: { path: { asset_id: assetId } },
-        body: {},
-      });
-      if (error) throw new Error(extractApiError(error, '重试失败'));
-    },
-    onSuccess: () => {
-      toast.success('已重新入队');
-      void assets.refetch();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const remove = useMutation({
-    mutationFn: async (assetId: string) => {
-      const { error } = await api.DELETE('/api/v1/assets/{asset_id}', {
-        params: { path: { asset_id: assetId } },
-      });
-      if (error) throw new Error(extractApiError(error, '删除失败'));
-    },
-    onSuccess: () => {
-      toast.success('已删除（含向量清理）');
-      void assets.refetch();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  // 拖拽直传本空间：逐个串行；命中同空间重复文件时弹窗确认
-  const uploadFiles = async (files: File[]) => {
+  const onUploadFiles = async (files: File[]) => {
     if (files.length === 0 || uploading || !spaceId) return;
     setUploading(true);
     setProgress(0);
-    let doneCount = 0;
-    let okCount = 0;
-    for (const file of files) {
-      const base = (doneCount / files.length) * 100;
-      try {
-        await uploadFile(file, {
-          spaceId,
-          onProgress: (pct) => setProgress(Math.round(base + pct / files.length)),
-          onDuplicate: (names) =>
-            new Promise<boolean>((resolve) => {
-              setDupConfirm({ names, resolve });
-            }),
-        });
-        okCount += 1;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '上传失败';
-        if (msg === '已跳过上传') toast.info(`已跳过重复文件：${file.name}`);
-        else toast.error(msg);
-      }
-      doneCount += 1;
-    }
+    const ok = await uploadFilesToFolder(
+      files,
+      { spaceId, folderId: currentFolderId },
+      {
+        onProgress: setProgress,
+        onDuplicate: (names) =>
+          new Promise<boolean>((resolve) => {
+            setDupConfirm({ names, resolve });
+          }),
+      },
+    );
     setUploading(false);
-    // invalidate 会刷新当前激活查询（含其它筛选 key），无需再手动 refetch
-    if (okCount > 0) {
-      void queryClient.invalidateQueries({ queryKey: ['assets'] });
-    }
+    if (ok > 0) m.invalidateAll();
   };
 
-  const columns: ColumnDef<AssetListItem, unknown>[] = [
-    {
-      accessorKey: 'name',
-      header: '名称',
-      cell: ({ row }) => (
-        <button
-          className="inline-flex items-center gap-1.5 text-sm hover:underline"
-          onClick={() => navigate(`/a/${row.original.id}`)}
-        >
-          {row.original.is_image && <ImageIcon className="size-4 text-muted-foreground" />}
-          {row.original.name}
-        </button>
-      ),
-    },
-    { accessorKey: 'ext', header: '类型' },
-    {
-      accessorKey: 'size_bytes',
-      header: '大小',
-      cell: ({ row }) => <span>{formatBytes(row.original.size_bytes)}</span>,
-    },
-    {
-      accessorKey: 'status',
-      header: '状态',
-      cell: ({ row }) => {
-        const meta = STATUS_TONE[row.original.status];
-        const badge = (
-          <StatusBadge tone={meta?.tone}>
-            {meta?.text ?? row.original.status}
-          </StatusBadge>
-        );
-        return row.original.status_reason ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="cursor-help">{badge}</span>
-            </TooltipTrigger>
-            <TooltipContent>{row.original.status_reason}</TooltipContent>
-          </Tooltip>
-        ) : (
-          badge
-        );
-      },
-    },
-    {
-      accessorKey: 'review_status',
-      header: '审核',
-      cell: ({ row }) => <ReviewStatusTag status={row.original.review_status} />,
-    },
-    {
-      accessorKey: 'created_at',
-      header: '创建时间',
-      cell: ({ row }) => <span>{new Date(row.original.created_at).toLocaleString()}</span>,
-    },
-    {
-      id: 'actions',
-      header: '操作',
-      cell: ({ row }) => (
-        <div className="flex gap-1">
-          {row.original.status === 'failed' && (
-            <Button variant="outline" size="xs" onClick={() => retry.mutate(row.original.id)}>
-              重试
-            </Button>
-          )}
-          <ConfirmAction
-            trigger={
-              <Button variant="outline" size="xs" className="text-destructive hover:text-destructive">
-                删除
-              </Button>
-            }
-            title="删除资产？"
-            description="将级联清理语义单元与向量。"
-            confirmText="删除"
-            danger
-            onConfirm={() => remove.mutate(row.original.id)}
-          />
-        </div>
-      ),
-    },
-  ];
-
   return (
-    <Card>
-      <CardContent className="space-y-4">
-        <AssetsFiltersBar
-          spaceId={spaceId}
-          filters={filters}
-          onFilterChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
-          view={view}
-          onViewChange={setView}
-          tags={tags.data ?? []}
-          tagsLoading={tags.isLoading}
-          categories={categories.data ?? []}
-          onRefresh={() => void assets.refetch()}
-        />
-
-        <div
-          className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-center"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            void uploadFiles(Array.from(e.dataTransfer.files));
-          }}
-        >
-          <Inbox className="size-8 text-muted-foreground" />
-          <p className="text-sm font-medium">拖拽文件上传到本空间（PDF / Office / TXT / MD / 图片）</p>
-          <p className="text-sm text-muted-foreground">
-            上传前自动做同空间去重预检与配额校验。
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={ACCEPT_TYPES}
-            className="hidden"
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              e.target.value = '';
-              void uploadFiles(files);
-            }}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {uploading ? '上传中…' : '选择文件'}
-          </Button>
-          {uploading && <Progress value={progress} className="w-full max-w-xs" />}
-        </div>
-
-        {assets.isError ? (
-          <p className="text-sm text-destructive">{(assets.error as Error).message}</p>
-        ) : !assets.isLoading && items.length === 0 ? (
-          <EmptyState title="没有符合筛选条件的资产" className="mt-6" />
-        ) : view === 'grid' ? (
-          <AssetGridView items={items} thumbById={thumbById} onOpen={(id) => navigate(`/a/${id}`)} />
-        ) : (
-          <div className="mt-2">
-            <DataTable
-              columns={columns}
-              data={items}
-              loading={assets.isLoading}
-              getRowId={(row) => row.id}
-              emptyTitle="没有符合筛选条件的资产"
+    <>
+      {/* Finder 高度上下文：视口减去 Finder 之外的页头（p-6 上 24 + 标题 28 + 间距 32 +
+          页签 37 + 底部 p-6 24 ≈ 145px），工具栏/筛选/内容区都在容器内 */}
+      <div className="flex h-[calc(100dvh-145px)] min-h-96 flex-col">
+        <Finder
+        key={spaceId}
+        spaceName={space?.name}
+        folders={folders.data ?? []}
+        assets={assets.data?.items ?? []}
+        path={path}
+        onPathChange={setPath}
+        columnsAssetsOf={columnsAssetsOf}
+        loading={folders.isLoading || assets.isLoading}
+        error={
+          folders.isError
+            ? (folders.error as Error).message
+            : assets.isError
+              ? (assets.error as Error).message
+              : null
+        }
+        canWrite={canWrite}
+        actions={actions}
+        onUploadFiles={(files) => void onUploadFiles(files)}
+        onRefresh={() => {
+          void folders.refetch();
+          void assets.refetch();
+        }}
+        thumbFor={thumbFor}
+        onOpenAsset={(a: FinderAsset) => setViewingId(a.id)}
+        toolbarExtra={
+          <>
+            <AssetsFiltersBar
+              spaceId={spaceId}
+              filters={filters}
+              onFilterChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
+              tags={tags.data ?? []}
+              tagsLoading={tags.isLoading}
+              categories={categories.data ?? []}
+              onRefresh={() => void assets.refetch()}
             />
-          </div>
-        )}
-        <p className="text-sm text-muted-foreground">
-          文本类资产也可经 <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">POST /api/v1/assets/text</code> 直接摄取。
-        </p>
-      </CardContent>
+            {uploading && <Progress value={progress} className="w-full max-w-md" />}
+          </>
+        }
+        viewer={
+          <AssetViewerOverlay
+            client={api}
+            assetId={viewingId}
+            onClose={() => setViewingId(null)}
+            hasPrev={viewIndex > 0}
+            hasNext={viewIndex >= 0 && viewIndex < viewList.length - 1}
+            onPrev={() => setViewingId(viewList[viewIndex - 1]?.id ?? null)}
+            onNext={() => setViewingId(viewList[viewIndex + 1]?.id ?? null)}
+            renderMedia={(assetId) => (
+              <p className="text-right">
+                <Link
+                  to={`/a/${assetId}`}
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline"
+                >
+                  <ExternalLink className="size-3" /> 打开详情页（编辑 / 任务 / 图谱）
+                </Link>
+              </p>
+            )}
+          />
+        }
+      />
+      </div>
 
       {/* 去重确认：仍要上传 / 放弃 */}
       <Dialog
@@ -331,6 +255,6 @@ export function AssetsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </>
   );
 }
