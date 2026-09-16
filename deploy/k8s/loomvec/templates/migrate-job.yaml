@@ -1,4 +1,4 @@
-{{- /* pre-install / pre-upgrade 钩子：alembic upgrade head（services/api/alembic） */ -}}
+{{- /* pre-install / pre-upgrade 钩子：幂等初始化数据库（loomvec.api.init_db，P5 起取代 alembic） */ -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -36,7 +36,7 @@ spec:
           # uv 沿目录树向上找到 /app/pyproject.toml 与 /app/.venv（--no-sync 不重装依赖）
           command: ["/bin/sh", "-c"]
           args:
-            - uv run --no-sync alembic upgrade head
+            - uv run --no-sync python -m loomvec.api.init_db
           env:
             {{- include "loomvec.env" . | nindent 12 }}
           volumeMounts:

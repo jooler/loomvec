@@ -13,7 +13,6 @@ dependencies = [
     "fastapi>=0.118",
     "uvicorn[standard]>=0.32",
     "pyjwt>=2.10",
-    "alembic>=1.14",
     "opentelemetry-instrumentation-fastapi>=0.50b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.50b0",
     "opentelemetry-instrumentation-httpx>=0.50b0",

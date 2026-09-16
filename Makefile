@@ -11,8 +11,8 @@ age-src:
 api:
 	uv run python -m loomvec.api --reload  # 端口单源 LOOMVEC_API_PORT（.env）
 
-migrate:
-	cd services/api && uv run --project ../.. alembic upgrade head
+init-db:
+	uv run python -m loomvec.api.init_db  # 幂等：建最新结构 + 种子（P5 起取代 alembic）
 
 worker:
 	uv run celery -A loomvec.worker.celery_app:celery_app worker -l info -B -Q pipeline,pipeline_high,pipeline_low

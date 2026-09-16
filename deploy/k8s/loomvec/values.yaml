@@ -315,7 +315,7 @@ ops:
   tolerations: []
   affinity: {}
 
-# ---------- 数据库迁移（alembic upgrade head） ----------
+# ---------- 数据库初始化钩子（幂等 init_db，P5 起取代 alembic） ----------
 migrate:
   image:
     repository: loomvec/api
