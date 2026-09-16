@@ -31,6 +31,8 @@ jobs:
         run: uv run pytest -m "not integration" -q
       - name: 契约快照校验
         run: uv run python scripts/export_openapi.py --check
+      - name: dsh 协议冒烟（锁定 SDK 版本 + 假模型端点；P5）
+        run: uv run python scripts/smoke/agent_protocol.py
 
   frontend-lint-test-build:
     name: 前端 lint + 测试 + 构建
@@ -75,12 +77,14 @@ jobs:
           git diff --exit-code -- packages/sdk-ts/src
 
   docker-build:
-    name: Docker 镜像构建（api/worker/web/admin）
+    name: Docker 镜像构建（api/agent/worker/web/admin）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build api
         run: docker build -t loomvec-api:ci -f services/api/Dockerfile .
+      - name: Build agent（P5 智能体网关，自带 dsh 运行时 wheel）
+        run: docker build -t loomvec-agent:ci -f services/agent/Dockerfile .
       - name: Build worker
         run: docker build -t loomvec-worker:ci -f services/worker/Dockerfile .
       - name: Build web（stub 契约产物）
@@ -134,7 +138,7 @@ jobs:
         run: |
           cd deploy/compose && cp .env.example .env
           docker compose up -d postgres redis rustfs etcd milvus
-      - run: make migrate
+      - run: make init-db
       - name: 起 API 与 worker（mock AI）
         run: |
           # 应用参数经 config/loomvec.json（AI mock；环境变量不再承载应用参数）

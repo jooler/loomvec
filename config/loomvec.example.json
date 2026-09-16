@@ -173,5 +173,54 @@
     "max_question_chars": 2000,
     "max_answer_tokens": 1024,
     "session_max_messages": 200
+  },
+  "agent": {
+    "enabled": true,
+    "storage_root": "/data/loomvec/agent-envs",
+    "runtime": {
+      "provider": "local",
+      "profile": "sdk",
+      "idle_timeout_s": 900,
+      "max_active_runtimes_per_node": 20,
+      "spawn_timeout_s": 60
+    },
+    "model": {
+      "provider": "deepseek-official",
+      "name": "deepseek-chat",
+      "reasoning_effort": "off",
+      "max_tokens": 8192
+    },
+    "session": {
+      "compression": "none",
+      "max_question_chars": 4000,
+      "session_max_messages": 500,
+      "attachments": {
+        "max_file_mb": 20,
+        "max_per_message": 5,
+        "allowed_mime": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "text/plain",
+          "text/markdown",
+          "application/pdf",
+          "application/json",
+          "text/csv"
+        ]
+      }
+    },
+    "runtime_initialize_timeout_s": 30,
+    "sandbox": {
+      "mode": "workspace-write"
+    },
+    "mcp": {
+      "url": "http://127.0.0.1:8080/api/v1/mcp",
+      "token_ttl_s": 3600
+    },
+    "retention_days": 365,
+    "handover": {
+      "archive_history_default": false
+    }
   }
 }

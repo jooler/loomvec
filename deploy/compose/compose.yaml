@@ -235,6 +235,35 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
+  # ---------- P5 智能体网关（dsh 运行时编排；应用栈 profile，dev 默认宿主机运行） ----------
+  agent:
+    build:
+      context: ../..
+      dockerfile: services/agent/Dockerfile
+    image: loomvec/agent:latest
+    container_name: loomvec-agent
+    restart: unless-stopped
+    profiles: ["app"]
+    environment:
+      # 变量名对齐 pydantic-settings 嵌套约定（LOOMVEC_ 前缀 + __ 分隔）：
+      # agent_service.internal_token（api facade ↔ agent 内部共享密钥）
+      LOOMVEC_AGENT_SERVICE__INTERNAL_TOKEN: ${LOOMVEC_AGENT_SERVICE__INTERNAL_TOKEN:-dev-internal-token}
+    volumes:
+      - agent_envs:/data/loomvec/agent-envs
+      - ../../config:/app/config:ro
+    # 容器内 dsh 回调 api 的 MCP 地址由 config/loomvec.json agent.mcp.url 提供；
+    # 容器化部署时需指向 api 可达地址（如 http://host.docker.internal:8080）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${AGENT_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/internal/agent/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+
 volumes:
   postgres_data:
   redis_data:
@@ -245,3 +274,4 @@ volumes:
   prometheus_data:
   grafana_data:
   loki_data:
+  agent_envs:

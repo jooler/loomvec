@@ -25,6 +25,7 @@ load_env_var() {  # load_env_var KEY DEFAULT —— 从仓库根 .env 读取（�
   echo "${val:-$2}"
 }
 API_PORT=$(load_env_var LOOMVEC_API_PORT 8080)
+AGENT_PORT=$(load_env_var LOOMVEC_AGENT_PORT 8090)
 WEB_PORT=$(load_env_var LOOMVEC_WEB_PORT 5173)
 ADMIN_PORT=$(load_env_var LOOMVEC_ADMIN_PORT 5174)
 OPS_PORT=$(load_env_var LOOMVEC_OPS_PORT 5175)
@@ -72,7 +73,7 @@ do_stop() {
 }
 
 do_status() {
-  for probe in "PostgreSQL:5433" "Redis:6379" "RustFS:9000" "Milvus:19530" "MinerU:8000" "Grafana:3002" "Prometheus:9090" "API:$API_PORT" "Web:$WEB_PORT" "Admin:$ADMIN_PORT" "Ops:$OPS_PORT"; do
+  for probe in "PostgreSQL:5433" "Redis:6379" "RustFS:9000" "Milvus:19530" "MinerU:8000" "Grafana:3002" "Prometheus:9090" "API:$API_PORT" "Agent:$AGENT_PORT" "Web:$WEB_PORT" "Admin:$ADMIN_PORT" "Ops:$OPS_PORT"; do
     port_up "${probe##*:}" && ok "$probe" || fail "$probe"
   done
   if alive worker; then ok "worker（本脚本启动）"
@@ -132,10 +133,10 @@ wait_http "MinerU"            "http://localhost:8000/health"     0 20
 wait_http "Grafana (3002)"    "http://localhost:3002/api/health" 1 120
 wait_http "Prometheus (9090)" "http://localhost:9090/-/ready"    1 120
 
-# ---------------------------------------------------------------- 数据迁移
-step "数据库迁移（alembic upgrade head）"
-if make migrate >/tmp/loomvec-migrate.log 2>&1; then ok "迁移到位（head）"
-else fail "迁移失败：$(tail -3 /tmp/loomvec-migrate.log)"; exit 1; fi
+# ---------------------------------------------------------------- 数据库初始化
+step "数据库初始化（幂等：建最新结构 + 种子，P5 起取代 alembic）"
+if make init-db >/tmp/loomvec-initdb.log 2>&1; then ok "结构到位（init_db）"
+else fail "初始化失败：$(tail -3 /tmp/loomvec-initdb.log)"; exit 1; fi
 
 # ---------------------------------------------------------------- 依赖检查
 [ -d .venv ] || { step "安装后端依赖（uv sync）"; uv sync; }
@@ -153,6 +154,7 @@ start_bg() { # $1=名称 $2=pid名 $3=端口 $4=命令...
 
 step "应用进程"
 start_bg api    api    "$API_PORT"    uv run python -m loomvec.api --reload  # 端口单源 LOOMVEC_API_PORT
+start_bg agent  agent  "$AGENT_PORT"  uv run python -m loomvec.agent --reload  # P5 智能体网关（内网 only）
 external_worker=$(pgrep -f "loomvec.worker.celery_app" | head -1)
 if [ -n "$external_worker" ]; then
   if alive worker; then ok "worker 运行中（本脚本）"
@@ -173,6 +175,7 @@ fi
 
 step "就绪等待"
 wait_http "API ($API_PORT)"  "http://localhost:$API_PORT/readyz" 1 120
+wait_http "Agent ($AGENT_PORT)" "http://localhost:$AGENT_PORT/internal/agent/health" 1 120
 wait_http "Web (5173)"  "http://localhost:$WEB_PORT/"  1 60
 wait_http "Admin (5174)" "http://localhost:$ADMIN_PORT/" 1 60
 wait_http "Ops (5175)"  "http://localhost:$OPS_PORT/"   1 60
@@ -184,5 +187,5 @@ echo "  运营端     http://localhost:$OPS_PORT    （dev 登录默认 operator
 echo "  API 文档   http://localhost:$API_PORT/docs"
 echo "  Grafana    http://localhost:3002 （admin，密码见 deploy/compose/.env 的 GRAFANA_ADMIN_PASSWORD，默认 admin）"
 echo "  Prometheus http://localhost:9090"
-echo "  日志       tmp/dev-{api,worker,web,admin,ops}.log"
+echo "  日志       tmp/dev-{api,agent,worker,web,admin,ops}.log"
 echo "  停止全部   ./dev.sh stop（应用进程 + 基础设施/监控容器；数据卷保留）"
