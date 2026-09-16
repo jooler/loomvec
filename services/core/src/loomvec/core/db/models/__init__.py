@@ -1,11 +1,16 @@
 """ORM 模型包（按域拆分，本文件聚合导出保持兼容）。
 
-历史导入路径 `loomvec.core.db.models.X` 不变；表结构演进在对应域文件内修改，
-迁移脚本见 services/api/alembic/versions（只增不删，Alembic 串行演进）。
+历史导入路径 `loomvec.core.db.models.X` 不变；表结构直接在对应域文件内修改，
+最新结构由 `loomvec.api.init_db` 幂等初始化（P5 起取代 alembic 迁移链）。
 """
 
 from __future__ import annotations
 
+from loomvec.core.db.models.agent import (
+    AgentEnvironment,
+    AgentEnvironmentStatus,
+    AgentSession,
+)
 from loomvec.core.db.models.asset import (
     Asset,
     AssetFolder,
@@ -23,11 +28,6 @@ from loomvec.core.db.models.asset import (
     SemanticUnit,
     Tag,
     UnitType,
-)
-from loomvec.core.db.models.chat import (
-    ChatMessage,
-    ChatRole,
-    ChatSession,
 )
 from loomvec.core.db.models.enterprise import (
     OauthAccessToken,
@@ -78,6 +78,9 @@ from loomvec.core.db.models.space import (
 )
 
 __all__ = [
+    "AgentEnvironment",
+    "AgentEnvironmentStatus",
+    "AgentSession",
     "ApiKey",
     "Asset",
     "AssetFolder",
@@ -88,9 +91,6 @@ __all__ = [
     "AuditLog",
     "AuthSource",
     "Category",
-    "ChatMessage",
-    "ChatRole",
-    "ChatSession",
     "ChunkMethod",
     "Community",
     "Entity",

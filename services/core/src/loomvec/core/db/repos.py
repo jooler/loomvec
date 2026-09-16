@@ -11,11 +11,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.core.config import Settings
 from loomvec.core.db.models import (
+    AgentEnvironment,
+    AgentEnvironmentStatus,
+    AgentSession,
     Asset,
     AssetFolder,
     AssetRendition,
@@ -382,6 +385,69 @@ class SpaceUsageRepo(Repository[SpaceUsage]):
     async def get_for_space(self, space_id: uuid.UUID) -> SpaceUsage | None:
         stmt = select(SpaceUsage).where(SpaceUsage.space_id == space_id)
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+
+class AgentEnvironmentRepo(Repository[AgentEnvironment]):
+    """工作环境仓储：env 与账号解耦，默认取用户最早创建的活跃 env。"""
+
+    model = AgentEnvironment
+
+    async def get_default_for_user(self, user_id: uuid.UUID) -> AgentEnvironment | None:
+        stmt = (
+            self._base_select(owner_user_id=user_id, status=AgentEnvironmentStatus.ACTIVE)
+            .order_by(AgentEnvironment.created_at.asc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def list_for_user(self, user_id: uuid.UUID) -> list[AgentEnvironment]:
+        stmt = self._base_select(owner_user_id=user_id).order_by(AgentEnvironment.created_at.asc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_or_create_default(
+        self, user_id: uuid.UUID, tenant_id: uuid.UUID | None, title: str
+    ) -> AgentEnvironment:
+        env = await self.get_default_for_user(user_id)
+        if env is not None:
+            return env
+        return await self.create(
+            owner_user_id=user_id,
+            tenant_id=tenant_id,
+            title=title,
+            status=AgentEnvironmentStatus.ACTIVE,
+        )
+
+
+class AgentSessionRepo(Repository[AgentSession]):
+    """会话元数据仓储：消息本体在 dsh JSONL，此处只管 UI 语义。"""
+
+    model = AgentSession
+
+    async def list_for_env(
+        self, env_id: uuid.UUID, *, include_archived: bool = False
+    ) -> list[AgentSession]:
+        stmt = self._base_select(env_id=env_id)
+        if not include_archived:
+            stmt = stmt.where(AgentSession.archived_at.is_(None))
+        stmt = stmt.order_by(
+            AgentSession.last_message_at.desc().nullslast(), AgentSession.created_at.desc()
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_in_env(
+        self, session_id: uuid.UUID, env_id: uuid.UUID, *, include_archived: bool = False
+    ) -> AgentSession | None:
+        stmt = self._base_select(id=session_id, env_id=env_id)
+        if not include_archived:
+            stmt = stmt.where(AgentSession.archived_at.is_(None))
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def count_for_env(self, env_id: uuid.UUID, *, include_archived: bool = False) -> int:
+        stmt = self._base_select(env_id=env_id)
+        if not include_archived:
+            stmt = stmt.where(AgentSession.archived_at.is_(None))
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        return (await self.session.execute(count_stmt)).scalar_one()
 
 
 async def resolve_space_id(session: AsyncSession, settings: Settings) -> uuid.UUID:

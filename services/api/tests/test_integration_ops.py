@@ -20,6 +20,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from loomvec.core.errors import ValidationError
+
 pytest.importorskip("testcontainers", reason="testcontainers 未安装")
 
 pytestmark = [pytest.mark.integration]
@@ -180,22 +182,23 @@ async def test_ops_guard_and_public_space_flow(env):
         # 非成员不可进入公共空间浏览内容
         assert client.get(f"/api/v1/spaces/{space_id}", headers=alice).status_code == 403
 
-        # 链接后：该公共空间可入问答召回范围
-        resp = client.post(
-            "/api/v1/chat/sessions", headers=alice, json={"scope_space_ids": [space_id]}
-        )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["scope_space_ids"] == [space_id]
+        # 链接后：该公共空间可入智能体会话召回范围（直接调 agent 服务域的
+        # scope 校验语义；facade 转发 e2e 走真机验收，测试库与 agent 服务
+        # 进程不共库，跨进程转发不在本测试范围）
+        from loomvec.agent.routes import _assert_member_spaces as _agent_scope_check
+
+        alice_id = await _user_id(factory, "ops-it-alice")
+        async with factory() as session:
+            await _agent_scope_check(session, alice_id, [uuid.UUID(space_id)])  # 不抛 = 可入范围
 
         # 断开后：即时失效
         resp = client.put(
             f"/api/v1/public-spaces/{space_id}/link", headers=alice, json={"linked": False}
         )
         assert resp.status_code == 200
-        resp = client.post(
-            "/api/v1/chat/sessions", headers=alice, json={"scope_space_ids": [space_id]}
-        )
-        assert resp.status_code == 422, resp.text
+        async with factory() as session:
+            with pytest.raises(ValidationError):
+                await _agent_scope_check(session, alice_id, [uuid.UUID(space_id)])
 
         # ---- 未加入分组的用户不可见（carol 为对照组）----
         carol = _auth(client, "ops-it-carol")
@@ -223,7 +226,7 @@ async def test_ops_guard_and_public_space_flow(env):
         assert resp.status_code == 204
         resp = client.get("/api/v1/public-spaces", headers=alice)
         assert resp.status_code == 200 and resp.json()["items"] == []
-        resp = client.post(
-            "/api/v1/chat/sessions", headers=alice, json={"scope_space_ids": [space_id]}
-        )
-        assert resp.status_code == 422, resp.text
+        # 分组移除 → 可见性丧失 → 链接失效（scope 校验不再通过）
+        async with factory() as session:
+            with pytest.raises(ValidationError):
+                await _agent_scope_check(session, alice_id, [uuid.UUID(space_id)])

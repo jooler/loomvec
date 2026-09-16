@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 import redis.asyncio as aioredis
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -18,8 +19,9 @@ from loomvec.api import auth as auth_module
 from loomvec.api.errors import register_exception_handlers
 from loomvec.api.middleware import AccessLogMiddleware, RequestIDMiddleware
 from loomvec.api.ratelimit import RateLimitMiddleware
-from loomvec.api.routes import chat as chat_routes
+from loomvec.api.routes import agent as agent_routes
 from loomvec.api.routes import graph as graph_routes
+from loomvec.api.routes import mcp as mcp_routes
 from loomvec.api.routes.admin import admin_api_router
 from loomvec.api.routes.api_keys import router as api_keys_router
 from loomvec.api.routes.assets import router as assets_router
@@ -74,6 +76,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         graph_retriever = GraphRetriever(milvus, settings.graph, settings.search)
         retriever = Retriever(milvus, ai, settings.search, graph=graph_retriever)
         celery = _make_celery(settings)
+        # P5：agent facade 转发客户端（长连接池；SSE 透传不设总超时）。
+        # trust_env=False：内网服务直连，不读 HTTP(S)_PROXY 等环境代理配置
+        # （代理会把 127.0.0.1 的内部转发劫走，表现为 agent 502）。
+        agent_client = httpx.AsyncClient(
+            base_url=settings.agent_service.service_url,
+            timeout=httpx.Timeout(600.0, connect=5.0),
+            trust_env=False,
+        )
+        # P5：MCP endpoint（streamable-http，仅 agent token；挂载须在 state 就绪后）
+        mcp_app, mcp_lifespan = mcp_routes.build_mcp_app(
+            mcp_routes.McpAppState(
+                settings=settings,
+                retriever=retriever,
+                session_factory=session_factory,
+                redis=redis_client,
+            )
+        )
+        app.mount("/api/v1/mcp", mcp_app)
         try:
             if settings.env is Env.DEV:
                 storage.ensure_buckets()
@@ -89,8 +109,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.graph_retriever = graph_retriever
         app.state.retriever = retriever
         app.state.celery = celery
+        app.state.agent_client = agent_client
         logger.info("api_started", service=settings.service_name, version=loomvec.api.__version__)
-        yield
+        async with mcp_lifespan:
+            try:
+                yield
+            finally:
+                await agent_client.aclose()
         await redis_client.aclose()
         await ai.aclose()
         await engine.dispose()
@@ -121,7 +146,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(review_router)
     app.include_router(search_router)
-    app.include_router(chat_routes.router)  # P3-API-01 问答（SSE）
+    app.include_router(agent_routes.router)  # P5 智能体对话（dsh 全量接管，SSE）
     app.include_router(public_spaces_router)  # P5 公共空间链接（用户端开关）
     app.include_router(ops_api_router)  # P5 运营 API 域（公共空间/用户分组）
     app.include_router(graph_routes.router)  # P3-API-03 图谱管理

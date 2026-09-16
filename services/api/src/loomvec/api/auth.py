@@ -23,6 +23,9 @@ from loomvec.core.errors import UnauthenticatedError
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# 平台 JWT 的 iss（签发/校验单源）；agent token（iss=loomvec-agent）被白名单拒绝
+PLATFORM_ISSUER = "loomvec-dev"
+
 
 class PlatformTokenProvider:
     """平台 JWT 签发与校验：dev 路由与 OIDC 回调共用（同一 secret/算法）。"""
@@ -45,7 +48,7 @@ class PlatformTokenProvider:
             "roles": roles or ["user"],
             "iat": now,
             "exp": now + (ttl_seconds or self._settings.auth.access_token_ttl_seconds),
-            "iss": "loomvec-dev",
+            "iss": PLATFORM_ISSUER,
         }
         if tenant_id:
             claims["tenant_id"] = tenant_id
@@ -66,6 +69,10 @@ class PlatformTokenProvider:
             )
         except jwt.PyJWTError as e:
             raise UnauthenticatedError(reason=str(e)) from e
+        # iss 白名单：同密钥签发的 agent token（iss=loomvec-agent）不得充当平台
+        # 登录态——agent token 在 dsh 子进程/MCP 链路流转，暴露面更大且 TTL 独立
+        if claims.get("iss") != PLATFORM_ISSUER:
+            raise UnauthenticatedError(reason="非平台 token")
         return Identity(
             user_id=claims["sub"],
             username=claims.get("username", "unknown"),

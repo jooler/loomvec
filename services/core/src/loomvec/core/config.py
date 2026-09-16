@@ -25,7 +25,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -228,6 +228,19 @@ class WorkerSettings(BaseModel):
     metrics_port: int = 9808
 
 
+class AgentServiceSettings(BaseModel):
+    """P5 基础设施项（env / .env 单源；应用参数仍在 AppConfig.agent 段）。
+
+    - service_url：services/agent 内网地址（api facade 转发目标）；
+    - internal_token：api ↔ agent 内部调用共享密钥（compose/K8s Secret 注入）；
+    - storage_root_override：K8s PVC 挂载路径等部署期覆盖（优先于 json 配置）。
+    """
+
+    service_url: str = "http://127.0.0.1:8090"
+    internal_token: str = "dev-internal-token"
+    storage_root_override: str = ""
+
+
 class UploadSettings(BaseModel):
     """P1-API-01 上传白名单与限额（MIME/大小）。"""
 
@@ -347,15 +360,85 @@ class TranscribeSettings(BaseModel):
     segment_max_seconds: float = 60.0  # 转写分块最大时长
 
 
-class QaSettings(BaseModel):
-    """P3-CORE-05 问答服务参数。"""
+class AgentRuntimeSettings(BaseModel):
+    """dsh runtime 生命周期（14 文档 §5.1/§5.2）。
+
+    注：max_concurrent_streams_per_user / provider 的 k8s|e2b 档为 P1 预留，
+    当前实现为「同 env 串行 + local 子进程」，字段暂未消费。
+    """
+
+    provider: str = "local"  # local | k8s | e2b（k8s/e2b 为 P1 预留档位）
+    profile: str = "sdk"  # dsh profile：sdk = dsh-base 完整核心（D9）
+    idle_timeout_s: int = 900  # 空闲回收阈值
+    max_active_runtimes_per_node: int = 20
+    spawn_timeout_s: int = 60
+    max_concurrent_streams_per_user: int = 3
+
+
+class AgentModelSettings(BaseModel):
+    """模型统一注入（14 文档 §5.1 三层次之 ①②）。"""
+
+    provider: str = "deepseek-official"
+    name: str = "deepseek-chat"
+    reasoning_effort: str = "off"
+    max_tokens: int = 8192
+
+
+class AgentAttachmentSettings(BaseModel):
+    max_file_mb: int = 20
+    max_per_message: int = 5
+    allowed_mime: list[str] = Field(
+        default_factory=lambda: [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif",
+            "text/plain",
+            "text/markdown",
+            "application/pdf",
+            "application/json",
+            "text/csv",
+        ]
+    )
+
+
+class AgentSessionSettings(BaseModel):
+    compression: str = "none"  # none | zstd（P0 固定 none 简化 JSONL 解析）
+    max_question_chars: int = 4000
+    session_max_messages: int = 500
+    attachments: AgentAttachmentSettings = Field(default_factory=AgentAttachmentSettings)
+
+
+class AgentSandboxSettings(BaseModel):
+    mode: str = "workspace-write"  # 固定 workspace-write；danger-full-access 仅 dev
+
+
+class AgentMcpSettings(BaseModel):
+    url: str = "http://127.0.0.1:8000/api/v1/mcp"
+    token_ttl_s: int = 3600
+
+
+class AgentHandoverSettings(BaseModel):
+    archive_history_default: bool = False
+
+
+class AgentSettings(BaseModel):
+    """P5 智能体对话参数（14 文档 §10 config/loomvec.json agent 段）。
+
+    注：retention_days（保留清理任务）与 handover（交接归档默认值）为
+    P1 预留配置，当前实现未消费。
+    """
 
     enabled: bool = True
-    retrieval_top_k: int = 8  # 送入 prompt 的引用上限
-    history_messages: int = 6  # 携带的历史消息条数（user/assistant 合计）
-    max_question_chars: int = 2000
-    max_answer_tokens: int = 1024
-    session_max_messages: int = 200  # 单会话消息上限（超出拒绝续聊，提示新建）
+    storage_root: str = "/data/loomvec/agent-envs"
+    runtime: AgentRuntimeSettings = Field(default_factory=AgentRuntimeSettings)
+    model: AgentModelSettings = Field(default_factory=AgentModelSettings)
+    session: AgentSessionSettings = Field(default_factory=AgentSessionSettings)
+    runtime_initialize_timeout_s: int = 30
+    sandbox: AgentSandboxSettings = Field(default_factory=AgentSandboxSettings)
+    mcp: AgentMcpSettings = Field(default_factory=AgentMcpSettings)
+    retention_days: int = 365
+    handover: AgentHandoverSettings = Field(default_factory=AgentHandoverSettings)
 
 
 class AuthSettings(BaseModel):
@@ -380,7 +463,7 @@ class AppConfig(BaseModel):
     """应用运行参数（config/loomvec.json，应用自管理）。
 
     与环境变量解耦：AI 供方（地址/密钥/模型）、MinerU、检索、管线分片、
-    上传白名单、图片处理、图谱、媒体、转写、问答。文件支持部分覆盖
+    上传白名单、图片处理、图谱、媒体、转写、智能体。文件支持部分覆盖
     （未写的键取内置默认）；admin 动态配置（DB）未覆盖时以此为生效值。
     """
 
@@ -393,7 +476,7 @@ class AppConfig(BaseModel):
     graph: GraphSettings = Field(default_factory=GraphSettings)
     media: MediaSettings = Field(default_factory=MediaSettings)
     transcribe: TranscribeSettings = Field(default_factory=TranscribeSettings)
-    qa: QaSettings = Field(default_factory=QaSettings)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
 
 
 class Settings(BaseSettings):
@@ -427,6 +510,7 @@ class Settings(BaseSettings):
     web_port: int = 5173
     admin_port: int = 5174
     ops_port: int = 5175
+    agent_port: int = 8090
 
     otel: OtelSettings = Field(default_factory=OtelSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
@@ -436,6 +520,19 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     worker: WorkerSettings = Field(default_factory=WorkerSettings)
+    agent_service: AgentServiceSettings = Field(default_factory=AgentServiceSettings)
+
+    @model_validator(mode="after")
+    def _reject_weak_internal_token_outside_dev(self) -> Settings:
+        """api ↔ agent 内部共享密钥不得在生产沿用 dev 默认值（P5 安全闸）。"""
+        if self.env is not Env.DEV and (
+            self.agent_service.internal_token == AgentServiceSettings().internal_token
+        ):
+            raise ValueError(
+                "LOOMVEC_AGENT_SERVICE__INTERNAL_TOKEN 仍为 dev 默认值；"
+                "非 dev 环境必须显式配置强随机密钥"
+            )
+        return self
 
     # ---- 应用参数段：委托 AppConfig（config/loomvec.json），env 不可覆盖 ----
 
@@ -476,8 +573,8 @@ class Settings(BaseSettings):
         return get_app_config().transcribe
 
     @property
-    def qa(self) -> QaSettings:
-        return get_app_config().qa
+    def agent(self) -> AgentSettings:
+        return get_app_config().agent
 
 
 @lru_cache(maxsize=1)

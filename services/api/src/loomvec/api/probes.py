@@ -61,7 +61,8 @@ async def check_mineru(settings: Settings) -> dict[str, Any]:
     import httpx
 
     base = settings.mineru.base_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=3.0) as client:
+    # 内网服务直连，不走环境代理（trust_env=False）
+    async with httpx.AsyncClient(timeout=3.0, trust_env=False) as client:
         try:
             resp = await client.get(f"{base}/health")
         except httpx.HTTPStatusError:

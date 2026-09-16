@@ -30,7 +30,7 @@ class MineruClient:
     async def parse(self, filename: str, data: bytes, mime: str) -> MineruResult:
         timeout = httpx.Timeout(self._settings.timeout_seconds, connect=30.0)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
                 resp = await client.post(
                     f"{self._settings.base_url.rstrip('/')}/file_parse",
                     files={"files": (filename, data, mime)},
@@ -70,7 +70,7 @@ class MineruClient:
 
     async def health(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
                 resp = await client.get(f"{self._settings.base_url.rstrip('/')}/health")
                 return resp.status_code == 200
         except httpx.HTTPError:
