@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loomvec-agent"
+version = "0.1.0"
+description = "LoomVec Agent 网关（dsh 智能体运行时编排，P5）"
+requires-python = ">=3.12"
+dependencies = [
+    "loomvec-core",
+    "fastapi>=0.118",
+    "uvicorn[standard]>=0.32",
+    "pyjwt>=2.10",
+    "httpx>=0.28",
+    # dsh 运行时：wheel 自带 Node 运行时；版本精确锁定（14 文档 §11/§14，
+    # developer preview 破坏性变更政策），升级走独立变更单 + CI 协议冒烟
+    "deepseek-harness-sdk==0.1.5rc1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.25"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loomvec"]

@@ -3,15 +3,16 @@ name = "loomvec"
 version = "0.0.0"
 description = "LoomVec workspace root (see services/* for member packages)"
 requires-python = ">=3.12"
-dependencies = ["loomvec-api", "loomvec-worker"]
+dependencies = ["loomvec-api", "loomvec-worker", "loomvec-agent"]
 
 [tool.uv.workspace]
-members = ["services/core", "services/api", "services/worker"]
+members = ["services/core", "services/api", "services/worker", "services/agent"]
 
 [tool.uv.sources]
 loomvec-core = { workspace = true }
 loomvec-api = { workspace = true }
 loomvec-worker = { workspace = true }
+loomvec-agent = { workspace = true }
 
 [dependency-groups]
 dev = [
