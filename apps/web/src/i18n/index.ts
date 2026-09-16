@@ -5,10 +5,10 @@
  */
 import { initI18n, t as sharedT } from '@loomvec/ui/i18n';
 
+import agent from './locales/zh-CN/agent.json';
 import assetDetail from './locales/zh-CN/assetDetail.json';
 import assets from './locales/zh-CN/assets.json';
 import auth from './locales/zh-CN/auth.json';
-import chat from './locales/zh-CN/chat.json';
 import graph from './locales/zh-CN/graph.json';
 import layout from './locales/zh-CN/layout.json';
 import notifications from './locales/zh-CN/notifications.json';
@@ -19,10 +19,10 @@ import spaces from './locales/zh-CN/spaces.json';
 
 const i18n = initI18n({
   'zh-CN': {
+    agent,
     assetDetail,
     assets,
     auth,
-    chat,
     graph,
     layout,
     notifications,

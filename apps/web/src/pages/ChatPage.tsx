@@ -1,158 +1,122 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Dot, Send, ShieldAlert, Waypoints } from 'lucide-react';
+import { Brain, ChevronDown, FileUp, Paperclip, Send, ShieldAlert, Square, Wrench, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Input } from '@loomvec/ui/components/ui/input';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@loomvec/ui/components/ui/collapsible';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@loomvec/ui/components/ui/collapsible';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
-import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { MultiSelect } from '@/components/multi-select';
-import { useChatSessions, useMySpaces, usePublicSpaces } from '@/hooks';
+import { useAgentSessions, useAgentStatus, useMySpaces, usePublicSpaces } from '@/hooks';
 import { extractApiError } from '@/utils';
-import { t as sharedT } from '@/i18n';
-import { streamChatAnswer, type ChatCitation, type GraphEvidence } from '@/chat';
+import {
+  cancelAgentTurn,
+  streamAgentAnswer,
+  uploadAgentAttachment,
+  type AgentMessage,
+  type AgentToolCall,
+  type ChatCitation,
+  type GraphEvidence,
+} from '@/agent/agent';
+import { AnswerMarkdown, citationLabel, jumpToCitation } from '@/pages/chat-shared';
 
 /**
- * 问答（用户级，05 文档 §5.5）：全高三段式布局，会话列表常驻 AppLayout 侧栏上部
- * （本页不再内嵌侧栏）。召回空间范围按会话配置（空 = 我的全部空间），可随时调整；
- * 图谱联合召回常态开启（无开关）；引用 [n] 点击回溯定位；LLM 不可用时入口禁用。
+ * 对话页（P5，14 文档 §9）：dsh 全量接管的智能体对话（无 legacy 分支）。
+ * 五件套：流式文本 / 思维链折叠 / 工具调用卡 / 附件（文件+图片）/ 会话切换；
+ * 引用 [n] 与 locator 跳转（chat-shared）；/agent/status 不可用时入口降级提示。
+ * dsh 协议只有完成态 assistant/message 通知（无逐 token 推送）；网关按其内嵌
+ * stream 记录的 chunk 原文与时间差，重放为逐块 delta/reasoning 帧（打字机效果）。
  */
 
-interface MessageItem {
-  message_id: string;
+interface HistoryItem {
   role: string;
   content: string;
-  citations: unknown[];
-  graph_evidence: unknown[];
+  citations?: { n: number }[];
+  graph_evidence?: unknown[];
+  tool_calls?: { call_id: string; tool: string; ok?: boolean; result_summary?: string }[];
+  created_at?: string | null;
 }
 
-interface Msg {
-  role: 'user' | 'assistant';
-  content: string;
-  citations?: ChatCitation[];
-  graphEvidence?: GraphEvidence[];
-  streaming?: boolean;
-}
+/** 单条消息附件上限（对齐服务端 agent.session.attachments.max_per_message）。 */
+const MAX_ATTACHMENTS = 5;
 
-/** 把答案中的 [n] 拆成可点击引用标记。 */
-function renderAnswer(
-  text: string,
-  citations: ChatCitation[] | undefined,
-  onCite: (c: ChatCitation) => void,
-) {
-  const parts = text.split(/(\[\d{1,3}\])/g);
-  return parts.map((part, i) => {
-    const m = part.match(/^\[(\d{1,3})\]$/);
-    if (!m || !citations) return <span key={i}>{part}</span>;
-    const idx = Number(m[1]);
-    const citation = citations.find((c) => c.index === idx);
-    if (!citation) return <span key={i}>{part}</span>;
-    return (
-      <button
-        key={i}
-        type="button"
-        className="mx-0.5 align-super text-xs font-semibold text-primary hover:underline"
-        title={citation.text_snippet}
-        onClick={(e) => {
-          e.stopPropagation();
-          onCite(citation);
-        }}
-      >
-        [{idx}]
-      </button>
-    );
-  });
-}
-
-function citationLabel(c: ChatCitation): string {
-  const loc = c.locator ?? {};
-  if (loc.pages?.length)
-    return sharedT('ui:chunks.pageLocator', { pages: loc.pages.map((p) => p + 1).join(',') });
-  if (loc.time_start !== undefined)
-    return sharedT('chat:timeStart', {
-      minutes: Math.floor(loc.time_start / 60),
-      seconds: Math.round(loc.time_start % 60),
-    });
-  if (loc.start_line !== undefined)
-    return sharedT('ui:chunks.lineLocator', {
-      start: loc.start_line,
-      end: loc.end_line ?? '',
-    });
-  return sharedT('chat:noLocator');
-}
-
-function jumpToCitation(navigate: ReturnType<typeof useNavigate>, c: ChatCitation) {
-  const loc = c.locator ?? {};
-  const params = new URLSearchParams();
-  if (loc.pages?.length) params.set('page', String(loc.pages[0] + 1));
-  if (loc.time_start !== undefined) params.set('t', String(loc.time_start));
-  const qs = params.toString();
-  navigate(`/a/${c.asset_id}${qs ? `?${qs}` : ''}`);
+/** 待发送附件（上传完成后持有 attachment_id）。 */
+interface PendingAttachment {
+  attachment_id: string;
+  name: string;
+  is_image: boolean;
+  size: number;
+  preview_url?: string;
 }
 
 export function ChatPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation('agent');
   const [input, setInput] = useState('');
-  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [msgs, setMsgs] = useState<AgentMessage[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  // 本会话召回范围的多选本地值；null = 未改动，回显服务端值
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [scopeOverride, setScopeOverride] = useState<string[] | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  // 流式进行中标记：阻止消息列表查询回灌清掉正在生成的气泡
-  // （新会话首问时 sessionId 刚建立，messages 查询会以空列表先返回）
+  const fileRef = useRef<HTMLInputElement>(null);
   const streamingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const spaces = useMySpaces();
-  // 已链接的公共空间也是合法检索源（P5）；与成员空间一起出现在召回范围选择器中
   const publicSpaces = usePublicSpaces();
-
-  const status = useQuery({
-    queryKey: ['chat-status'],
-    queryFn: async () => {
-      const resp = await api.GET('/api/v1/chat/status', {});
-      return resp.data as unknown as { enabled?: boolean; reason?: string } | undefined;
-    },
-  });
-
-  const sessions = useChatSessions();
+  const sessions = useAgentSessions();
+  const agentStatus = useAgentStatus();
+  const agentDisabled = agentStatus.data?.enabled === false;
 
   const messages = useQuery({
-    queryKey: ['chat-messages', sessionId],
+    queryKey: ['agent-messages', sessionId],
     queryFn: async () => {
-      const resp = await api.GET('/api/v1/chat/sessions/{session_id}/messages', {
+      const { data, error } = await api.GET('/api/v1/agent/sessions/{session_id}/messages', {
         params: { path: { session_id: sessionId! } },
       });
-      return resp.data as unknown as { items: MessageItem[]; total: number } | undefined;
+      if (error) throw new Error(extractApiError(error, t('loadHistoryFailed')));
+      return data as unknown as { items: HistoryItem[]; total: number } | undefined;
     },
     enabled: !!sessionId,
   });
 
-  // 切换会话（路由变化）：清空气泡与本地范围改动；流式中（首问自动建会话跳转）不清
   useEffect(() => {
     if (!streamingRef.current) {
       setMsgs([]);
       setErrorMsg(null);
       setScopeOverride(null);
+      setAttachments([]);
     }
   }, [sessionId]);
 
+  // 历史回灌（引用 n → index 归一在视图内完成，渲染层零特殊分支）
   useEffect(() => {
     if (messages.data?.items && sessionId && !streamingRef.current) {
       setMsgs(
-        messages.data.items.map((m) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-          citations: m.citations as ChatCitation[],
-          graphEvidence: m.graph_evidence as GraphEvidence[],
-        })),
+        messages.data.items.map(
+          (m: HistoryItem): AgentMessage => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+            citations: (m.citations ?? []).map(
+              (c): ChatCitation => ({
+                ...(c as unknown as ChatCitation),
+                index: (c as unknown as { n: number }).n,
+              }),
+            ),
+            graphEvidence: m.graph_evidence as GraphEvidence[],
+            toolCalls: (m.tool_calls ?? []).map((tc) => ({ ...tc, ok: tc.ok !== false })),
+          }),
+        ),
       );
     }
   }, [messages.data, sessionId]);
@@ -161,91 +125,126 @@ export function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs]);
 
-  const updateScope = useMutation({
-    mutationFn: async (scopeIds: string[]) => {
-      const { error } = await api.PATCH('/api/v1/chat/sessions/{session_id}', {
+  const patchSession = useMutation({
+    mutationFn: async (body: { title?: string; scope_space_ids?: string[] }) => {
+      const { error } = await api.PATCH('/api/v1/agent/sessions/{session_id}', {
         params: { path: { session_id: sessionId! } },
-        body: { scope_space_ids: scopeIds },
+        body,
       });
-      if (error) throw new Error(extractApiError(error, t('updateScopeFailed')));
+      if (error) throw new Error(extractApiError(error, t('updateSessionFailed')));
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] }),
-    onError: (e) => {
-      // 失败回滚为服务端值，避免本地显示与实际召回范围不一致
-      setScopeOverride(null);
-      toast.error(e.message);
-    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['agent-sessions'] }),
+    onError: (e) => toast.error(e.message),
   });
+
+  const onFiles = async (files: FileList | null) => {
+    if (!files?.length || !sessionId) {
+      if (!sessionId) toast.error(t('needSessionFirst'));
+      return;
+    }
+    for (const file of Array.from(files).slice(0, MAX_ATTACHMENTS - attachments.length)) {
+      try {
+        const stored = await uploadAgentAttachment(sessionId, file);
+        setAttachments((prev) => [
+          ...prev,
+          {
+            attachment_id: stored.attachment_id,
+            name: file.name,
+            is_image: file.type.startsWith('image/'),
+            size: stored.size,
+            preview_url: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+          },
+        ]);
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : t('uploadFailed'));
+      }
+    }
+    if (fileRef.current) fileRef.current.value = '';
+  };
 
   const ask = useMutation({
     mutationFn: async (question: string) => {
       let sid = sessionId;
       if (!sid) {
-        const resp = await api.POST('/api/v1/chat/sessions', {
+        const resp = await api.POST('/api/v1/agent/sessions', {
           body: { title: question.slice(0, 50) },
         });
-        const s = resp.data as unknown as { session_id?: string } | undefined;
-        sid = s?.session_id;
+        const s = resp.data as unknown as { id?: string } | undefined;
+        sid = s?.id;
         if (sid) {
           navigate(`/chat/${sid}`);
-          void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
+          void queryClient.invalidateQueries({ queryKey: ['agent-sessions'] });
         }
       }
       if (!sid) throw new Error(t('sessionCreateFailed'));
 
-      setMsgs((prev) => [...prev, { role: 'user', content: question }]);
-      setMsgs((prev) => [...prev, { role: 'assistant', content: '', streaming: true }]);
+      const pending = attachments;
+      setAttachments([]);
+      setMsgs((prev) => [
+        ...prev,
+        { role: 'user', content: question },
+        { role: 'assistant', content: '', streaming: true, toolCalls: [] },
+      ]);
       streamingRef.current = true;
 
-      try {
-        await streamChatAnswer(sid, question, {
-          onMeta: (meta) => {
-            setMsgs((prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.streaming) {
-                next[next.length - 1] = {
-                  ...last,
-                  citations: meta.citations,
-                  graphEvidence: meta.graph_evidence,
-                };
-              }
-              return next;
-            });
-          },
-          onDelta: (text) => {
-            setMsgs((prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.streaming) next[next.length - 1] = { ...last, content: last.content + text };
-              return next;
-            });
-          },
-          onDone: () => {
-            setMsgs((prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.streaming) next[next.length - 1] = { ...last, streaming: false };
-              return next;
-            });
-            void queryClient.invalidateQueries({ queryKey: ['chat-messages', sid] });
-            void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
-          },
-          onError: (message) => {
-            setErrorMsg(message);
-            setMsgs((prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.streaming) next[next.length - 1] = { ...last, streaming: false };
-              return next;
-            });
-          },
+      const updateLast = (fn: (m: AgentMessage) => AgentMessage) => {
+        setMsgs((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.streaming) next[next.length - 1] = fn(last);
+          return next;
         });
+      };
+      const upsertTool = (call: AgentToolCall) => {
+        updateLast((m) => {
+          const tools = [...(m.toolCalls ?? [])];
+          const i = tools.findIndex((tc) => tc.call_id === call.call_id);
+          if (i >= 0) tools[i] = { ...tools[i], ...call };
+          else tools.push(call);
+          return { ...m, toolCalls: tools };
+        });
+      };
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        await streamAgentAnswer(
+          sid,
+          question,
+          {
+            onDelta: (text) => updateLast((m) => ({ ...m, content: m.content + text })),
+            onReasoning: (text) => updateLast((m) => ({ ...m, reasoning: (m.reasoning ?? '') + text })),
+            onToolStart: (call) => upsertTool(call),
+            onToolEnd: (call) => upsertTool(call),
+            onCitations: (citations, evidence) =>
+              updateLast((m) => ({ ...m, citations, graphEvidence: evidence })),
+            onUsage: (usage) => updateLast((m) => ({ ...m, usage })),
+            onStatus: (status) => {
+              if (status === 'cancelled') updateLast((m) => ({ ...m, streaming: false }));
+            },
+            onDone: (data) =>
+              updateLast((m) => ({
+                ...m,
+                streaming: false,
+                content: data.answer || m.content,
+                citations: data.citations.length ? data.citations : m.citations,
+                graphEvidence: data.graph_evidence.length ? data.graph_evidence : m.graphEvidence,
+                usage: data.usage,
+              })),
+            onError: (message) => {
+              setErrorMsg(message);
+              updateLast((m) => ({ ...m, streaming: false }));
+            },
+          },
+          pending.map((a) => a.attachment_id),
+          controller.signal,
+        );
       } finally {
         streamingRef.current = false;
+        abortRef.current = null;
       }
+      void queryClient.invalidateQueries({ queryKey: ['agent-sessions'] });
     },
-    // 网络层异常（fetch/reader 中断）兜底：结束气泡并提示，否则流式标记永不落地
     onError: (e) => {
       setErrorMsg(e instanceof Error ? e.message : t('generateFailedRetry'));
       setMsgs((prev) => {
@@ -257,6 +256,19 @@ export function ChatPage() {
     },
   });
 
+  const stop = async () => {
+    // 先断客户端流（停止渲染），再请求服务端终止 runtime（后台收尾 JSONL）
+    abortRef.current?.abort();
+    abortRef.current = null;
+    if (sessionId) {
+      try {
+        await cancelAgentTurn(sessionId);
+      } catch {
+        toast.error(t('cancelFailed'));
+      }
+    }
+  };
+
   const submit = () => {
     const q = input.trim();
     if (!q || ask.isPending) return;
@@ -265,7 +277,6 @@ export function ChatPage() {
     ask.mutate(q);
   };
 
-  const chatDisabled = status.data?.enabled === false;
   const currentSession = (sessions.data?.items ?? []).find((s) => s.session_id === sessionId);
   const scopeIds = scopeOverride ?? currentSession?.scope_space_ids ?? [];
   const spaceOptions = [
@@ -277,9 +288,10 @@ export function ChatPage() {
 
   return (
     <div className="flex h-svh min-w-0 flex-col">
-      {/* 顶栏：会话标题 + 召回范围（会话列表在 AppLayout 侧栏上部） */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background px-4 py-3">
-        <h1 className="truncate text-base font-semibold">{currentSession?.title || t('defaultTitle')}</h1>
+        <h1 className="truncate text-base font-semibold">
+          {currentSession?.title || t('defaultTitle')}
+        </h1>
         {sessionId && (
           <div className="flex items-center gap-2">
             <span className="shrink-0 text-sm text-muted-foreground">{t('scopeLabel')}</span>
@@ -290,89 +302,138 @@ export function ChatPage() {
               loading={spaces.isLoading || publicSpaces.isLoading || sessions.isLoading}
               onChange={(v) => {
                 setScopeOverride(v);
-                updateScope.mutate(v);
+                patchSession.mutate({ scope_space_ids: v });
               }}
             />
-            <StatusBadge tone="purple">{t('graphBadge')}</StatusBadge>
           </div>
         )}
       </div>
 
-      {/* 消息区：滚动仅限此区域 */}
+      {sessionId && scopeIds.length === 0 && !agentDisabled && (
+        <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
+          <ShieldAlert className="size-4 shrink-0 text-amber-600" />
+          {t('noScopeHint')}
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-4">
-          {chatDisabled && (
+          {agentDisabled && (
             <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               <ShieldAlert className="size-4" />
-              {t('unavailable', { reason: status.data?.reason ?? t('llmNotConfigured') })}
+              {t('unavailable', { reason: agentStatus.data?.reason ?? t('serviceUnreachable') })}
             </div>
           )}
-          {msgs.length === 0 && !ask.isPending && (
-            <EmptyState
-              title={sessionId ? t('askTitle') : t('startTitle')}
-              description={t('emptyDesc')}
-            />
+          {msgs.length === 0 && !ask.isPending && !agentDisabled && (
+            <EmptyState title={t('startTitle')} description={t('emptyDesc')} />
           )}
           {msgs.map((m, i) => (
             <div key={i} className={m.role === 'user' ? 'flex justify-end' : ''}>
               <div
-                className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                  m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                className={`rounded-lg px-3 py-2 text-sm ${
+                  m.role === 'user'
+                    ? 'max-w-[85%] bg-primary text-primary-foreground'
+                    : 'w-full bg-muted'
                 }`}
               >
-                {m.role === 'assistant'
-                  ? renderAnswer(m.content || (m.streaming ? '……' : ''), m.citations, (c) =>
-                      jumpToCitation(navigate, c),
-                    )
-                  : m.content}
-                {m.streaming && m.content && (
-                  <Dot className="inline size-4 animate-pulse text-primary" />
-                )}
-                {m.role === 'assistant' && (m.citations?.length ?? 0) > 0 && (
-                  <div className="mt-2 border-t pt-2">
-                    <p className="mb-1 text-xs font-medium text-muted-foreground">{t('citationsTitle')}</p>
-                    <ul className="space-y-1">
-                      {m.citations!.map((c) => (
-                        <li key={c.index} className="text-xs">
-                          <span className="mr-1 font-semibold">[{c.index}]</span>
-                          <button
-                            type="button"
-                            className="text-primary hover:underline"
-                            onClick={() => jumpToCitation(navigate, c)}
-                          >
-                            {c.asset_name}
-                          </button>
-                          <span className="ml-1 text-muted-foreground">
-                            {citationLabel(c)} · {c.text_snippet.slice(0, 60)}…
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {m.role === 'assistant' && (m.graphEvidence?.length ?? 0) > 0 && (
-                  <Collapsible className="mt-2">
+                {/* 思维链折叠面板（reasoning-delta） */}
+                {m.role === 'assistant' && !!m.reasoning && (
+                  <Collapsible className="mb-2">
                     <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                      <Waypoints className="size-3" />
-                      {t('evidenceCount', { count: m.graphEvidence!.length })}
+                      <Brain className="size-3" />
+                      {m.streaming ? t('thinking') : t('thoughtProcess')}
+                      <ChevronDown className="size-3" />
                     </CollapsibleTrigger>
                     <CollapsibleContent>
-                      <ul className="mt-1 space-y-1 rounded bg-background/60 p-2">
-                        {m.graphEvidence!.map((ev, j) => (
-                          <li key={j} className="text-xs">
-                            <span className="font-medium">{ev.head.name}</span>
-                            <span className="mx-1 text-primary">—{ev.relation.type}→</span>
-                            <span className="font-medium">{ev.tail.name}</span>
-                            {ev.hops > 1 && (
-                              <span className="ml-1 text-muted-foreground">
-                                {t('hops', { count: ev.hops })}
-                              </span>
-                            )}
+                      <p className="mt-1 max-h-48 overflow-y-auto rounded bg-background/60 p-2 text-xs whitespace-pre-wrap text-muted-foreground">
+                        {m.reasoning}
+                      </p>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+
+                {/* 工具调用过程卡（tool_start/tool_end） */}
+                {m.role === 'assistant' && (m.toolCalls?.length ?? 0) > 0 && (
+                  <div className="mb-2 space-y-1">
+                    {m.toolCalls!.map((tc) => (
+                      <div
+                        key={tc.call_id}
+                        className="flex items-center gap-2 rounded border border-border/60 bg-background/60 px-2 py-1 text-xs"
+                      >
+                        <Wrench className="size-3 shrink-0 text-muted-foreground" />
+                        <span className="truncate font-mono">
+                          {tc.tool === 'mcp__loomvec__search_knowledge'
+                            ? t('toolSearchKnowledge')
+                            : tc.tool}
+                        </span>
+                        {tc.ok === undefined ? (
+                          <Spinner className="size-3" />
+                        ) : tc.ok ? (
+                          <span className="shrink-0 text-emerald-600">{t('toolOk')}</span>
+                        ) : (
+                          <span className="shrink-0 text-destructive">{t('toolFailed')}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {m.role === 'assistant' ? (
+                  m.streaming && !m.content ? (
+                    /* 等待首 token：动态加载图标（区别于流式中的淡入正文） */
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Spinner className="size-4" />
+                      {t('thinking')}
+                    </div>
+                  ) : (
+                    <AnswerMarkdown content={m.content} citations={m.citations} streaming={m.streaming} />
+                  )
+                ) : (
+                  m.content
+                )}
+
+                {/* 引用列表（默认折叠，渲染与跳转沿用旧链路） */}
+                {m.role === 'assistant' && (m.citations?.length ?? 0) > 0 && (
+                  <Collapsible className="mt-2 border-t pt-2">
+                    <CollapsibleTrigger className="group flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+                      <ChevronDown className="size-3 transition-transform group-data-[state=open]:rotate-180" />
+                      {t('citationsCount', { count: m.citations!.length })}
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <ul className="space-y-1 pt-2">
+                        {m.citations!.map((c) => (
+                          <li key={c.index} className="text-xs">
+                            <span className="mr-1 font-semibold">[{c.index}]</span>
+                            <button
+                              type="button"
+                              className="text-primary hover:underline"
+                              onClick={() => jumpToCitation(navigate, c)}
+                            >
+                              {c.asset_name}
+                            </button>
+                            <span className="ml-1 text-muted-foreground">
+                              {citationLabel(c)} · {c.text_snippet.slice(0, 60)}…
+                            </span>
                           </li>
                         ))}
                       </ul>
                     </CollapsibleContent>
                   </Collapsible>
+                )}
+
+                {/* 步级用量折叠条（cache_hit_rate / tokens） */}
+                {m.role === 'assistant' && !m.streaming && m.usage && (
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {t('usageLine', {
+                      tokens:
+                        (m.usage.output_tokens ?? 0) +
+                        (m.usage.cache_read_tokens ?? 0) +
+                        (m.usage.cache_write_tokens ?? 0) +
+                        (m.usage.uncached_input_tokens ?? 0),
+                      hit: Math.round((m.usage.cache_hit_rate ?? 0) * 100),
+                      steps: m.usage.steps ?? 0,
+                    })}
+                  </p>
                 )}
               </div>
             </div>
@@ -388,7 +449,7 @@ export function ChatPage() {
                   if (lastUser) ask.mutate(lastUser.content);
                 }}
               >
-                {t('action.retry')}
+                {t('action.retry', { ns: 'ui' })}
               </button>
             </p>
           )}
@@ -396,21 +457,72 @@ export function ChatPage() {
         </div>
       </div>
 
-      {/* 输入区 */}
+      {/* 输入区：附件 chips + 输入框 + 发送/停止 */}
       <div className="border-t bg-background px-4 py-3">
-        <div className="mx-auto flex w-full max-w-3xl items-center gap-2">
-          <Input
-            placeholder={chatDisabled ? t('inputUnavailable') : t('inputPlaceholder')}
-            value={input}
-            disabled={chatDisabled}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit();
-            }}
-          />
-          <Button size="icon" disabled={chatDisabled || ask.isPending || !input.trim()} onClick={submit}>
-            {ask.isPending ? <Spinner className="size-4" /> : <Send className="size-4" />}
-          </Button>
+        <div className="mx-auto w-full max-w-3xl space-y-2">
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {attachments.map((a) => (
+                <span
+                  key={a.attachment_id}
+                  className="flex items-center gap-1 rounded-full border bg-muted/60 px-2 py-0.5 text-xs"
+                >
+                  {a.is_image && a.preview_url ? (
+                    <img src={a.preview_url} alt={a.name} className="size-4 rounded object-cover" />
+                  ) : (
+                    <FileUp className="size-3" />
+                  )}
+                  <span className="max-w-40 truncate">{a.name}</span>
+                  <button
+                    type="button"
+                    aria-label={t('removeAttachment')}
+                    onClick={() =>
+                      setAttachments((prev) => prev.filter((x) => x.attachment_id !== a.attachment_id))
+                    }
+                  >
+                    <X className="size-3 hover:text-destructive" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              accept="image/png,image/jpeg,image/webp,image/gif,text/plain,text/markdown,application/pdf,application/json,text/csv"
+              onChange={(e) => void onFiles(e.target.files)}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t('addAttachment')}
+              disabled={!sessionId || ask.isPending || attachments.length >= MAX_ATTACHMENTS}
+              onClick={() => fileRef.current?.click()}
+            >
+              <Paperclip className="size-4" />
+            </Button>
+            <Input
+              placeholder={agentDisabled ? t('inputUnavailable') : t('inputPlaceholder')}
+              value={input}
+              disabled={agentDisabled}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit();
+              }}
+            />
+            {ask.isPending ? (
+              <Button size="icon" variant="destructive" aria-label={t('stop')} onClick={() => void stop()}>
+                <Square className="size-4" />
+              </Button>
+            ) : (
+              <Button size="icon" disabled={agentDisabled || !input.trim()} onClick={submit}>
+                <Send className="size-4" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

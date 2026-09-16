@@ -5,10 +5,10 @@
  */
 import type common from '@loomvec/ui/i18n/locales/zh-CN/common.json';
 import type ui from '@loomvec/ui/i18n/locales/zh-CN/ui.json';
+import type agent from './locales/zh-CN/agent.json';
 import type assetDetail from './locales/zh-CN/assetDetail.json';
 import type assets from './locales/zh-CN/assets.json';
 import type auth from './locales/zh-CN/auth.json';
-import type chat from './locales/zh-CN/chat.json';
 import type graph from './locales/zh-CN/graph.json';
 import type layout from './locales/zh-CN/layout.json';
 import type notifications from './locales/zh-CN/notifications.json';
@@ -25,10 +25,10 @@ declare module 'i18next' {
     resources: {
       common: typeof common;
       ui: typeof ui;
+      agent: typeof agent;
       assetDetail: typeof assetDetail;
       assets: typeof assets;
       auth: typeof auth;
-      chat: typeof chat;
       graph: typeof graph;
       layout: typeof layout;
       notifications: typeof notifications;

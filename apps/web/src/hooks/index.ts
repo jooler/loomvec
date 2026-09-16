@@ -1,5 +1,6 @@
 /**
- * 共享 react-query hooks：当前用户 / 空间列表 / 空间维度字典（分类、标签）/ 通知。
+ * 共享 react-query hooks：当前用户 / 空间列表 / 空间维度字典（分类、标签）/ 通知 /
+ * 智能体会话（P5：对话由 dsh 全量接管，无 legacy 会话源）。
  * 同一 queryKey 的 queryFn 必须全库唯一（返回形态一致），否则缓存互相污染。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -77,21 +78,44 @@ export function useSpaceLinkToggle() {
   });
 }
 
-/** 对话会话条目（侧栏会话列表 / 对话页共用）。 */
+/** 智能体会话条目（侧栏会话列表 / 对话页共用；id 归一为 session_id）。 */
 export interface ChatSessionItem {
   session_id: string;
   title: string;
   scope_space_ids: string[];
 }
 
-/** 对话会话列表（AppLayout 侧栏 + 对话页共用缓存）。 */
-export function useChatSessions() {
+/** 智能体服务可用性（ChatPage 入口降级提示）。 */
+export function useAgentStatus() {
   return useQuery({
-    queryKey: ['chat-sessions'],
+    queryKey: ['agent-status'],
     queryFn: async () => {
-      const { data, error } = await api.GET('/api/v1/chat/sessions', {});
-      if (error) throw new Error(extractApiError(error, t('chat:loadSessionsFailed')));
-      return data as unknown as { items: ChatSessionItem[]; total: number };
+      const { data } = await api.GET('/api/v1/agent/status', {});
+      // 查询失败（agent 服务未部署）按禁用展示，不阻塞页面
+      return (data ?? {}) as unknown as { enabled?: boolean; runtime_ok?: boolean; reason?: string | null };
+    },
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** 智能体会话列表（AppLayout 侧栏 + 对话页共用缓存）。 */
+export function useAgentSessions() {
+  return useQuery({
+    queryKey: ['agent-sessions'],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/agent/sessions', {});
+      if (error) throw new Error(extractApiError(error, t('agent:loadSessionsFailed')));
+      const items = (
+        data as unknown as {
+          items: { id: string; title: string; scope_space_ids: string[] }[];
+        }
+      ).items.map((s) => ({
+        session_id: s.id,
+        title: s.title,
+        scope_space_ids: s.scope_space_ids ?? [],
+      }));
+      return { items, total: items.length };
     },
   });
 }

@@ -32,31 +32,31 @@ import {
 } from '@loomvec/ui/components/ui/dialog';
 import { Input } from '@loomvec/ui/components/ui/input';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
-import { useChatSessions, type ChatSessionItem } from '@/hooks';
+import { useAgentSessions, type ChatSessionItem } from '@/hooks';
 import { extractApiError } from '@/utils';
 import { cn } from 'cn';
 
 /**
- * 侧栏对话区：新建对话 + 历史会话列表（占满剩余高度、仅此区域滚动）。
+ * 侧栏对话区（P5）：新建对话 + 智能体会话列表（占满剩余高度、仅此区域滚动）。
  * 会话条目悬停出现「更多」菜单：重命名（PATCH title）、删除（确认后 DELETE，
- * 删除当前打开的会话时回到新对话页）。
+ * 删除当前打开的会话时回到新对话页）。数据源为 agent 会话（dsh 全量接管）。
  */
 export function ChatSessions() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
   const { t } = useTranslation('layout');
-  const sessions = useChatSessions();
+  const sessions = useAgentSessions();
   // 重命名弹窗目标会话 + 标题草稿；删除确认目标会话
   const [renaming, setRenaming] = useState<ChatSessionItem | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deleting, setDeleting] = useState<ChatSessionItem | null>(null);
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['agent-sessions'] });
 
   const rename = useMutation({
     mutationFn: async ({ id, title }: { id: string; title: string }) => {
-      const { error } = await api.PATCH('/api/v1/chat/sessions/{session_id}', {
+      const { error } = await api.PATCH('/api/v1/agent/sessions/{session_id}', {
         params: { path: { session_id: id } },
         body: { title },
       });
@@ -71,7 +71,7 @@ export function ChatSessions() {
 
   const remove = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await api.DELETE('/api/v1/chat/sessions/{session_id}', {
+      const { error } = await api.DELETE('/api/v1/agent/sessions/{session_id}', {
         params: { path: { session_id: id } },
       });
       if (error) throw new Error(extractApiError(error, t('chat.deleteFailed')));
@@ -79,7 +79,7 @@ export function ChatSessions() {
     onSuccess: (_, id) => {
       setDeleting(null);
       // 清掉被删会话的消息缓存，避免同名 queryKey 残留脏数据
-      queryClient.removeQueries({ queryKey: ['chat-messages', id] });
+      queryClient.removeQueries({ queryKey: ['agent-messages', id] });
       if (location.pathname === `/chat/${id}`) navigate('/chat');
       invalidate();
     },

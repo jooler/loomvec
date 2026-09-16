@@ -1,5 +1,12 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Streamdown（流式 Markdown 渲染）动画 keyframes */
+@import "streamdown/styles.css";
+
+/* 扫描 Streamdown 组件源码中的工具类（pnpm symlink，路径经 apps/web/node_modules） */
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/cjk/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
