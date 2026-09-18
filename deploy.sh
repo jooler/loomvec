@@ -8,7 +8,10 @@
 # 行为约定：
 # - 幂等：config/loomvec.json 已存在时逐项回显现值，直接回车保留原值（覆盖前备份到 tmp/）；
 # - 端口迁移：历史环境的旧默认端口（5433/9000/8080/5173…）自动迁移到 3xxxx 系列，精确匹配、幂等；
-# - 不启动服务：部署只落配置，启动/停止/状态用 ./dev.sh start|stop|status；
+# - 部署标记：成功完成后写入 tmp/loomvec-deployed.stamp，./dev.sh start 依此免于重复拉起部署；
+#   被 dev.sh 调起时（LOOMVEC_DEPLOY_INVOKED_BY_DEV=1）跳过"立即启动"询问，返回调用方继续；
+# - 用户取消（确认门禁选 n）以退出码 1 结束，dev.sh 会终止本次启动；
+# - 不主动启动服务：部署只落配置，启动/停止/状态用 ./dev.sh start|stop|status；
 # - 未配置 VLM 时自动置 image.caption_enabled=false（图片描述关闭；管线本就不被 caption 阻断）；
 #   未配置 CLIP 时以文搜图在检索侧自动降级，无需处理；
 # - 密钥输入不回显；base_url / model 必填，api_key 可留空（本地无鉴权端点）。
@@ -17,6 +20,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 CFG="config/loomvec.json"; EXAMPLE="config/loomvec.example.json"
+STAMP="tmp/loomvec-deployed.stamp"  # 成功完成的部署标记；./dev.sh start 依此判断是否需要先部署
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; DIM=$'\033[2m'; RST=$'\033[0m'
 ok()   { echo "${GRN}✓${RST} $*"; }
 warn() { echo "${YLW}!${RST} $*"; }
@@ -103,12 +107,21 @@ keydesc() {
   else echo "(未设置)"; fi
 }
 maybe_start() {
+  if [ "${LOOMVEC_DEPLOY_INVOKED_BY_DEV:-0}" = "1" ]; then
+    echo "  由 ./dev.sh 调起：部署完成，返回 dev.sh 继续启动"
+    return 0
+  fi
   echo ""
   read -r -p "是否现在执行 ./dev.sh start 启动全部服务？[y/N]：" GO
   GO="$(trim "$GO")"
   if [[ "$GO" =~ ^[Yy] ]]; then exec ./dev.sh start; fi
   echo "  下一步   ./dev.sh start   # 拉起基础设施 + api/agent/worker + 三个前端"
   echo "  状态     ./dev.sh status"
+}
+stamp_deploy() {
+  mkdir -p tmp
+  date "+%Y-%m-%d %H:%M:%S" > "$STAMP"
+  ok "已写入部署标记 ${STAMP}（dev.sh 检测到它不再重复拉起部署）"
 }
 
 # ---------------------------------------------------------------- 前置检查
@@ -221,7 +234,7 @@ if [ "$FRESH" = "0" ]; then
   warn "已存在 ${CFG}：写入前会自动备份到 tmp/；逐项回车 = 保留原值"
   read -r -p "确认修改该文件？[Y/n]：" CONFIRM
   CONFIRM="$(trim "$CONFIRM")"; CONFIRM="${CONFIRM:-Y}"
-  [[ "$CONFIRM" =~ ^[Yy] ]] || { echo "已取消，未做任何修改"; exit 0; }
+  [[ "$CONFIRM" =~ ^[Yy] ]] || { echo "已取消部署（未做任何修改）；dev.sh 将终止本次启动"; exit 1; }
 fi
 
 if [[ ! "$MODE" =~ ^[Yy] ]]; then
@@ -236,6 +249,7 @@ with open(p, "w", encoding="utf-8") as f:
     f.write("\n")
 PY
   ok "已置 ai.mock=true（确定性本地供方，离线跑通全链路）"
+  stamp_deploy
   maybe_start
   exit 0
 fi
@@ -358,4 +372,5 @@ else echo "  VLM        （未配置，image.caption_enabled 已置 false）"; f
 if [ -n "$CLIP_URL" ]; then echo "  CLIP       $CLIP_URL   $CLIP_MODEL   key=$(keydesc ai.clip.api_key "$CLIP_KEY")"
 else echo "  CLIP       （未配置，以文搜图自动降级）"; fi
 warn "改动了 AI 配置时，需重启 api/agent/worker 才生效（./dev.sh stop && ./dev.sh start）"
+stamp_deploy
 maybe_start

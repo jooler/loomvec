@@ -6,7 +6,8 @@
 #   ./dev.sh stop       # 关闭三个前端、api/worker 应用进程，并停止基础设施+监控容器（数据卷保留）
 #   ./dev.sh status     # 查看各组件运行状态
 #
-# 新环境首次部署：先运行 ./deploy.sh（交互式配置 AI 供方，写入 config/loomvec.json），再 ./dev.sh start。
+# 新环境首次部署：先运行 ./deploy.sh（交互式配置 AI 供方，写入 config/loomvec.json），再 ./dev.sh start；
+# 未部署过时 ./dev.sh start 也会在交互终端下自动先拉起 ./deploy.sh（见下方"部署门禁"）。
 #
 # 行为约定：
 # - 幂等：已在运行的组件自动跳过，不会重复拉起；
@@ -19,6 +20,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 LOG_DIR="$ROOT/tmp"; PID_FILE="$LOG_DIR/dev.pids"; mkdir -p "$LOG_DIR"
+DEPLOY_STAMP="$LOG_DIR/loomvec-deployed.stamp"  # ./deploy.sh 成功完成时写入；缺失则 dev.sh 先拉起部署
 COMPOSE="docker compose -f deploy/compose/compose.yaml --profile observability"
 
 # 服务端口单源 .env（LOOMVEC_API_PORT/WEB/ADMIN/OPS_PORT；缺省 38080/35173/35174/35175）
@@ -97,6 +99,21 @@ for cmd in docker uv pnpm; do
   command -v "$cmd" >/dev/null 2>&1 || { fail "缺少 ${cmd}（Python 用 uv 管理，前端用 pnpm）"; exit 1; }
 done
 ok "docker / uv / pnpm 就绪"
+
+# ---------------------------------------------------------------- 部署门禁（deploy-first）
+# 新环境未部署过（无 tmp/loomvec-deployed.stamp）：交互终端下自动先执行 ./deploy.sh
+# （AI 供方录入 / 端口迁移 / 应用参数初始化），完成后继续本脚本；取消或部署失败则终止
+# 启动。非交互环境（CI / 脚本管道）跳过自动部署，走下方兜底初始化并告警。
+if [ ! -f "$DEPLOY_STAMP" ]; then
+  if [ -t 0 ]; then
+    step "检测到尚未部署，先执行 ./deploy.sh（完成后自动继续启动）"
+    LOOMVEC_DEPLOY_INVOKED_BY_DEV=1 ./deploy.sh \
+      || { fail "部署未完成（已取消或出错）；完成后重新运行 ./dev.sh start"; exit 1; }
+  else
+    warn "尚未运行 ./deploy.sh（非交互环境，跳过自动部署；将按离线 mock 兜底初始化）"
+  fi
+fi
+
 docker info --format ok >/dev/null 2>&1 || { fail "Docker 未运行——请先启动 Docker Desktop"; exit 1; }
 ok "Docker daemon 运行中"
 
