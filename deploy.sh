@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+# LoomVec 新环境部署脚本（交互式）
+#
+# 用法：新环境首次部署运行一次，录入真实 AI 供方后交由 ./dev.sh start 启动：
+#   ./deploy.sh    # 交互式录入 对话 LLM / 嵌入 / 重排（可选 VLM / CLIP）的地址、key、模型名，
+#                  # 写入 config/loomvec.json（ai.mock=false）；首问选 n 则生成离线 mock 配置
+#
+# 行为约定：
+# - 幂等：config/loomvec.json 已存在时逐项回显现值，直接回车保留原值（覆盖前备份到 tmp/）；
+# - 不启动服务：部署只落配置，启动/停止/状态用 ./dev.sh start|stop|status；
+# - 未配置 VLM 时自动置 image.caption_enabled=false（图片描述关闭；管线本就不被 caption 阻断）；
+#   未配置 CLIP 时以文搜图在检索侧自动降级，无需处理；
+# - 密钥输入不回显；base_url / model 必填，api_key 可留空（本地无鉴权端点）。
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+CFG="config/loomvec.json"; EXAMPLE="config/loomvec.example.json"
+RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; DIM=$'\033[2m'; RST=$'\033[0m'
+ok()   { echo "${GRN}✓${RST} $*"; }
+warn() { echo "${YLW}!${RST} $*"; }
+fail() { echo "${RED}✗${RST} $*"; }
+step() { echo "\n${DIM}── $* ──${RST}"; }
+
+trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
+
+# ask PROMPT CURRENT —— 读一行到 REPLY；空输入 = 保留 CURRENT
+ask() {
+  local hint=""
+  [ -n "$2" ] && hint="${YLW} [当前: $2，回车保留]${RST}"
+  read -r -p "$1${hint}： " REPLY; REPLY="$(trim "$REPLY")"
+  [ -z "$REPLY" ] && REPLY="$2"
+}
+# ask_secret PROMPT HAS_CURRENT VAR —— 不回显读取到 VAR；空输入 = 保留原值（VAR 置空）
+ask_secret() {
+  local hint="" v
+  [ "$2" = "1" ] && hint="${YLW} [已设置，回车保留]${RST}"
+  read -r -s -p "$1${hint}： " v; echo
+  printf -v "$3" '%s' "$(trim "$v")"
+}
+# ask_url PROMPT CURRENT VAR —— 必填 http(s) URL，非法则重问
+ask_url() {
+  local v
+  while :; do
+    ask "$1" "$2"; v="$REPLY"
+    case "$v" in http://*|https://*) printf -v "$3" '%s' "${v%/}"; return 0 ;; esac
+    fail "base_url 需以 http:// 或 https:// 开头"
+  done
+}
+# ask_url_opt PROMPT CURRENT VAR —— 可留空表示跳过该通道
+ask_url_opt() {
+  local v
+  while :; do
+    ask "$1" "$2"; v="$REPLY"
+    case "$v" in http://*|https://*) v="${v%/}" ;; "" ) ;; * ) fail "需以 http(s):// 开头，或直接回车跳过"; continue ;; esac
+    printf -v "$3" '%s' "$v"; return 0
+  done
+}
+# ask_nonempty PROMPT CURRENT VAR
+ask_nonempty() {
+  while :; do
+    ask "$1" "$2"; [ -n "$REPLY" ] && { printf -v "$3" '%s' "$REPLY"; return 0; }
+    fail "$1 不能为空"
+  done
+}
+# ask_int PROMPT CURRENT DEFAULT VAR
+ask_int() {
+  local v
+  while :; do
+    ask "$1（默认 $3）" "$2"; v="$REPLY"; [ -z "$v" ] && v="$3"
+    [[ "$v" =~ ^[1-9][0-9]*$ ]] && { printf -v "$4" '%s' "$v"; return 0; }
+    fail "需为正整数"
+  done
+}
+# read_cfg KEY（形如 ai.llm.base_url）—— 从 CFG 读现值；缺失 / 模板占位 sk-xxx 视为空
+read_cfg() {
+  python3 - "$CFG" "$1" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+    for k in sys.argv[2].split("."):
+        d = d.get(k) if isinstance(d, dict) else None
+    v = "" if d is None else str(d)
+    print("" if v == "sk-xxx" else v)
+except Exception:
+    print("")
+PY
+}
+# cur_cfg KEY —— FRESH 工作副本（模板原样）时一律视为空，避免把模板示例当现值回显
+cur_cfg() {
+  if [ "$FRESH" = "1" ]; then echo ""; else read_cfg "$1"; fi
+}
+mask_key() {
+  local k="$1"
+  if [ -z "$k" ]; then echo "(未设置)"; else echo "${k:0:6}****"; fi
+}
+# kept KEY KEYVAL —— KEYVAL 为空但配置里有现值 = 本次回车保留了原 key
+kept() { [ -z "$2" ] && [ -n "$(read_cfg "$1")" ] && echo 1 || echo 0; }
+keydesc() {
+  if [ -n "$2" ]; then mask_key "$2"
+  elif [ "$(kept "$1" "$2")" = "1" ]; then echo "(保留原值)"
+  else echo "(未设置)"; fi
+}
+maybe_start() {
+  echo ""
+  read -r -p "是否现在执行 ./dev.sh start 启动全部服务？[y/N]：" GO
+  GO="$(trim "$GO")"
+  if [[ "$GO" =~ ^[Yy] ]]; then exec ./dev.sh start; fi
+  echo "  下一步   ./dev.sh start   # 拉起基础设施 + api/agent/worker + 三个前端"
+  echo "  状态     ./dev.sh status"
+}
+
+# ---------------------------------------------------------------- 前置检查
+step "前置检查"
+[ -f "$EXAMPLE" ] || { fail "请在仓库根目录运行（缺少 ${EXAMPLE}）"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { fail "缺少 python3"; exit 1; }
+ok "仓库根与 python3 就绪"
+
+# ---------------------------------------------------------------- 环境文件（与 dev.sh 同规则，缺失才生成）
+[ -f deploy/compose/.env ] || { cp deploy/compose/.env.example deploy/compose/.env; ok "生成 deploy/compose/.env"; }
+[ -f .env ] || { cp .env.example .env; ok "生成根 .env（基础设施连接默认值；可后续手工调整）"; }
+
+# ---------------------------------------------------------------- 工作副本
+FRESH=0
+[ -f "$CFG" ] || { cp "$EXAMPLE" "$CFG"; FRESH=1; ok "以模板创建工作副本 $CFG"; }
+
+echo ""
+echo "${DIM}LoomVec AI 供方配置：对话 LLM / 嵌入 / 重排为必配（RAG 主链路），"
+echo "VLM（图片描述）/ CLIP（以文搜图）可选。均走 OpenAI 兼容端点；"
+echo "重排与 CLIP 另支持 DashScope 原生协议（api_style=dashscope）。${RST}"
+read -r -p "是否配置真实 AI 供方？[Y/n]（n = 离线 mock 模式）：" MODE
+MODE="$(trim "$MODE")"; MODE="${MODE:-Y}"
+
+# 已有配置：写入前显式确认（本脚本以自身所在目录为仓库根，勿在他处误调）
+if [ "$FRESH" = "0" ]; then
+  warn "已存在 ${CFG}：写入前会自动备份到 tmp/；逐项回车 = 保留原值"
+  read -r -p "确认修改该文件？[Y/n]：" CONFIRM
+  CONFIRM="$(trim "$CONFIRM")"; CONFIRM="${CONFIRM:-Y}"
+  [[ "$CONFIRM" =~ ^[Yy] ]] || { echo "已取消，未做任何修改"; exit 0; }
+fi
+
+if [[ ! "$MODE" =~ ^[Yy] ]]; then
+  python3 - "$CFG" <<'PY'
+import json, sys
+p = sys.argv[1]
+with open(p, encoding="utf-8") as f:
+    cfg = json.load(f)
+cfg.setdefault("ai", {})["mock"] = True
+with open(p, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+  ok "已置 ai.mock=true（确定性本地供方，离线跑通全链路）"
+  maybe_start
+  exit 0
+fi
+
+# ---------------------------------------------------------------- 对话 LLM
+step "对话 LLM（OpenAI 兼容 /chat/completions）"
+ask_url     "base_url（如 https://api.deepseek.com）" "$(cur_cfg ai.llm.base_url)" LLM_URL
+ask_nonempty "模型名（如 deepseek-chat）"             "$(cur_cfg ai.llm.model)" LLM_MODEL
+ask_secret  "API Key" "$([ -n "$(cur_cfg ai.llm.api_key)" ] && echo 1 || echo 0)" LLM_KEY
+
+# ---------------------------------------------------------------- 嵌入
+step "嵌入模型（OpenAI 兼容 /embeddings；dim 决定 Milvus 集合维度，更换模型/维度需重建集合）"
+ask_url     "base_url（如 https://dashscope.aliyuncs.com/compatible-mode/v1）" "$(cur_cfg ai.embedding.base_url)" EMB_URL
+ask_nonempty "模型名（如 text-embedding-v4）" "$(cur_cfg ai.embedding.model)" EMB_MODEL
+ask_secret  "API Key" "$([ -n "$(cur_cfg ai.embedding.api_key)" ] && echo 1 || echo 0)" EMB_KEY
+ask_int     "向量维度 dim"          "$(cur_cfg ai.embedding.dim)" 1024 EMB_DIM
+ask_int     "单次批量 batch_size"   "$(cur_cfg ai.embedding.batch_size)" 16 EMB_BATCH
+
+# ---------------------------------------------------------------- 重排
+step "重排模型（cross-encoder；OpenAI 兼容端点用 openai，阿里百炼原生用 dashscope）"
+ask_url     "base_url（DashScope 原生: https://dashscope.aliyuncs.com/api/v1）" "$(cur_cfg ai.rerank.base_url)" RR_URL
+ask_nonempty "模型名（如 qwen3-vl-rerank / bge-reranker-v2-m3）" "$(cur_cfg ai.rerank.model)" RR_MODEL
+ask_secret  "API Key" "$([ -n "$(cur_cfg ai.rerank.api_key)" ] && echo 1 || echo 0)" RR_KEY
+RR_STYLE_CUR="$(cur_cfg ai.rerank.api_style)"; RR_STYLE_CUR="${RR_STYLE_CUR:-openai}"
+RR_STYLE=""
+while :; do
+  ask "api_style（openai / dashscope）" "$RR_STYLE_CUR"
+  case "$REPLY" in openai|dashscope) RR_STYLE="$REPLY"; break ;; esac
+  fail "只能填 openai 或 dashscope"
+done
+
+# ---------------------------------------------------------------- 可选：VLM / CLIP
+step "可选：VLM（图片描述）/ CLIP（以文搜图）——base_url 直接回车即跳过"
+echo "${DIM}跳过 VLM 将置 image.caption_enabled=false；跳过 CLIP 检索侧自动降级。${RST}"
+ask_url_opt "VLM base_url" "$(cur_cfg ai.vlm.base_url)" VLM_URL
+VLM_MODEL=""; VLM_KEY=""
+if [ -n "$VLM_URL" ]; then
+  ask_nonempty "VLM 模型名（如 qwen3-vl-plus）" "$(cur_cfg ai.vlm.model)" VLM_MODEL
+  ask_secret   "VLM API Key" "$([ -n "$(cur_cfg ai.vlm.api_key)" ] && echo 1 || echo 0)" VLM_KEY
+fi
+ask_url_opt "CLIP base_url" "$(cur_cfg ai.clip.base_url)" CLIP_URL
+CLIP_MODEL=""; CLIP_KEY=""
+if [ -n "$CLIP_URL" ]; then
+  ask_nonempty "CLIP 模型名（如 multimodal-embedding-v1）" "$(cur_cfg ai.clip.model)" CLIP_MODEL
+  ask_secret   "CLIP API Key" "$([ -n "$(cur_cfg ai.clip.api_key)" ] && echo 1 || echo 0)" CLIP_KEY
+fi
+
+# ---------------------------------------------------------------- 写入配置
+mkdir -p tmp
+if [ "$FRESH" = "0" ]; then
+  BAK="tmp/loomvec.json.bak.$(date +%Y%m%d%H%M%S)"
+  cp "$CFG" "$BAK" && ok "原配置已备份：$BAK"
+fi
+
+python3 - "$CFG" \
+  "$LLM_URL" "$LLM_MODEL" "$LLM_KEY" \
+  "$EMB_URL" "$EMB_MODEL" "$EMB_KEY" "$EMB_DIM" "$EMB_BATCH" \
+  "$RR_URL" "$RR_MODEL" "$RR_KEY" "$RR_STYLE" \
+  "$VLM_URL" "$VLM_MODEL" "$VLM_KEY" \
+  "$CLIP_URL" "$CLIP_MODEL" "$CLIP_KEY" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+(llm_url, llm_model, llm_key,
+ emb_url, emb_model, emb_key, emb_dim, emb_batch,
+ rr_url, rr_model, rr_key, rr_style,
+ vlm_url, vlm_model, vlm_key,
+ clip_url, clip_model, clip_key) = sys.argv[2:]
+
+with open(path, encoding="utf-8") as f:
+    cfg = json.load(f)
+
+ai = cfg.setdefault("ai", {})
+ai["mock"] = False
+
+
+PLACEHOLDER = "sk-xxx"  # 模板占位密钥：残留会让通道被误判为已配置（带假凭据请求而非降级）
+
+
+def provider(name, url, model, key, extra=None):
+    """url 为空表示本次跳过该通道（保留用户现值，仅清理模板占位）。"""
+    d = ai.setdefault(name, {})
+    if not url:
+        if d.get("api_key") == PLACEHOLDER:
+            d["base_url"] = d["model"] = d["api_key"] = None
+        return
+    d["base_url"], d["model"] = url, model
+    if key:
+        d["api_key"] = key
+    elif d.get("api_key") == PLACEHOLDER:
+        d["api_key"] = None
+    for k, v in (extra or {}).items():
+        if v in (None, ""):
+            continue
+        d[k] = int(v) if k in ("dim", "batch_size") else v
+
+
+provider("llm", llm_url, llm_model, llm_key)
+provider("embedding", emb_url, emb_model, emb_key, {"dim": emb_dim, "batch_size": emb_batch})
+provider("rerank", rr_url, rr_model, rr_key, {"api_style": rr_style})
+provider("vlm", vlm_url, vlm_model, vlm_key)
+provider("clip", clip_url, clip_model, clip_key)
+
+# VLM 未配置 → 关闭图片描述（caption 失败本就降级不阻断，关掉免得逐图报错）
+cfg.setdefault("image", {})["caption_enabled"] = bool(vlm_url)
+
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+
+python3 -m json.tool "$CFG" >/dev/null 2>&1 || { fail "写入的 $CFG 不是合法 JSON"; exit 1; }
+step "部署完成"
+ok "已写入 ${CFG}（ai.mock=false）"
+echo "  对话 LLM   $LLM_URL   $LLM_MODEL   key=$(keydesc ai.llm.api_key "$LLM_KEY")"
+echo "  嵌入       $EMB_URL   $EMB_MODEL   dim=$EMB_DIM batch=$EMB_BATCH key=$(keydesc ai.embedding.api_key "$EMB_KEY")"
+echo "  重排       $RR_URL    $RR_MODEL    style=$RR_STYLE key=$(keydesc ai.rerank.api_key "$RR_KEY")"
+if [ -n "$VLM_URL" ]; then echo "  VLM        $VLM_URL   $VLM_MODEL   key=$(keydesc ai.vlm.api_key "$VLM_KEY")"
+else echo "  VLM        （未配置，image.caption_enabled 已置 false）"; fi
+if [ -n "$CLIP_URL" ]; then echo "  CLIP       $CLIP_URL   $CLIP_MODEL   key=$(keydesc ai.clip.api_key "$CLIP_KEY")"
+else echo "  CLIP       （未配置，以文搜图自动降级）"; fi
+warn "改动了 AI 配置时，需重启 api/agent/worker 才生效（./dev.sh stop && ./dev.sh start）"
+maybe_start

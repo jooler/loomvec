@@ -113,7 +113,8 @@ class AiGateway:
         cfg: AiProviderConfig = getattr(self._settings, channel)
         if not cfg.base_url or not cfg.model:
             raise ValidationError(
-                f"AI 通道 {channel} 未配置（base_url/model），请检查 LOOMVEC_AI__* 环境变量",
+                f"AI 通道 {channel} 未配置（base_url/model），"
+                "请检查 config/loomvec.json 的 ai 段（交互式配置可运行 ./deploy.sh）",
                 channel=channel,
             )
         return cfg

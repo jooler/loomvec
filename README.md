@@ -52,11 +52,14 @@ Design documents and task tracking live in [docs/](./docs) (written in Chinese).
 
 Prerequisites: Docker; Python 3.12 (managed by [uv](https://docs.astral.sh/uv/)); Node 20+ and [pnpm](https://pnpm.io).
 
+For a fresh environment, run `./deploy.sh` first — it interactively collects your real AI providers (chat LLM / embedding / rerank required; VLM / CLIP optional; answer "mock" to generate an offline config instead) and writes `config/loomvec.json`. Then bring everything up:
+
 ```bash
+./deploy.sh      # first run only; pressing Enter on every prompt keeps existing values
 ./dev.sh start
 ```
 
-One command brings up everything: image check (auto pull/build) → infrastructure + observability stack → database init → api/agent/worker + the three front-ends (idempotent; already-running components are skipped).
+`./dev.sh start` brings up everything in one command: image check (auto pull/build) → infrastructure + observability stack → database init → api/agent/worker + the three front-ends (idempotent; already-running components are skipped).
 
 | Service | URL | Notes |
 |---|---|---|
@@ -67,7 +70,7 @@ One command brings up everything: image check (auto pull/build) → infrastructu
 | Grafana | http://localhost:3002 | password in `deploy/compose/.env` (`GRAFANA_ADMIN_PASSWORD`, default `admin`) |
 | Prometheus | http://localhost:9090 | |
 
-First run generates `deploy/compose/.env` and the root `.env`. The MinerU image builds slowly the first time and downloads ~1–2 GB of models on first start. `./dev.sh status` shows component status; `./dev.sh stop` stops app processes and containers (data volumes are kept).
+First run generates `deploy/compose/.env`, the root `.env`, and the app-params file `config/loomvec.json` (from template `config/loomvec.example.json`, with `ai.mock=true` so the full loop runs offline; the file holds secrets and is gitignored). The MinerU image builds slowly the first time and downloads ~1–2 GB of models on first start. `./dev.sh status` shows component status; `./dev.sh stop` stops app processes and containers (data volumes are kept).
 
 <details>
 <summary>Manual step-by-step startup (equivalent to dev.sh)</summary>
@@ -78,6 +81,7 @@ cd deploy/compose && cp .env.example .env && docker compose --profile observabil
 
 # 2) Backend (API on 8080, agent gateway on 8090 internal-only, MinerU on 8000) + pipeline worker
 uv sync && cp .env.example .env
+[ -f config/loomvec.json ] || cp config/loomvec.example.json config/loomvec.json  # app params are gitignored; set "mock": true for offline dev
 make init-db                                        # idempotent schema init + seeds (compose PG is on 5433)
 uv run uvicorn loomvec.api.main:app --reload --port 8080
 uv run python -m loomvec.agent --reload
@@ -100,7 +104,9 @@ make evals        # retrieval regression (rerank A/B: --no-rerank)
 
 ### AI providers
 
-The AI gateway defaults to `LOOMVEC_AI__MOCK=true` — a deterministic local provider that runs the full loop offline. To use cloud providers, configure `LOOMVEC_AI__EMBEDDING__*` / `LLM__*` / `RERANK__*` (OpenAI-compatible endpoints + `/rerank`) in `.env` and set `LOOMVEC_AI__MOCK=false`. All AI calls flow through the `loomvec.core.ai` gateway; provider endpoints, keys, and model names are deployment configuration only — pointing them at self-hosted endpoints requires no code changes.
+AI provider settings come **only** from `config/loomvec.json` (template `config/loomvec.example.json`; the file holds secrets and is gitignored — environment variables do not apply to it). The recommended way is `./deploy.sh`, which writes it interactively (chat LLM / embedding / rerank required, VLM / CLIP optional; skipping everything sets `ai.mock=true` — a deterministic local provider that runs the full loop offline). To configure cloud providers by hand, set `ai.mock=false` in that file and fill in `base_url` / `api_key` / `model` under `ai.llm` / `ai.embedding` / `ai.rerank` etc. (OpenAI-compatible endpoints; rerank / clip also support the native `api_style: "dashscope"` protocol), then restart api/agent/worker for it to take effect (`./dev.sh stop && ./dev.sh start`). All AI calls flow through the `loomvec.core.ai` gateway; provider endpoints, keys, and model names are deployment configuration only — pointing them at self-hosted endpoints requires no code changes.
+
+Fresh-deployment pitfall: with the manual step-by-step startup, if `config/loomvec.json` is missing, mock stays at its code default `false` and asset uploads fail at the embed step because no AI provider key/model is available (assets stuck in "failed"). Fix: run `./deploy.sh` (or set `ai.mock=true` for offline development), restart api/agent/worker, then hit "retry" on the failed assets.
 
 ## Engineering conventions
 

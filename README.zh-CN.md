@@ -52,11 +52,14 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 
 前置：Docker；Python 3.12（由 [uv](https://docs.astral.sh/uv/) 管理）；Node 20+ 与 [pnpm](https://pnpm.io)。
 
+新环境首次部署：先运行 `./deploy.sh` 交互式录入真实 AI 供方（对话 LLM / 嵌入 / 重排为必配，VLM / CLIP 可选；全部回车选 mock 则生成离线配置），写入 `config/loomvec.json`；然后一键启动：
+
 ```bash
+./deploy.sh      # 仅首次需要；已有配置时逐项回车即保留现值
 ./dev.sh start
 ```
 
-一条命令拉起全部：镜像检查（缺失自动拉取/构建）→ 基础设施 + 监控栈 → 数据库初始化 → api/agent/worker + 三个前端（幂等，已在跑的自动跳过）。
+`./dev.sh start` 一条命令拉起全部：镜像检查（缺失自动拉取/构建）→ 基础设施 + 监控栈 → 数据库初始化 → api/agent/worker + 三个前端（幂等，已在跑的自动跳过）。
 
 | 服务 | 地址 | 说明 |
 |---|---|---|
@@ -67,7 +70,7 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 | Grafana | http://localhost:3002 | 密码见 `deploy/compose/.env` 的 `GRAFANA_ADMIN_PASSWORD`（默认 admin） |
 | Prometheus | http://localhost:9090 | |
 
-首次运行会自动生成 `deploy/compose/.env` 与根 `.env`。MinerU 镜像首次构建较慢，首次启动需下载约 1~2GB 模型。`./dev.sh status` 查看各组件状态；`./dev.sh stop` 关闭应用进程与容器（数据卷保留）。
+首次运行会自动生成 `deploy/compose/.env`、根 `.env` 与应用参数文件 `config/loomvec.json`（模板 `config/loomvec.example.json`，生成时已置 `ai.mock=true`，离线可跑通全链路；该文件含密钥、不入库）。MinerU 镜像首次构建较慢，首次启动需下载约 1~2GB 模型。`./dev.sh status` 查看各组件状态；`./dev.sh stop` 关闭应用进程与容器（数据卷保留）。
 
 <details>
 <summary>手动分步启动（等价于 dev.sh）</summary>
@@ -78,6 +81,7 @@ cd deploy/compose && cp .env.example .env && docker compose --profile observabil
 
 # 2) 后端（API 8080，agent 网关 8090 内网 only，MinerU 8000）+ 管线 worker
 uv sync && cp .env.example .env
+[ -f config/loomvec.json ] || cp config/loomvec.example.json config/loomvec.json  # 应用参数不入库；离线开发把 "mock": false 改为 true
 make init-db                                        # 幂等初始化：建最新结构 + 种子（compose PG 在 5433）
 uv run uvicorn loomvec.api.main:app --reload --port 8080
 uv run python -m loomvec.agent --reload
@@ -100,7 +104,9 @@ make evals        # 检索评测回归（rerank A/B：--no-rerank）
 
 ### AI 供方
 
-AI 网关默认 `LOOMVEC_AI__MOCK=true`——确定性本地供方，离线可跑通全链路。接入云端供方时在 `.env` 配置 `LOOMVEC_AI__EMBEDDING__*` / `LLM__*` / `RERANK__*`（OpenAI 兼容端点 + `/rerank`），并把 `LOOMVEC_AI__MOCK` 置 false。一切 AI 调用经 `loomvec.core.ai` 网关；供方地址、密钥、模型名均为部署配置——未来内网化时指向自托管端点即可，不改代码。
+AI 供方参数**只**来自 `config/loomvec.json`（模板 `config/loomvec.example.json`；文件含密钥不入库，环境变量对其不生效）。推荐经 `./deploy.sh` 交互式写入（对话 LLM / 嵌入 / 重排必配，VLM / CLIP 可选；跳过则置 `ai.mock=true`，用确定性本地供方离线跑通全链路）。手工接入云端供方：在该文件中把 `ai.mock` 改为 `false`，填写 `ai.llm` / `ai.embedding` / `ai.rerank` 等段的 `base_url` / `api_key` / `model`（OpenAI 兼容端点；rerank / clip 另支持 `api_style: "dashscope"` 原生协议），然后重启 api/agent/worker 使其生效（`./dev.sh stop && ./dev.sh start`）。一切 AI 调用经 `loomvec.core.ai` 网关；供方地址、密钥、模型名均为部署配置——未来内网化时指向自托管端点即可，不改代码。
+
+新环境部署注意：若走"手动分步启动"且漏建 `config/loomvec.json`，mock 停留在代码默认 `false`，上传资产会在 embed 步骤因拿不到 AI 供方的 key/model 而失败（资产卡在"失败"）。补救：补跑 `./deploy.sh`（离线开发可置 `ai.mock=true`），重启 api/agent/worker，再对失败资产在页面点"重试"即可重跑。
 
 ## 工程约定
 

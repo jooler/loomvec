@@ -6,10 +6,13 @@
 #   ./dev.sh stop       # 关闭三个前端、api/worker 应用进程，并停止基础设施+监控容器（数据卷保留）
 #   ./dev.sh status     # 查看各组件运行状态
 #
+# 新环境首次部署：先运行 ./deploy.sh（交互式配置 AI 供方，写入 config/loomvec.json），再 ./dev.sh start。
+#
 # 行为约定：
 # - 幂等：已在运行的组件自动跳过，不会重复拉起；
 # - 监控栈（Grafana/Prometheus/Alertmanager/Loki/Promtail）随一键启动一起拉起；
 # - 日志：应用进程输出到 tmp/dev-{api,worker,web,admin,ops}.log；
+# - 应用参数 config/loomvec.json（不入库）缺失时从模板自动生成（ai.mock=true，离线可跑）；
 # - MinerU 首次构建/启动较慢（模型下载 1~2GB），未就绪只告警不阻塞（解析功能暂不可用）。
 set -uo pipefail
 
@@ -91,7 +94,7 @@ esac
 # ---------------------------------------------------------------- 前置检查
 step "前置检查"
 for cmd in docker uv pnpm; do
-  command -v "$cmd" >/dev/null 2>&1 || { fail "缺少 $cmd（Python 用 uv 管理，前端用 pnpm）"; exit 1; }
+  command -v "$cmd" >/dev/null 2>&1 || { fail "缺少 ${cmd}（Python 用 uv 管理，前端用 pnpm）"; exit 1; }
 done
 ok "docker / uv / pnpm 就绪"
 docker info --format ok >/dev/null 2>&1 || { fail "Docker 未运行——请先启动 Docker Desktop"; exit 1; }
@@ -99,7 +102,21 @@ ok "Docker daemon 运行中"
 
 # ---------------------------------------------------------------- 环境文件
 [ -f deploy/compose/.env ] || { cp deploy/compose/.env.example deploy/compose/.env; ok "生成 deploy/compose/.env"; }
-[ -f .env ] || { cp .env.example .env; ok "生成根 .env（默认 mock AI 供方，可离线开发）"; }
+[ -f .env ] || { cp .env.example .env; ok "生成根 .env（基础设施连接；AI 供方在 config/loomvec.json）"; }
+
+# ---------------------------------------------------------------- 应用参数文件
+# config/loomvec.json 不入库（含密钥），AI 供方等应用参数只认它（env 不生效）：
+# 缺失时从模板生成并置 ai.mock=true（离线可跑通全链路；接真实供方见 README「AI 供方」）
+if [ ! -f config/loomvec.json ]; then
+  step "应用参数文件（config/loomvec.json）"
+  [ -f config/loomvec.example.json ] || { fail "缺少模板 config/loomvec.example.json"; exit 1; }
+  cp config/loomvec.example.json config/loomvec.json
+  sed -i '' 's/"mock": false/"mock": true/' config/loomvec.json 2>/dev/null \
+    || sed -i 's/"mock": false/"mock": true/' config/loomvec.json
+  ok "生成 config/loomvec.json（ai.mock=true，离线开发；接真实 AI 供方见 README）"
+elif grep -q '"mock": false' config/loomvec.json && grep -q 'sk-xxx' config/loomvec.json; then
+  warn "config/loomvec.json 仍是模板占位密钥（sk-xxx）且 ai.mock=false——上传管线 embed 步骤会失败；离线开发请置 ai.mock=true，或填入真实供方密钥"
+fi
 
 # ---------------------------------------------------------------- 镜像检查
 # 本地构建镜像（无仓库源）缺失则构建；仓库镜像缺失由 compose pull 拉取
