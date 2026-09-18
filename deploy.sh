@@ -7,6 +7,8 @@
 #
 # 行为约定：
 # - 幂等：config/loomvec.json 已存在时逐项回显现值，直接回车保留原值（覆盖前备份到 tmp/）；
+# - 依赖安装：uv sync（core/api/worker/agent workspace）+ pnpm install（apps/* + packages/*）
+#   全量拉取子项目依赖，脚本完成后环境即可直接开发或部署；依赖已满足时快速跳过；
 # - 端口迁移：历史环境的旧默认端口（5433/9000/8080/5173…）自动迁移到 3xxxx 系列，精确匹配、幂等；
 # - 部署标记：成功完成后写入 tmp/loomvec-deployed.stamp，./dev.sh start 依此免于重复拉起部署；
 #   被 dev.sh 调起时（LOOMVEC_DEPLOY_INVOKED_BY_DEV=1）跳过"立即启动"询问，返回调用方继续；
@@ -127,8 +129,10 @@ stamp_deploy() {
 # ---------------------------------------------------------------- 前置检查
 step "前置检查"
 [ -f "$EXAMPLE" ] || { fail "请在仓库根目录运行（缺少 ${EXAMPLE}）"; exit 1; }
-command -v python3 >/dev/null 2>&1 || { fail "缺少 python3"; exit 1; }
-ok "仓库根与 python3 就绪"
+for cmd in python3 uv pnpm; do
+  command -v "$cmd" >/dev/null 2>&1 || { fail "缺少 ${cmd}（Python 用 uv 管理，前端用 pnpm）"; exit 1; }
+done
+ok "python3 / uv / pnpm 就绪"
 
 # ---------------------------------------------------------------- 环境文件（与 dev.sh 同规则，缺失才生成）
 [ -f deploy/compose/.env ] || { cp deploy/compose/.env.example deploy/compose/.env; ok "生成 deploy/compose/.env"; }
@@ -216,6 +220,24 @@ if [ "${MIGRATED:-0}" -gt 0 ]; then
   ok "已迁移 ${MIGRATED} 处旧端口 → 3xxxx 系列（容器端口将在 ./dev.sh start 重建容器时生效）"
 else
   ok "端口无需迁移"
+fi
+
+# ---------------------------------------------------------------- 依赖安装（Python + 前端，全部子项目）
+# uv workspace 一条 uv sync 覆盖 core/api/worker/agent 四个后端包；
+# pnpm workspace 一条 install 覆盖 apps/* 与 packages/*。二者幂等，依赖已满足时快速跳过。
+# 完成后环境即具备开发/生产运行条件，无需再手动装依赖。
+step "依赖安装（Python + 前端）"
+if uv sync; then
+  ok "Python 依赖就绪（uv sync：core/api/worker/agent workspace）"
+else
+  fail "uv sync 失败（网络或 lockfile 问题，见上方输出）"; exit 1
+fi
+if pnpm install --frozen-lockfile; then
+  ok "前端依赖就绪（pnpm：apps/* + packages/*）"
+else
+  warn "pnpm --frozen-lockfile 失败，回退普通 install"
+  pnpm install || { fail "pnpm install 失败"; exit 1; }
+  ok "前端依赖就绪（pnpm）"
 fi
 
 # ---------------------------------------------------------------- 工作副本

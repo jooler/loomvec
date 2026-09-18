@@ -55,13 +55,13 @@ Prerequisites: Docker; Python 3.12 (managed by [uv](https://docs.astral.sh/uv/))
 For a fresh environment, run `./deploy.sh` first — it interactively collects your real AI providers (chat LLM / embedding / rerank required; VLM / CLIP optional; answer "mock" to generate an offline config instead) and writes `config/loomvec.json`. Then bring everything up:
 
 ```bash
-./deploy.sh      # first run only; pressing Enter on every prompt keeps existing values
+./deploy.sh      # first run only: interactive AI provider setup + port migration + installs all Python/Node deps
 ./dev.sh start
 ```
 
 If you skip `./deploy.sh` and run `./dev.sh start` directly, the script detects an undeployed environment (no `tmp/loomvec-deployed.stamp` marker) and automatically runs the deploy flow first on an interactive terminal; cancelling the deploy aborts the startup. Non-interactive environments (CI / piped scripts) skip auto-deploy and fall back to the offline mock bootstrap.
 
-`./dev.sh start` brings up everything in one command: image check (auto pull/build) → infrastructure + observability stack → database init → api/agent/worker + the three front-ends (idempotent; already-running components are skipped).
+`./dev.sh start` brings up everything in one command: image check (auto pull/build) → infrastructure + observability stack → database init → api/agent/worker + the three front-ends (idempotent; already-running components are skipped). On an interactive terminal it then tails the FastAPI log live (Ctrl-C stops following; services keep running; use `--no-follow` to opt out). `./dev.sh logs [api|agent|worker|web|admin|ops|all]` follows any service at any time.
 
 | Service | URL | Notes |
 |---|---|---|

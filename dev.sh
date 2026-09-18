@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 # LoomVec 开发环境管理脚本（macOS/Linux）
 #
-# 用法（三个子命令，必须显式指定）：
-#   ./dev.sh start      # 一键启动全部：镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈 → 迁移 → api/worker + 三个前端（web/admin/ops）
-#   ./dev.sh stop       # 关闭三个前端、api/worker 应用进程，并停止基础设施+监控容器（数据卷保留）
-#   ./dev.sh status     # 查看各组件运行状态
+# 用法（子命令，必须显式指定）：
+#   ./dev.sh start             # 一键启动全部：部署门禁 → 镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈
+#                              #   → 迁移 → api/agent/worker + 三个前端（web/admin/ops）；交互终端下
+#                              #   完成后实时跟随 FastAPI 日志（Ctrl-C 退出跟踪，服务继续运行；--no-follow 关闭）
+#   ./dev.sh logs [名称]       # 跟踪服务日志：api（默认）/agent/worker/web/admin/ops/all
+#   ./dev.sh stop              # 关闭三个前端、api/agent/worker 应用进程，并停止基础设施+监控容器（数据卷保留）
+#   ./dev.sh status            # 查看各组件运行状态
 #
-# 新环境首次部署：先运行 ./deploy.sh（交互式配置 AI 供方，写入 config/loomvec.json），再 ./dev.sh start；
+# 新环境首次部署：先运行 ./deploy.sh（交互式配置 AI 供方 + 安装全部依赖，写入 config/loomvec.json），再 ./dev.sh start；
 # 未部署过时 ./dev.sh start 也会在交互终端下自动先拉起 ./deploy.sh（见下方"部署门禁"）。
 #
 # 行为约定：
 # - 幂等：已在运行的组件自动跳过，不会重复拉起；
 # - 监控栈（Grafana/Prometheus/Alertmanager/Loki/Promtail）随一键启动一起拉起；
-# - 日志：应用进程输出到 tmp/dev-{api,worker,web,admin,ops}.log；
+# - 日志：应用进程输出到 tmp/dev-{api,agent,worker,web,admin,ops}.log；
+#   应用进程以 PYTHONUNBUFFERED=1 运行，日志实时落盘可即时 tail；
 # - 应用参数 config/loomvec.json（不入库）缺失时从模板自动生成（ai.mock=true，离线可跑）；
 # - MinerU 首次构建/启动较慢（模型下载 1~2GB），未就绪只告警不阻塞（解析功能暂不可用）。
 set -uo pipefail
@@ -22,6 +26,7 @@ cd "$ROOT"
 LOG_DIR="$ROOT/tmp"; PID_FILE="$LOG_DIR/dev.pids"; mkdir -p "$LOG_DIR"
 DEPLOY_STAMP="$LOG_DIR/loomvec-deployed.stamp"  # ./deploy.sh 成功完成时写入；缺失则 dev.sh 先拉起部署
 COMPOSE="docker compose -f deploy/compose/compose.yaml --profile observability"
+export PYTHONUNBUFFERED=1  # uvicorn/celery 日志实时落盘，tail 即时可见
 
 # 服务端口单源 .env（LOOMVEC_API_PORT/WEB/ADMIN/OPS_PORT；缺省 38080/35173/35174/35175）
 load_env_var() {  # load_env_var KEY DEFAULT —— 从仓库根 .env 读取（存在时）
@@ -86,11 +91,38 @@ do_status() {
   else fail "worker"; fi
 }
 
+usage() { echo "用法: ./dev.sh start [--no-follow] | stop | status | logs [api|agent|worker|web|admin|ops|all]"; }
+
+do_logs() { # $1=api|agent|worker|web|admin|ops|all —— tail -F 跟踪，Ctrl-C 退出不影响服务
+  local pick="$1"
+  local files=()
+  case "$pick" in
+    api|agent|worker|web|admin|ops) files=("$LOG_DIR/dev-$pick.log") ;;
+    all) files=("$LOG_DIR"/dev-api.log "$LOG_DIR"/dev-agent.log "$LOG_DIR"/dev-worker.log "$LOG_DIR"/dev-web.log "$LOG_DIR"/dev-admin.log "$LOG_DIR"/dev-ops.log) ;;
+    *) fail "未知日志名：${pick}（可选 api/agent/worker/web/admin/ops/all）"; usage; exit 1 ;;
+  esac
+  local f found=0
+  for f in "${files[@]}"; do [ -f "$f" ] && found=1; done
+  [ "$found" = "1" ] || { warn "暂无日志文件，先运行 ./dev.sh start"; exit 0; }
+  echo "${DIM}跟踪：${files[*]}（Ctrl-C 退出跟踪，服务继续运行）${RST}"
+  trap 'echo; ok "已退出日志跟踪（服务仍在运行；./dev.sh stop 停止全部）"; exit 0' INT
+  tail -n 40 -F "${files[@]}"
+}
+
+NO_FOLLOW=0
 case "${1:-}" in
-  start)  : ;;
+  start)
+    shift
+    for arg in "$@"; do
+      case "$arg" in
+        --no-follow) NO_FOLLOW=1 ;;
+        *) fail "未知参数：$arg"; usage; exit 1 ;;
+      esac
+    done ;;
   stop)   do_stop; exit 0 ;;
   status) do_status; exit 0 ;;
-  *) echo "用法: ./dev.sh start|stop|status"; exit 1 ;;
+  logs)   do_logs "${2:-api}"; exit 0 ;;
+  *)      usage; exit 1 ;;
 esac
 
 # ---------------------------------------------------------------- 前置检查
@@ -223,3 +255,13 @@ echo "  Grafana    http://localhost:33002 （admin，密码见 deploy/compose/.e
 echo "  Prometheus http://localhost:39090"
 echo "  日志       tmp/dev-{api,agent,worker,web,admin,ops}.log"
 echo "  停止全部   ./dev.sh stop（应用进程 + 基础设施/监控容器；数据卷保留）"
+
+# ---------------------------------------------------------------- 实时日志（交互默认跟随 FastAPI 输出）
+# start 就绪后原地 tail -F API 日志，开发时直接观察 uvicorn 请求/重载输出；
+# Ctrl-C 只退出跟踪，服务继续运行。脚本化/CI 用 --no-follow（或非交互终端自动跳过）。
+if [ "$NO_FOLLOW" = "1" ] || [ ! -t 0 ]; then
+  echo "  实时日志   ./dev.sh logs api   （其余：agent/worker/web/admin/ops/all）"
+else
+  step "实时日志（FastAPI 开发输出；Ctrl-C 退出跟踪，服务继续运行）"
+  do_logs api
+fi

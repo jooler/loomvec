@@ -55,13 +55,13 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 新环境首次部署：先运行 `./deploy.sh` 交互式录入真实 AI 供方（对话 LLM / 嵌入 / 重排为必配，VLM / CLIP 可选；全部回车选 mock 则生成离线配置），写入 `config/loomvec.json`；然后一键启动：
 
 ```bash
-./deploy.sh      # 仅首次需要；已有配置时逐项回车即保留现值
+./deploy.sh      # 仅首次需要：交互式配置 AI 供方 + 端口迁移 + 安装全部 Python/前端依赖
 ./dev.sh start
 ```
 
 若跳过 `./deploy.sh` 直接 `./dev.sh start`，脚本检测到尚未部署（无 tmp/loomvec-deployed.stamp 标记）时，会在交互终端下自动先拉起部署流程，完成后继续启动；部署被取消则本次启动终止（CI/脚本管道等非交互环境跳过自动部署，按离线 mock 兜底）。
 
-`./dev.sh start` 一条命令拉起全部：镜像检查（缺失自动拉取/构建）→ 基础设施 + 监控栈 → 数据库初始化 → api/agent/worker + 三个前端（幂等，已在跑的自动跳过）。
+`./dev.sh start` 一条命令拉起全部：镜像检查（缺失自动拉取/构建）→ 基础设施 + 监控栈 → 数据库初始化 → api/agent/worker + 三个前端（幂等，已在跑的自动跳过）。交互终端下启动完成后会实时跟随 FastAPI 日志（Ctrl-C 退出跟踪，服务继续运行；`--no-follow` 关闭），随时可用 `./dev.sh logs [api|agent|worker|web|admin|ops|all]` 跟踪任一服务输出。
 
 | 服务 | 地址 | 说明 |
 |---|---|---|
