@@ -73,32 +73,32 @@ class Env(StrEnum):
 class OtelSettings(BaseModel):
     """OpenTelemetry：未配置 endpoint 时不导出（本地开发默认关闭）。"""
 
-    endpoint: str | None = None  # OTLP gRPC endpoint，如 http://localhost:4317
+    endpoint: str | None = None  # OTLP gRPC endpoint，如 http://localhost:34317
     sample_ratio: float = 1.0
 
 
 class PostgresSettings(BaseModel):
     # 默认对齐 compose 宿主机端口（deploy/compose/.env 的 POSTGRES_PORT）；
     # 系统自带 PostgreSQL 占 5432，指向它会静默读写错误的库
-    url: str = "postgresql+asyncpg://loomvec:loomvec@localhost:5433/loomvec"
+    url: str = "postgresql+asyncpg://loomvec:loomvec@localhost:35433/loomvec"
     pool_size: int = 10
     max_overflow: int = 20
     echo: bool = False
 
 
 class RedisSettings(BaseModel):
-    url: str = "redis://localhost:6379/0"
+    url: str = "redis://localhost:36379/0"
 
 
 class MilvusSettings(BaseModel):
-    uri: str = "http://localhost:19530"
+    uri: str = "http://localhost:39530"
     token: str | None = None
 
 
 class StorageSettings(BaseModel):
     """RustFS / 任意 S3 兼容对象存储。"""
 
-    endpoint: str = "http://localhost:9000"
+    endpoint: str = "http://localhost:39000"
     access_key: str = "loomvec"
     secret_key: str = "loomvec-secret"
     region: str = "us-east-1"
@@ -115,7 +115,7 @@ class StorageSettings(BaseModel):
 class MineruSettings(BaseModel):
     """MinerU 解析服务（mineru-api，HTTP）。"""
 
-    base_url: str = "http://localhost:8000"
+    base_url: str = "http://localhost:38000"
     # 大 PDF 首次/冷启动解析可能超过 10 分钟（模型加载 + 版面推理）
     timeout_seconds: float = 1800.0
     backend: Literal["pipeline", "vlm-transformers", "vlm-vllm-engine"] = "pipeline"
@@ -225,7 +225,7 @@ class WorkerSettings(BaseModel):
     task_soft_time_limit: int = 3500
     task_time_limit: int = 3600
     # Prometheus 指标端口（prometheus.yml 的 loomvec-worker 抓取目标）；0 = 关闭
-    metrics_port: int = 9808
+    metrics_port: int = 39808
 
 
 class AgentServiceSettings(BaseModel):
@@ -236,7 +236,7 @@ class AgentServiceSettings(BaseModel):
     - storage_root_override：K8s PVC 挂载路径等部署期覆盖（优先于 json 配置）。
     """
 
-    service_url: str = "http://127.0.0.1:8090"
+    service_url: str = "http://127.0.0.1:38090"
     internal_token: str = "dev-internal-token"
     storage_root_override: str = ""
 
@@ -414,7 +414,7 @@ class AgentSandboxSettings(BaseModel):
 
 
 class AgentMcpSettings(BaseModel):
-    url: str = "http://127.0.0.1:8000/api/v1/mcp"
+    url: str = "http://127.0.0.1:38080/api/v1/mcp"
     token_ttl_s: int = 3600
 
 
@@ -506,11 +506,11 @@ class Settings(BaseSettings):
     app_config_path: str = ""
 
     # ---- 服务端口（部署时经 env 灵活调整） ----
-    api_port: int = 8080
-    web_port: int = 5173
-    admin_port: int = 5174
-    ops_port: int = 5175
-    agent_port: int = 8090
+    api_port: int = 38080
+    web_port: int = 35173
+    admin_port: int = 35174
+    ops_port: int = 35175
+    agent_port: int = 38090
 
     otel: OtelSettings = Field(default_factory=OtelSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)

@@ -1,6 +1,6 @@
 """P0-INF-06 冒烟：Milvus 可建集合（dense + BM25 稀疏 Function，2.6 混合检索前置）。
 
-用法：uv run python scripts/smoke/smoke_milvus.py [--uri http://localhost:19530]
+用法：uv run python scripts/smoke/smoke_milvus.py [--uri http://localhost:39530]
 （建临时集合 → 插入 → load → search → drop）
 """
 
@@ -10,7 +10,7 @@ import argparse
 import sys
 import uuid
 
-URI = "http://localhost:19530"
+URI = "http://localhost:39530"
 COLLECTION = "smoke_loomvec_collection"
 
 

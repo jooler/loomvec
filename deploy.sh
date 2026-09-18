@@ -7,6 +7,7 @@
 #
 # 行为约定：
 # - 幂等：config/loomvec.json 已存在时逐项回显现值，直接回车保留原值（覆盖前备份到 tmp/）；
+# - 端口迁移：历史环境的旧默认端口（5433/9000/8080/5173…）自动迁移到 3xxxx 系列，精确匹配、幂等；
 # - 不启动服务：部署只落配置，启动/停止/状态用 ./dev.sh start|stop|status；
 # - 未配置 VLM 时自动置 image.caption_enabled=false（图片描述关闭；管线本就不被 caption 阻断）；
 #   未配置 CLIP 时以文搜图在检索侧自动降级，无需处理；
@@ -119,6 +120,90 @@ ok "仓库根与 python3 就绪"
 # ---------------------------------------------------------------- 环境文件（与 dev.sh 同规则，缺失才生成）
 [ -f deploy/compose/.env ] || { cp deploy/compose/.env.example deploy/compose/.env; ok "生成 deploy/compose/.env"; }
 [ -f .env ] || { cp .env.example .env; ok "生成根 .env（基础设施连接默认值；可后续手工调整）"; }
+
+# ---------------------------------------------------------------- 端口迁移（旧默认端口 → 3xxxx 系列，幂等）
+# 2026-09 端口规划：宿主机端口统一加 3 前缀（5433→35433、9000→39000、8080→38080…），
+# Milvus 19530→39530（319530 超出 65535 上限，改为首位对齐 3 段）。
+# 仅精确命中旧值才改写，重复运行无副作用；容器端口变更在 ./dev.sh start 重建容器时生效。
+step "端口迁移（旧默认端口 → 3xxxx）"
+MIGRATED=$(python3 - <<'PY'
+import json, re, pathlib
+
+PAIRS = [
+    # 根 .env（应用端口单源；含注释行，保留行尾注释）
+    (r"^(\s*#?\s*LOOMVEC_API_PORT=)8080\b", r"\g<1>38080"),
+    (r"^(\s*#?\s*LOOMVEC_WEB_PORT=)5173\b", r"\g<1>35173"),
+    (r"^(\s*#?\s*LOOMVEC_ADMIN_PORT=)5174\b", r"\g<1>35174"),
+    (r"^(\s*#?\s*LOOMVEC_OPS_PORT=)5175\b", r"\g<1>35175"),
+    (r"^(\s*#?\s*LOOMVEC_AGENT_PORT=)8090\b", r"\g<1>38090"),
+    (r"^(\s*#?\s*LOOMVEC_WORKER__METRICS_PORT=)9808\b", r"\g<1>39808"),
+    (r"^(\s*#?\s*LOOMVEC_OTEL__ENDPOINT=.*)localhost:4317", r"\g<1>localhost:34317"),
+    (r"^(\s*#?\s*LOOMVEC_POSTGRES__URL=.*)localhost:5433", r"\g<1>localhost:35433"),
+    (r"^(\s*#?\s*LOOMVEC_REDIS__URL=.*)localhost:6379", r"\g<1>localhost:36379"),
+    (r"^(\s*#?\s*LOOMVEC_MILVUS__URI=.*)localhost:19530", r"\g<1>localhost:39530"),
+    (r"^(\s*#?\s*LOOMVEC_STORAGE__ENDPOINT=.*)localhost:9000", r"\g<1>localhost:39000"),
+    (r"^(\s*#?\s*LOOMVEC_AGENT_SERVICE__SERVICE_URL=.*)127\.0\.0\.1:8090", r"\g<1>127.0.0.1:38090"),
+    (r"^(\s*#?\s*LOOMVEC_STORAGE__CORS_ALLOWED_ORIGINS=.*)localhost:5175", r"\g<1>localhost:35175"),
+    # deploy/compose/.env（基础设施发布端口）
+    (r"^(POSTGRES_PORT=)5433\b", r"\g<1>35433"),
+    (r"^(REDIS_PORT=)6379\b", r"\g<1>36379"),
+    (r"^(RUSTFS_PORT=)9000\b", r"\g<1>39000"),
+    (r"^(RUSTFS_CONSOLE_PORT=)9001\b", r"\g<1>39001"),
+    (r"^(MILVUS_PORT=)19530\b", r"\g<1>39530"),
+    (r"^(MILVUS_METRICS_PORT=)9091\b", r"\g<1>39091"),
+    (r"^(MINERU_PORT=)8000\b", r"\g<1>38000"),
+    (r"^(ATTU_PORT=)3001\b", r"\g<1>33001"),
+    (r"^(KEYCLOAK_PORT=)8088\b", r"\g<1>38088"),
+    (r"^(PROMETHEUS_PORT=)9090\b", r"\g<1>39090"),
+    (r"^(ALERTMANAGER_PORT=)9093\b", r"\g<1>39093"),
+    (r"^(GRAFANA_PORT=)3002\b", r"\g<1>33002"),
+    (r"^(LOKI_PORT=)3100\b", r"\g<1>33100"),
+]
+
+
+def migrate_env(path):
+    p = pathlib.Path(path)
+    if not p.is_file():
+        return 0
+    text = p.read_text(encoding="utf-8")
+    n = 0
+    for pat, repl in PAIRS:
+        text, k = re.subn(pat, repl, text, flags=re.MULTILINE)
+        n += k
+    if n:
+        p.write_text(text, encoding="utf-8")
+    return n
+
+
+def migrate_json(path):
+    """config/loomvec.json 内的端口化 URL（mineru / agent.mcp），精确旧值才改。"""
+    p = pathlib.Path(path)
+    if not p.is_file():
+        return 0
+    cfg = json.loads(p.read_text(encoding="utf-8"))
+    n = 0
+    mineru = cfg.get("mineru") or {}
+    if mineru.get("base_url") == "http://localhost:8000":
+        mineru["base_url"] = "http://localhost:38000"
+        n += 1
+    mcp = (cfg.get("agent") or {}).get("mcp") or {}
+    url = mcp.get("url")
+    if isinstance(url, str) and url.endswith(":8080/api/v1/mcp"):
+        mcp["url"] = url[: -len(":8080/api/v1/mcp")] + ":38080/api/v1/mcp"
+        n += 1
+    if n:
+        p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return n
+
+
+print(migrate_env(".env") + migrate_env("deploy/compose/.env") + migrate_json("config/loomvec.json"))
+PY
+) || { fail "端口迁移脚本执行失败"; exit 1; }
+if [ "${MIGRATED:-0}" -gt 0 ]; then
+  ok "已迁移 ${MIGRATED} 处旧端口 → 3xxxx 系列（容器端口将在 ./dev.sh start 重建容器时生效）"
+else
+  ok "端口无需迁移"
+fi
 
 # ---------------------------------------------------------------- 工作副本
 FRESH=0

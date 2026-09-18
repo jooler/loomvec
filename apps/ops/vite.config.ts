@@ -14,8 +14,8 @@ export default defineConfig({
     },
   },
   server: {
-    // 端口单源 LOOMVEC_OPS_PORT（.env，默认 5175）；API 代理目标单源 LOOMVEC_API_PORT
-    port: loomvecPort('LOOMVEC_OPS_PORT', 5175),
+    // 端口单源 LOOMVEC_OPS_PORT（.env，默认 35175）；API 代理目标单源 LOOMVEC_API_PORT
+    port: loomvecPort('LOOMVEC_OPS_PORT', 35175),
     proxy: {
       '/api': { target: apiTarget, changeOrigin: true },
       '/metrics': { target: apiTarget, changeOrigin: true },

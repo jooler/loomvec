@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-URL = "redis://localhost:6379/0"
+URL = "redis://localhost:36379/0"
 
 
 def main(url: str) -> int:

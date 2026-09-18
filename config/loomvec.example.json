@@ -46,7 +46,7 @@
     }
   },
   "mineru": {
-    "base_url": "http://localhost:8000",
+    "base_url": "http://localhost:38000",
     "backend": "pipeline",
     "timeout_seconds": 1800.0
   },
@@ -215,7 +215,7 @@
       "mode": "workspace-write"
     },
     "mcp": {
-      "url": "http://127.0.0.1:8080/api/v1/mcp",
+      "url": "http://127.0.0.1:38080/api/v1/mcp",
       "token_ttl_s": 3600
     },
     "retention_days": 365,

@@ -10,7 +10,7 @@ import argparse
 import asyncio
 import sys
 
-DSN = "postgresql://loomvec:loomvec@localhost:5433/loomvec"
+DSN = "postgresql://loomvec:loomvec@localhost:35433/loomvec"
 GRAPH = "smoke_age_graph"
 
 

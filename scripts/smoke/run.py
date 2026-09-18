@@ -51,7 +51,7 @@ def run_script(script: str, *args: str) -> tuple[bool, str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", default="deploy/compose/.env")
-    parser.add_argument("--api-url", default="http://localhost:8080")  # 8000 是 MinerU
+    parser.add_argument("--api-url", default="http://localhost:38080")  # 38000 是 MinerU
     parser.add_argument("--skip", nargs="*", default=[], help="跳过的检查项名称")
     args = parser.parse_args()
 
@@ -59,13 +59,13 @@ def main() -> int:
     pg = (
         f"postgresql://{env.get('POSTGRES_USER', 'loomvec')}"
         f":{env.get('POSTGRES_PASSWORD', 'loomvec')}"
-        f"@localhost:{env.get('POSTGRES_PORT', '5433')}"
+        f"@localhost:{env.get('POSTGRES_PORT', '35433')}"
         f"/{env.get('POSTGRES_DB', 'loomvec')}"
     )
-    redis_url = f"redis://localhost:{env.get('REDIS_PORT', '6379')}/0"
-    rustfs = f"http://localhost:{env.get('RUSTFS_PORT', '9000')}"
-    mineru = f"http://localhost:{env.get('MINERU_PORT', '8000')}"
-    milvus = f"http://localhost:{env.get('MILVUS_PORT', '19530')}"
+    redis_url = f"redis://localhost:{env.get('REDIS_PORT', '36379')}/0"
+    rustfs = f"http://localhost:{env.get('RUSTFS_PORT', '39000')}"
+    mineru = f"http://localhost:{env.get('MINERU_PORT', '38000')}"
+    milvus = f"http://localhost:{env.get('MILVUS_PORT', '39530')}"
 
     checks: list[tuple[str, bool, str]] = []
 

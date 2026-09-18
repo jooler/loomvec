@@ -1,6 +1,6 @@
 """P1-QA-02 管线集成测试：文本摄取 → parse/chunk/embed/index → 混合检索命中。
 
-依赖 compose 基础设施栈（PG 5433 / Milvus 19530 / RustFS 9000 / Redis 6379）
+依赖 compose 基础设施栈（PG 35433 / Milvus 39530 / RustFS 39000 / Redis 36379）
 与已执行迁移（make migrate）。AI 网关强制 mock（离线确定性）。Docker 不可用自动跳过。
 """
 
@@ -17,9 +17,9 @@ from loomvec.core.pipeline import PipelineDeps, PipelineRunner
 from loomvec.core.retrieval import Retriever, SemanticHit
 
 INTEGRATION_ENV = [
-    ("127.0.0.1", 5433),  # postgres
-    ("127.0.0.1", 19530),  # milvus
-    ("127.0.0.1", 9000),  # rustfs
+    ("127.0.0.1", 35433),  # postgres
+    ("127.0.0.1", 39530),  # milvus
+    ("127.0.0.1", 39000),  # rustfs
 ]
 
 
@@ -62,7 +62,7 @@ QX-7 型采集器开机前需确认电源电压 220V，接地良好。\n首次�
 def deps() -> PipelineDeps:
     settings = Settings(_env_file=None)  # 不继承仓库根 .env（测试确定性）
     settings.env = settings.env.__class__.TEST
-    settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:5433/loomvec"
+    settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:35433/loomvec"
     settings.ai.mock = True
     from loomvec.core.ai import AiGateway
     from loomvec.core.db.base import create_engine_and_sessionmaker

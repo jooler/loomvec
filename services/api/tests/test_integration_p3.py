@@ -1,6 +1,6 @@
 """P3-QA-01 图谱一致性集成测试：抽取→写入→召回→合并→回滚→重跑幂等→删除级联。
 
-依赖 compose 基础设施栈（PG 5433 含 AGE / Milvus 19530）与已执行迁移。
+依赖 compose 基础设施栈（PG 35433 含 AGE / Milvus 39530）与已执行迁移。
 AI 网关强制 mock（离线确定性）；实体链接阈值在测试内放宽（mock 向量为
 伪随机，不代表真实语义）以驱动 L3 全链路。
 封闭性：测试在专用空间执行，结束（含失败）时清理三方（PG/AGE/Milvus）痕迹。
@@ -29,7 +29,7 @@ from loomvec.core.pipeline import PipelineDeps, PipelineRunner
 from loomvec.core.retrieval import MilvusStore, Retriever
 from loomvec.core.retrieval.graph_retrieval import GraphRetriever
 
-INTEGRATION_ENV = [("127.0.0.1", 5433), ("127.0.0.1", 19530)]
+INTEGRATION_ENV = [("127.0.0.1", 35433), ("127.0.0.1", 39530)]
 
 
 def _port_open(host: str, port: int) -> bool:
@@ -66,7 +66,7 @@ SAMPLE = """# 企业关系说明（图谱集成测试）
 def deps() -> PipelineDeps:
     settings = Settings(_env_file=None)  # 不继承仓库根 .env（测试确定性）
     settings.env = settings.env.__class__.TEST
-    settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:5433/loomvec"
+    settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:35433/loomvec"
     settings.ai.mock = True
     settings.graph.entity_link_threshold = -1.0  # mock 向量无语义：强制链接走通全链路
     settings.search.graph_enabled = True

@@ -143,7 +143,7 @@ jobs:
         run: |
           # 应用参数经 config/loomvec.json（AI mock；环境变量不再承载应用参数）
           mkdir -p config && echo '{"ai":{"mock":true}}' > config/loomvec.json
-          export LOOMVEC_POSTGRES__URL=postgresql+asyncpg://loomvec:loomvec@localhost:5433/loomvec
+          export LOOMVEC_POSTGRES__URL=postgresql+asyncpg://loomvec:loomvec@localhost:35433/loomvec
           uv run python -m loomvec.api &
           uv run celery -A loomvec.worker.celery_app:celery_app worker -l info -Q pipeline,pipeline_high &
           sleep 15

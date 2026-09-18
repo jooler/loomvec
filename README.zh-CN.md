@@ -63,12 +63,12 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 
 | 服务 | 地址 | 说明 |
 |---|---|---|
-| 用户端 | http://localhost:5173 | dev 登录：任意用户名 |
-| 运维端 | http://localhost:5174 | dev 登录默认 `super_admin` |
-| 运营端 | http://localhost:5175 | dev 登录默认 `operator` |
-| API 文档 | http://localhost:8080/docs | |
-| Grafana | http://localhost:3002 | 密码见 `deploy/compose/.env` 的 `GRAFANA_ADMIN_PASSWORD`（默认 admin） |
-| Prometheus | http://localhost:9090 | |
+| 用户端 | http://localhost:35173 | dev 登录：任意用户名 |
+| 运维端 | http://localhost:35174 | dev 登录默认 `super_admin` |
+| 运营端 | http://localhost:35175 | dev 登录默认 `operator` |
+| API 文档 | http://localhost:38080/docs | |
+| Grafana | http://localhost:33002 | 密码见 `deploy/compose/.env` 的 `GRAFANA_ADMIN_PASSWORD`（默认 admin） |
+| Prometheus | http://localhost:39090 | |
 
 首次运行会自动生成 `deploy/compose/.env`、根 `.env` 与应用参数文件 `config/loomvec.json`（模板 `config/loomvec.example.json`，生成时已置 `ai.mock=true`，离线可跑通全链路；该文件含密钥、不入库）。MinerU 镜像首次构建较慢，首次启动需下载约 1~2GB 模型。`./dev.sh status` 查看各组件状态；`./dev.sh stop` 关闭应用进程与容器（数据卷保留）。
 
@@ -79,11 +79,11 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 # 1) 基础设施栈 + 监控栈
 cd deploy/compose && cp .env.example .env && docker compose --profile observability up -d && cd ../..
 
-# 2) 后端（API 8080，agent 网关 8090 内网 only，MinerU 8000）+ 管线 worker
+# 2) 后端（API 38080，agent 网关 38090 内网 only，MinerU 38000）+ 管线 worker
 uv sync && cp .env.example .env
 [ -f config/loomvec.json ] || cp config/loomvec.example.json config/loomvec.json  # 应用参数不入库；离线开发把 "mock": false 改为 true
-make init-db                                        # 幂等初始化：建最新结构 + 种子（compose PG 在 5433）
-uv run uvicorn loomvec.api.main:app --reload --port 8080
+make init-db                                        # 幂等初始化：建最新结构 + 种子（compose PG 在 35433）
+uv run uvicorn loomvec.api.main:app --reload --port 38080
 uv run python -m loomvec.agent --reload
 uv run celery -A loomvec.worker.celery_app:celery_app worker -l info -B -Q pipeline,pipeline_high,pipeline_low
 
@@ -91,9 +91,9 @@ uv run celery -A loomvec.worker.celery_app:celery_app worker -l info -B -Q pipel
 uv run python scripts/export_openapi.py && pnpm install && pnpm sdk:generate
 
 # 4) 前端
-pnpm dev:web    # 用户端   http://localhost:5173
-pnpm dev:admin  # 运维端   http://localhost:5174
-pnpm dev:ops    # 运营端   http://localhost:5175
+pnpm dev:web    # 用户端   http://localhost:35173
+pnpm dev:admin  # 运维端   http://localhost:35174
+pnpm dev:ops    # 运营端   http://localhost:35175
 
 # 5) 冒烟 / 检索评测（需 API + worker 已启动）
 uv run python scripts/smoke/run.py

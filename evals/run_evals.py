@@ -2,7 +2,7 @@
 """P1-QA-01 检索评测回归：金标集 → hit-rate@k / MRR。
 
 用法（需全栈与 worker 运行中，AI 网关可用或 mock）：
-    uv run python evals/run_evals.py [--api-url http://localhost:8080] \
+    uv run python evals/run_evals.py [--api-url http://localhost:38080] \
         [--top-k 10] [--threshold 0.6] [--rerank/--no-rerank]
 
 判定：命中 = top-k 内存在 asset 匹配且正文含 must_contain 的语义单元。
@@ -42,7 +42,7 @@ def http_json(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--api-url", default="http://localhost:8080")
+    parser.add_argument("--api-url", default="http://localhost:38080")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--threshold", type=float, default=0.6)
     parser.add_argument("--rerank", dest="rerank", action="store_true", default=True)

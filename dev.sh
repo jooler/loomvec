@@ -21,17 +21,17 @@ cd "$ROOT"
 LOG_DIR="$ROOT/tmp"; PID_FILE="$LOG_DIR/dev.pids"; mkdir -p "$LOG_DIR"
 COMPOSE="docker compose -f deploy/compose/compose.yaml --profile observability"
 
-# 服务端口单源 .env（LOOMVEC_API_PORT/WEB/ADMIN/OPS_PORT；缺省 8080/5173/5174/5175）
+# 服务端口单源 .env（LOOMVEC_API_PORT/WEB/ADMIN/OPS_PORT；缺省 38080/35173/35174/35175）
 load_env_var() {  # load_env_var KEY DEFAULT —— 从仓库根 .env 读取（存在时）
   local val
   val=$(grep -E "^$1=" "$ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"'"')
   echo "${val:-$2}"
 }
-API_PORT=$(load_env_var LOOMVEC_API_PORT 8080)
-AGENT_PORT=$(load_env_var LOOMVEC_AGENT_PORT 8090)
-WEB_PORT=$(load_env_var LOOMVEC_WEB_PORT 5173)
-ADMIN_PORT=$(load_env_var LOOMVEC_ADMIN_PORT 5174)
-OPS_PORT=$(load_env_var LOOMVEC_OPS_PORT 5175)
+API_PORT=$(load_env_var LOOMVEC_API_PORT 38080)
+AGENT_PORT=$(load_env_var LOOMVEC_AGENT_PORT 38090)
+WEB_PORT=$(load_env_var LOOMVEC_WEB_PORT 35173)
+ADMIN_PORT=$(load_env_var LOOMVEC_ADMIN_PORT 35174)
+OPS_PORT=$(load_env_var LOOMVEC_OPS_PORT 35175)
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; DIM=$'\033[2m'; RST=$'\033[0m'
 ok()   { echo "${GRN}✓${RST} $*"; }
 warn() { echo "${YLW}!${RST} $*"; }
@@ -76,7 +76,7 @@ do_stop() {
 }
 
 do_status() {
-  for probe in "PostgreSQL:5433" "Redis:6379" "RustFS:9000" "Milvus:19530" "MinerU:8000" "Grafana:3002" "Prometheus:9090" "API:$API_PORT" "Agent:$AGENT_PORT" "Web:$WEB_PORT" "Admin:$ADMIN_PORT" "Ops:$OPS_PORT"; do
+  for probe in "PostgreSQL:35433" "Redis:36379" "RustFS:39000" "Milvus:39530" "MinerU:38000" "Grafana:33002" "Prometheus:39090" "API:$API_PORT" "Agent:$AGENT_PORT" "Web:$WEB_PORT" "Admin:$ADMIN_PORT" "Ops:$OPS_PORT"; do
     port_up "${probe##*:}" && ok "$probe" || fail "$probe"
   done
   if alive worker; then ok "worker（本脚本启动）"
@@ -138,17 +138,17 @@ $COMPOSE up -d || { fail "compose 启动失败"; exit 1; }
 
 step "基础设施健康等待"
 docker exec loomvec-postgres pg_isready -U loomvec >/dev/null 2>&1 || { fail "PostgreSQL 未就绪"; exit 1; }
-ok "PostgreSQL:5433 就绪"
+ok "PostgreSQL:35433 就绪"
 i=0; while [ "$i" -lt 15 ]; do
   docker exec loomvec-redis redis-cli ping 2>/dev/null | grep -q PONG && break
   i=$((i + 1)); sleep 2
 done
 [ "$i" -lt 15 ] && ok "Redis 就绪" || { fail "Redis 未就绪"; exit 1; }
-wait_http "RustFS"            "http://localhost:9000/health"     1 60
-wait_http "Milvus"            "http://localhost:9091/healthz"    1 120
-wait_http "MinerU"            "http://localhost:8000/health"     0 20
-wait_http "Grafana (3002)"    "http://localhost:3002/api/health" 1 120
-wait_http "Prometheus (9090)" "http://localhost:9090/-/ready"    1 120
+wait_http "RustFS"            "http://localhost:39000/health"     1 60
+wait_http "Milvus"            "http://localhost:39091/healthz"    1 120
+wait_http "MinerU"            "http://localhost:38000/health"     0 20
+wait_http "Grafana (33002)"    "http://localhost:33002/api/health" 1 120
+wait_http "Prometheus (39090)" "http://localhost:39090/-/ready"    1 120
 
 # ---------------------------------------------------------------- 数据库初始化
 step "数据库初始化（幂等：建最新结构 + 种子，P5 起取代 alembic）"
@@ -193,16 +193,16 @@ fi
 step "就绪等待"
 wait_http "API ($API_PORT)"  "http://localhost:$API_PORT/readyz" 1 120
 wait_http "Agent ($AGENT_PORT)" "http://localhost:$AGENT_PORT/internal/agent/health" 1 120
-wait_http "Web (5173)"  "http://localhost:$WEB_PORT/"  1 60
-wait_http "Admin (5174)" "http://localhost:$ADMIN_PORT/" 1 60
-wait_http "Ops (5175)"  "http://localhost:$OPS_PORT/"   1 60
+wait_http "Web ($WEB_PORT)"  "http://localhost:$WEB_PORT/"  1 60
+wait_http "Admin ($ADMIN_PORT)" "http://localhost:$ADMIN_PORT/" 1 60
+wait_http "Ops ($OPS_PORT)"  "http://localhost:$OPS_PORT/"   1 60
 
 step "完成"
 echo "  用户端     http://localhost:$WEB_PORT    （dev 登录：任意用户名）"
 echo "  运维端     http://localhost:$ADMIN_PORT  （dev 登录默认 super_admin）"
 echo "  运营端     http://localhost:$OPS_PORT    （dev 登录默认 operator）"
 echo "  API 文档   http://localhost:$API_PORT/docs"
-echo "  Grafana    http://localhost:3002 （admin，密码见 deploy/compose/.env 的 GRAFANA_ADMIN_PASSWORD，默认 admin）"
-echo "  Prometheus http://localhost:9090"
+echo "  Grafana    http://localhost:33002 （admin，密码见 deploy/compose/.env 的 GRAFANA_ADMIN_PASSWORD，默认 admin）"
+echo "  Prometheus http://localhost:39090"
 echo "  日志       tmp/dev-{api,agent,worker,web,admin,ops}.log"
 echo "  停止全部   ./dev.sh stop（应用进程 + 基础设施/监控容器；数据卷保留）"

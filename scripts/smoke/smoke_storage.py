@@ -1,6 +1,6 @@
 """P0-INF-06 冒烟：RustFS（S3 兼容）可写读预签名。
 
-用法：uv run python scripts/smoke/smoke_storage.py [--endpoint http://localhost:9000]
+用法：uv run python scripts/smoke/smoke_storage.py [--endpoint http://localhost:39000]
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import uuid
 import boto3
 from botocore.client import Config
 
-ENDPOINT = "http://localhost:9000"
+ENDPOINT = "http://localhost:39000"
 ACCESS_KEY = "loomvec"
 SECRET_KEY = "loomvec-secret"
 BUCKET = "loomvec-smoke"

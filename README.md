@@ -63,12 +63,12 @@ For a fresh environment, run `./deploy.sh` first — it interactively collects y
 
 | Service | URL | Notes |
 |---|---|---|
-| Web (end users) | http://localhost:5173 | dev login: any username |
-| Admin | http://localhost:5174 | dev login defaults to `super_admin` |
-| Ops | http://localhost:5175 | dev login defaults to `operator` |
-| API docs | http://localhost:8080/docs | |
-| Grafana | http://localhost:3002 | password in `deploy/compose/.env` (`GRAFANA_ADMIN_PASSWORD`, default `admin`) |
-| Prometheus | http://localhost:9090 | |
+| Web (end users) | http://localhost:35173 | dev login: any username |
+| Admin | http://localhost:35174 | dev login defaults to `super_admin` |
+| Ops | http://localhost:35175 | dev login defaults to `operator` |
+| API docs | http://localhost:38080/docs | |
+| Grafana | http://localhost:33002 | password in `deploy/compose/.env` (`GRAFANA_ADMIN_PASSWORD`, default `admin`) |
+| Prometheus | http://localhost:39090 | |
 
 First run generates `deploy/compose/.env`, the root `.env`, and the app-params file `config/loomvec.json` (from template `config/loomvec.example.json`, with `ai.mock=true` so the full loop runs offline; the file holds secrets and is gitignored). The MinerU image builds slowly the first time and downloads ~1–2 GB of models on first start. `./dev.sh status` shows component status; `./dev.sh stop` stops app processes and containers (data volumes are kept).
 
@@ -79,11 +79,11 @@ First run generates `deploy/compose/.env`, the root `.env`, and the app-params f
 # 1) Infrastructure + observability stack
 cd deploy/compose && cp .env.example .env && docker compose --profile observability up -d && cd ../..
 
-# 2) Backend (API on 8080, agent gateway on 8090 internal-only, MinerU on 8000) + pipeline worker
+# 2) Backend (API on 38080, agent gateway on 38090 internal-only, MinerU on 38000) + pipeline worker
 uv sync && cp .env.example .env
 [ -f config/loomvec.json ] || cp config/loomvec.example.json config/loomvec.json  # app params are gitignored; set "mock": true for offline dev
-make init-db                                        # idempotent schema init + seeds (compose PG is on 5433)
-uv run uvicorn loomvec.api.main:app --reload --port 8080
+make init-db                                        # idempotent schema init + seeds (compose PG is on 35433)
+uv run uvicorn loomvec.api.main:app --reload --port 38080
 uv run python -m loomvec.agent --reload
 uv run celery -A loomvec.worker.celery_app:celery_app worker -l info -B -Q pipeline,pipeline_high,pipeline_low
 
@@ -91,9 +91,9 @@ uv run celery -A loomvec.worker.celery_app:celery_app worker -l info -B -Q pipel
 uv run python scripts/export_openapi.py && pnpm install && pnpm sdk:generate
 
 # 4) Front-ends
-pnpm dev:web    # end users        http://localhost:5173
-pnpm dev:admin  # platform admins  http://localhost:5174
-pnpm dev:ops    # content ops      http://localhost:5175
+pnpm dev:web    # end users        http://localhost:35173
+pnpm dev:admin  # platform admins  http://localhost:35174
+pnpm dev:ops    # content ops      http://localhost:35175
 
 # 5) Smoke tests / retrieval evals (API + worker must be running)
 uv run python scripts/smoke/run.py

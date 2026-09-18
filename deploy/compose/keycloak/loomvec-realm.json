@@ -9,7 +9,7 @@
       "protocol": "openid-connect",
       "publicClient": false,
       "secret": "loomvec-dev-secret",
-      "redirectUris": ["http://localhost:5174/*", "http://localhost:8080/*", "urn:loopback:loomvec-oidc"],
+      "redirectUris": ["http://localhost:35174/*", "http://localhost:38080/*", "urn:loopback:loomvec-oidc"],
       "webOrigins": ["+"],
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true

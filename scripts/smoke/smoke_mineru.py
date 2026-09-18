@@ -1,6 +1,6 @@
 """P0-INF-06 冒烟：MinerU 可解析样例 PDF（pipeline 后端，mineru-api /file_parse）。
 
-用法：uv run python scripts/smoke/smoke_mineru.py [--base-url http://localhost:8000]
+用法：uv run python scripts/smoke/smoke_mineru.py [--base-url http://localhost:38000]
 样例取自 vendored MinerU 源码 demo；首次调用可能触发模型加载，耐心等待。
 """
 
@@ -12,7 +12,7 @@ import sys
 
 import httpx
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:38000"
 SAMPLE = pathlib.Path(__file__).resolve().parents[2] / "third_party/mineru/demo/pdfs"
 
 

@@ -26,4 +26,4 @@ export function loomvecPort(envKey: string, fallback: number): number {
   return Number(process.env[envKey] ?? envVars[envKey] ?? fallback);
 }
 
-export const apiTarget = `http://localhost:${loomvecPort('LOOMVEC_API_PORT', 8080)}`;
+export const apiTarget = `http://localhost:${loomvecPort('LOOMVEC_API_PORT', 38080)}`;

@@ -21,11 +21,11 @@ scrape_configs:
   - job_name: loomvec-api
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8080"] # make api 默认端口
+      - targets: ["host.docker.internal:38080"] # make api 默认端口
   - job_name: loomvec-worker
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:9808"] # worker 指标端口（LOOMVEC_WORKER__METRICS_PORT）
+      - targets: ["host.docker.internal:39808"] # worker 指标端口（LOOMVEC_WORKER__METRICS_PORT）
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
