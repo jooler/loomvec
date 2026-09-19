@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -92,3 +93,27 @@ class AgentSession(UuidPkMixin, TenantMixin, TimestampMixin, Base):
     message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     preview: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentProject(UuidPkMixin, TenantMixin, TimestampMixin, Base):
+    """侧栏项目（P5.6）：workspace 根下一级目录的「已打开」登记。
+
+    项目 = 用户显式打开/新建的一级目录；移除仅置 removed_at（文件与会话
+    保留，可重新添加）。唯一约束 (env_id, path)：重复打开复用同一行。
+    """
+
+    __tablename__ = "agent_project"
+    __table_args__ = (UniqueConstraint("env_id", "path", name="uq_agent_project_env_path"),)
+
+    env_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_environment.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # workspace 相对路径（当前语义 = 根下一级目录名）
+    path: Mapped[str] = mapped_column(String(512), nullable=False)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

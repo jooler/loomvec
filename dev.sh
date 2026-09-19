@@ -245,7 +245,7 @@ except Exception:
 ")"
   docker image inspect "$image" >/dev/null 2>&1 \
     || { fail "沙箱镜像 $image 不存在：请先运行 ./deploy.sh 构建沙箱镜像"; exit 1; }
-  ok "沙箱前置就绪（agent-sandbox 网络 + 镜像 $image）"
+  ok "沙箱前置就绪（agent-sandbox 网络 + 镜像 ${image}）"
 }
 
 step "应用进程"

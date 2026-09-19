@@ -9,6 +9,7 @@ from __future__ import annotations
 from loomvec.core.db.models.agent import (
     AgentEnvironment,
     AgentEnvironmentStatus,
+    AgentProject,
     AgentSession,
 )
 from loomvec.core.db.models.asset import (
@@ -80,6 +81,7 @@ from loomvec.core.db.models.space import (
 __all__ = [
     "AgentEnvironment",
     "AgentEnvironmentStatus",
+    "AgentProject",
     "AgentSession",
     "ApiKey",
     "Asset",

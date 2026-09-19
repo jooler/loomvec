@@ -30,9 +30,9 @@ AFTER_TENANTS="$(psql "$PG_URL" -tAc 'select count(*) from tenant')"
 TOMBSTONE="$(psql "$PG_URL" -tAc "select count(*) from tenant where name = 'drill-tombstone'")"
 
 if [ "$AFTER_ASSETS" = "$BEFORE_ASSETS" ] && [ "$AFTER_TENANTS" = "$BEFORE_TENANTS" ] && [ "$TOMBSTONE" = "0" ]; then
-  echo "[drill] ✅ 恢复演练通过（assets=$AFTER_ASSETS tenants=$AFTER_TENANTS，破坏性写入被回滚）"
+  echo "[drill] ✅ 恢复演练通过（assets=$AFTER_ASSETS tenants=${AFTER_TENANTS}，破坏性写入被回滚）"
   exit 0
 else
-  echo "[drill] ❌ 恢复演练失败：assets $BEFORE_ASSETS→$AFTER_ASSETS tenants $BEFORE_TENANTS→$AFTER_TENANTS tombstone=$TOMBSTONE"
+  echo "[drill] ❌ 恢复演练失败：assets ${BEFORE_ASSETS}→$AFTER_ASSETS tenants ${BEFORE_TENANTS}→$AFTER_TENANTS tombstone=$TOMBSTONE"
   exit 1
 fi

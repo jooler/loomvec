@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.agent.attachments import AttachmentError, resolve_attachment, store_attachment
@@ -26,8 +27,8 @@ from loomvec.agent.sessions.orchestrator import PromptContext, PromptOrchestrato
 from loomvec.agent.sessions.transcript import aggregate_transcript
 from loomvec.core.authz import linked_public_space_ids, visible_space_ids
 from loomvec.core.config import Settings
-from loomvec.core.db.models import AgentEnvironment, AgentSession, Tenant, User
-from loomvec.core.db.repos import AgentEnvironmentRepo, AgentSessionRepo
+from loomvec.core.db.models import AgentEnvironment, AgentProject, AgentSession, Tenant, User
+from loomvec.core.db.repos import AgentEnvironmentRepo, AgentProjectRepo, AgentSessionRepo
 from loomvec.core.errors import NotFoundError, ValidationError
 from loomvec.core.logging import get_logger
 
@@ -149,7 +150,7 @@ def normalize_project_path(cfg: AgentRuntimeConfig, env_id: str, raw: str | None
     target = cfg.workspace(env_id) / Path(*parts)
     try:
         target.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
+    except (OSError, ValueError) as e:
         raise ValidationError(f"项目目录创建失败：{e}") from e
     return "/".join(parts)
 
@@ -157,6 +158,95 @@ def normalize_project_path(cfg: AgentRuntimeConfig, env_id: str, raw: str | None
 class QuestionIn(BaseModel):
     question: str = Field(min_length=1)
     attachment_ids: list[str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# 侧栏项目（P5.6）：workspace 根下一级目录的「已打开」登记
+# ---------------------------------------------------------------------------
+
+
+class ProjectCreate(BaseModel):
+    name: str  # 目录名（workspace 根下一级；已存在则直接打开，否则创建）
+
+
+def _project_out(row: AgentProject) -> dict[str, Any]:
+    return {"id": str(row.id), "path": row.path, "created_at": row.created_at}
+
+
+def normalize_project_name(raw: str) -> str:
+    """项目名校验：workspace 根下一级目录名（禁路径分隔/穿越/隐藏段）。"""
+    name = raw.strip().strip("/").replace("\\", "/")
+    if "/" in name or name in ("", ".", "..") or name.startswith("."):
+        raise ValidationError("项目名须为根目录下的单级目录名，且不以 . 开头")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in name):
+        # 含 \0 时 exists() 静默返回 False、mkdir 抛 ValueError，必须在此拦截
+        raise ValidationError("项目名不能包含控制字符")
+    if len(name) > 255:
+        raise ValidationError("项目名过长（≤255 字符）")
+    return name
+
+
+@router.get("/projects")
+async def list_projects(
+    identity: InternalIdentity = Depends(_identity),
+    session: AsyncSession = Depends(_session_ctx),
+) -> dict:
+    env, _ = await _own_env(session, identity)
+    rows = await AgentProjectRepo(session).list_visible(env.id)
+    return {"items": [_project_out(r) for r in rows]}
+
+
+@router.post("/projects", status_code=201)
+async def open_project(
+    body: ProjectCreate,
+    request: Request,
+    identity: InternalIdentity = Depends(_identity),
+    session: AsyncSession = Depends(_session_ctx),
+) -> dict:
+    """打开/新建项目：目录已存在则直接打开，否则在工作区根创建后打开。"""
+    env, user_id = await _own_env(session, identity)
+    cfg: AgentRuntimeConfig = request.app.state.agent_config
+    name = normalize_project_name(body.name)
+    target = cfg.workspace(str(env.id)) / name
+    try:
+        if target.exists() and not target.is_dir():
+            raise ValidationError(f"工作区已存在同名文件：{name}")
+        target.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError) as e:
+        raise ValidationError(f"项目目录创建失败：{e}") from e
+
+    repo = AgentProjectRepo(session)
+    row = await repo.find_by_path(env.id, name)
+    if row is None:
+        try:
+            # 并发打开同一目录：savepoint 内落库，撞唯一约束后回读复用同一行
+            async with session.begin_nested():
+                row = await repo.create(
+                    env_id=env.id, created_by_user_id=user_id, tenant_id=env.tenant_id, path=name
+                )
+        except IntegrityError:
+            row = await repo.find_by_path(env.id, name)
+            if row is None:
+                raise
+    elif row.removed_at is not None:
+        row = await repo.update(row, removed_at=None)  # 重新打开此前移除的项目
+    return _project_out(row)
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+async def remove_project(
+    project_id: uuid.UUID,
+    identity: InternalIdentity = Depends(_identity),
+    session: AsyncSession = Depends(_session_ctx),
+) -> None:
+    """移除项目（软删）：文件与会话保留，仅从侧栏列表消失，可重新添加。"""
+    env, _ = await _own_env(session, identity)
+    repo = AgentProjectRepo(session)
+    row = await repo.get(project_id)
+    if row is None or row.env_id != env.id:
+        raise NotFoundError(resource="agent_project", id=str(project_id))
+    if row.removed_at is None:
+        await repo.update(row, removed_at=datetime.now(UTC))
 
 
 async def _assert_member_spaces(
@@ -497,15 +587,42 @@ def _safe_workspace_path(cfg: AgentRuntimeConfig, env_id: str, rel: str) -> Path
 @router.get("/workspace/tree")
 async def workspace_tree(
     request: Request,
+    prefix: str = "",
     identity: InternalIdentity = Depends(_identity),
     session: AsyncSession = Depends(_session_ctx),
 ) -> dict:
     env, _ = await _own_env(session, identity)
     cfg: AgentRuntimeConfig = request.app.state.agent_config
     root = cfg.workspace(str(env.id)).resolve()
+    # prefix：仅返回该子树（项目文件树视图用），直接扫子树避免全 workspace 遍历
+    prefix = prefix.strip().strip("/")
+    if any(part == ".." for part in prefix.split("/")) or any(
+        ord(c) < 0x20 or ord(c) == 0x7F for c in prefix
+    ):
+        raise ValidationError("路径越界")
+    scan_root = root / prefix if prefix else root
+    if prefix:
+        # 候选集须含 prefix 条目本身（前端以其识别根节点）；顶层为符号链接时
+        # 不深入（rglob 对顶层 symlink 的跟随行为随 Python 版本而异，且可能越界）
+        if scan_root.is_symlink():
+            candidates: list[Path] = [scan_root]
+        elif scan_root.is_dir():
+            try:
+                candidates = [scan_root, *sorted(scan_root.rglob("*"))]
+            except OSError:
+                candidates = [scan_root]  # 子树不可读：仍返回 prefix 条目本身
+        elif scan_root.is_file():
+            candidates = [scan_root]
+        else:
+            candidates = []
+    else:
+        try:
+            candidates = sorted(root.rglob("*"))
+        except OSError:
+            candidates = []
     items: list[dict] = []
     count = 0
-    for path in sorted(root.rglob("*")):
+    for path in candidates:
         if count >= 500:
             break
         rel = path.relative_to(root).as_posix()

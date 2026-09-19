@@ -10,7 +10,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette import status
 
 import loomvec.agent
 from loomvec.agent.config import load_agent_config
@@ -18,9 +21,14 @@ from loomvec.agent.routes import router
 from loomvec.agent.runtime.manager import RuntimeManager
 from loomvec.agent.sessions.orchestrator import PromptOrchestrator
 from loomvec.core.db.base import create_engine_and_sessionmaker
+from loomvec.core.errors import LoomvecError
 from loomvec.core.logging import get_logger, setup_logging
 
 logger = get_logger("loomvec.agent")
+
+
+def _payload(code: str, message: str, details: dict | None = None) -> dict:
+    return {"code": code, "message": message, "details": details or {}}
 
 
 def create_app() -> FastAPI:
@@ -57,6 +65,23 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="LoomVec Agent Gateway", version=loomvec.agent.__version__, lifespan=lifespan
     )
+
+    # 领域异常 → 契约错误结构（与 services/api/errors.py 同语义；api 侧按
+    # 上游状态码透传映射，缺此处理器时校验错误会变成 500/502）
+    @app.exception_handler(LoomvecError)
+    async def domain_error_handler(_: Request, exc: LoomvecError) -> JSONResponse:
+        return JSONResponse(status_code=exc.http_status, content=exc.to_payload())
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+        errors = exc.errors()
+        for e in errors:
+            e.pop("url", None)
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=_payload("validation_error", "请求参数不合法", {"errors": errors}),
+        )
+
     app.include_router(router)
     return app
 

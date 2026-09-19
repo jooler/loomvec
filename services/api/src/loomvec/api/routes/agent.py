@@ -74,6 +74,20 @@ class AgentSessionListOut(BaseModel):
     total: int
 
 
+class AgentProjectOut(BaseModel):
+    id: uuid.UUID
+    path: str
+    created_at: datetime
+
+
+class AgentProjectListOut(BaseModel):
+    items: list[AgentProjectOut]
+
+
+class AgentProjectCreate(BaseModel):
+    name: str
+
+
 class AgentMessageOut(BaseModel):
     role: str
     content: str
@@ -362,12 +376,48 @@ async def cancel(
     )
 
 
+@router.get("/projects", response_model=AgentProjectListOut)
+async def list_projects(
+    identity: Identity = Depends(require_scope("read")),
+    request: Request = None,
+) -> AgentProjectListOut:
+    """侧栏项目列表（workspace 已打开目录；P5.6）。"""
+    data = await _forward_json(request, identity, "GET", "/internal/agent/projects")
+    return AgentProjectListOut.model_validate(data)
+
+
+@router.post("/projects", response_model=AgentProjectOut, status_code=201)
+async def open_project(
+    body: AgentProjectCreate,
+    identity: Identity = Depends(require_scope("write")),
+    request: Request = None,
+) -> AgentProjectOut:
+    """打开/新建项目（workspace 根下一级目录；已存在则直接打开）。"""
+    data = await _forward_json(
+        request, identity, "POST", "/internal/agent/projects", json=body.model_dump(mode="json")
+    )
+    return AgentProjectOut.model_validate(data)
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+async def remove_project(
+    project_id: uuid.UUID,
+    identity: Identity = Depends(require_scope("write")),
+    request: Request = None,
+) -> None:
+    await _forward_json(request, identity, "DELETE", f"/internal/agent/projects/{project_id}")
+
+
 @router.get("/workspace/tree", response_model=WorkspaceTreeOut)
 async def workspace_tree(
+    prefix: str = "",
     identity: Identity = Depends(require_scope("read")),
     request: Request = None,
 ) -> WorkspaceTreeOut:
-    data = await _forward_json(request, identity, "GET", "/internal/agent/workspace/tree")
+    params = {"prefix": prefix} if prefix else None
+    data = await _forward_json(
+        request, identity, "GET", "/internal/agent/workspace/tree", params=params
+    )
     return WorkspaceTreeOut.model_validate(data)
 
 

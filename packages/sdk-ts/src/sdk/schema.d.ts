@@ -826,6 +826,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Projects
+         * @description 侧栏项目列表（workspace 已打开目录；P5.6）。
+         */
+        get: operations["list_projects_api_v1_agent_projects_get"];
+        put?: never;
+        /**
+         * Open Project
+         * @description 打开/新建项目（workspace 根下一级目录；已存在则直接打开）。
+         */
+        post: operations["open_project_api_v1_agent_projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/projects/{project_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Project */
+        delete: operations["remove_project_api_v1_agent_projects__project_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent/sessions": {
         parameters: {
             query?: never;
@@ -2272,6 +2313,31 @@ export interface components {
             tool_calls?: {
                 [key: string]: unknown;
             }[];
+        };
+        /** AgentProjectCreate */
+        AgentProjectCreate: {
+            /** Name */
+            name: string;
+        };
+        /** AgentProjectListOut */
+        AgentProjectListOut: {
+            /** Items */
+            items: components["schemas"]["AgentProjectOut"][];
+        };
+        /** AgentProjectOut */
+        AgentProjectOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Path */
+            path: string;
         };
         /** AgentQuestion */
         AgentQuestion: {
@@ -6049,6 +6115,103 @@ export interface operations {
             };
         };
     };
+    list_projects_api_v1_agent_projects_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_project_api_v1_agent_projects_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentProjectCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_project_api_v1_agent_projects__project_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_sessions_api_v1_agent_sessions_get: {
         parameters: {
             query?: never;
@@ -6424,7 +6587,9 @@ export interface operations {
     };
     workspace_tree_api_v1_agent_workspace_tree_get: {
         parameters: {
-            query?: never;
+            query?: {
+                prefix?: string;
+            };
             header?: {
                 "X-API-Key"?: string | null;
             };

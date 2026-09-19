@@ -84,6 +84,7 @@ export interface ChatSessionItem {
   title: string;
   project_path: string;
   scope_space_ids: string[];
+  last_message_at: string | null;
 }
 
 /** 智能体服务可用性（ChatPage 入口降级提示）。 */
@@ -109,16 +110,94 @@ export function useAgentSessions() {
       if (error) throw new Error(extractApiError(error, t('agent:loadSessionsFailed')));
       const items = (
         data as unknown as {
-          items: { id: string; title: string; project_path?: string | null; scope_space_ids: string[] }[];
+          items: {
+            id: string;
+            title: string;
+            project_path?: string | null;
+            scope_space_ids: string[];
+            last_message_at?: string | null;
+          }[];
         }
       ).items.map((s) => ({
         session_id: s.id,
         title: s.title,
         project_path: s.project_path ?? '',
         scope_space_ids: s.scope_space_ids ?? [],
+        last_message_at: s.last_message_at ?? null,
       }));
       return { items, total: items.length };
     },
+  });
+}
+
+/** 侧栏项目条目（P5.6）：workspace 已打开的一级目录。 */
+export interface AgentProjectItem {
+  id: string;
+  path: string;
+  created_at: string;
+}
+
+/** 侧栏项目列表（会话按项目分组展示）。 */
+export function useAgentProjects() {
+  return useQuery({
+    queryKey: ['agent-projects'],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/agent/projects');
+      if (error) throw new Error(extractApiError(error, t('agent:loadProjectsFailed')));
+      return data.items;
+    },
+  });
+}
+
+/** 打开/新建项目（目录已存在则直接打开，否则在工作区根创建）。 */
+export function useOpenProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string) => {
+      const { data, error } = await api.POST('/api/v1/agent/projects', { body: { name } });
+      if (error) throw new Error(extractApiError(error, t('agent:projectOpenFailed')));
+      return data;
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['agent-projects'] }),
+  });
+}
+
+/** 移除项目（软删）：文件与会话保留，仅从侧栏消失。 */
+export function useRemoveProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (projectId: string) => {
+      const { error } = await api.DELETE('/api/v1/agent/projects/{project_id}', {
+        params: { path: { project_id: projectId } },
+      });
+      if (error) throw new Error(extractApiError(error, t('agent:projectRemoveFailed')));
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['agent-projects'] }),
+    onError: (e) => toast.error(e.message),
+  });
+}
+
+/** 工作区文件节点（workspace tree 契约）。 */
+export interface WorkspaceNode {
+  path: string;
+  name: string;
+  type: string; // file | dir
+  size: number;
+}
+
+/** 工作区目录树（prefix 限定子树；项目文件树视图 / 新建项目弹框共用）。 */
+export function useWorkspaceTree(prefix: string, enabled = true) {
+  return useQuery({
+    queryKey: ['agent-workspace-tree', prefix],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/agent/workspace/tree', {
+        params: { query: { prefix } },
+      });
+      if (error) throw new Error(extractApiError(error, t('agent:workspaceLoadFailed')));
+      return data.items as unknown as WorkspaceNode[];
+    },
+    enabled,
+    staleTime: 15_000,
   });
 }
 

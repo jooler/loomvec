@@ -24,14 +24,39 @@
     "settings": "设置"
   },
   "chat": {
-    "newChat": "新建对话",
+    "newProject": "新建项目",
+    "projectsLabel": "项目",
+    "noProjects": "暂无项目，点击上方「新建项目」开始",
+    "newChatInProject": "在项目「{{name}}」中新建对话",
+    "projectMoreActions": "项目「{{name}}」更多操作",
+    "viewFiles": "查看文件",
+    "backToChats": "返回对话列表",
+    "filesEmpty": "该目录暂无文件",
+    "fileSize": "{{size}} 字节",
+    "removeProject": "移除项目",
+    "removeProjectTitle": "移除项目？",
+    "removeProjectDesc": "仅将「{{name}}」从侧栏移除，工作区文件与对话记录保留，可随时重新添加。",
+    "ungrouped": "未分组",
+    "showMore": "显示更多",
+    "showLess": "收起",
+    "timeJustNow": "刚刚",
+    "timeMinutes": "{{count}}分",
+    "timeHours": "{{count}}小时",
+    "timeDays": "{{count}}天",
     "untitled": "新会话",
     "moreActions": "会话「{{title}}」更多操作",
-    "noHistory": "暂无历史对话",
     "renameTitle": "重命名会话",
     "renameDesc": "修改在侧栏中展示的会话标题。",
     "deleteTitle": "删除会话？",
     "deleteDesc": "将删除「{{title}}」及其全部消息，操作不可恢复。",
     "deleteFailed": "删除会话失败"
+  },
+  "project": {
+    "createTitle": "新建项目",
+    "createDesc": "打开工作区根目录下的文件夹，或新建一个文件夹作为项目。",
+    "namePlaceholder": "新文件夹名称",
+    "createAndOpen": "创建并打开",
+    "existingLabel": "或打开已有文件夹",
+    "noExisting": "工作区根目录下暂无其他文件夹"
   }
 }

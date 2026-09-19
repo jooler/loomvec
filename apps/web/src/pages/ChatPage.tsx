@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Brain, ChevronDown, FileUp, FolderOpen, Paperclip, Send, ShieldAlert, Square, Wrench, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -60,6 +60,7 @@ interface PendingAttachment {
 export function ChatPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { t } = useTranslation('agent');
   const [input, setInput] = useState('');
@@ -67,7 +68,10 @@ export function ChatPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [scopeOverride, setScopeOverride] = useState<string[] | null>(null);
-  const [projectDir, setProjectDir] = useState(''); // 新会话绑定项目目录（P5.5a）
+  // 草稿对话（P5.6）：/chat?project=<目录> 仅展示对话 UI；项目行内「新建对话」
+  // 都落到同一 URL，重复点击不产生新草稿。首条消息发出时才创建真实会话。
+  const draftProject = sessionId ? '' : (searchParams.get('project') ?? '');
+  const [draftScope, setDraftScope] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const streamingRef = useRef(false);
@@ -99,6 +103,14 @@ export function ChatPage() {
       setAttachments([]);
     }
   }, [sessionId]);
+
+  // 切换草稿项目（或离开草稿）：重置草稿本地状态
+  useEffect(() => {
+    if (!streamingRef.current) {
+      setInput('');
+      setDraftScope([]);
+    }
+  }, [draftProject]);
 
   // 历史回灌（引用 n → index 归一在视图内完成，渲染层零特殊分支）
   useEffect(() => {
@@ -167,17 +179,24 @@ export function ChatPage() {
     mutationFn: async (question: string) => {
       let sid = sessionId;
       if (!sid) {
+        // 草稿对话首条消息：此刻才创建真实会话（标题 = 问题前 60 字，
+        // 绑定草稿项目目录与草稿检索范围）
+        if (!draftProject) throw new Error(t('noProjectHint'));
         const resp = await api.POST('/api/v1/agent/sessions', {
-          body: { title: question.slice(0, 50), project_path: projectDir.trim() || undefined },
+          body: {
+            title: question.slice(0, 60),
+            project_path: draftProject,
+            scope_space_ids: draftScope.length ? draftScope : undefined,
+          },
         });
         const s = resp.data as unknown as { id?: string } | undefined;
         sid = s?.id;
-        if (sid) {
-          navigate(`/chat/${sid}`);
-          void queryClient.invalidateQueries({ queryKey: ['agent-sessions'] });
-        }
+        if (!sid) throw new Error(t('sessionCreateFailed'));
+        // 抢在路由切换前置位：会话切换副作用见 streamingRef 守卫
+        streamingRef.current = true;
+        navigate(`/chat/${sid}`, { replace: true });
+        void queryClient.invalidateQueries({ queryKey: ['agent-sessions'] });
       }
-      if (!sid) throw new Error(t('sessionCreateFailed'));
 
       const pending = attachments;
       setAttachments([]);
@@ -272,14 +291,18 @@ export function ChatPage() {
 
   const submit = () => {
     const q = input.trim();
-    if (!q || ask.isPending) return;
+    if (!q || ask.isPending || (!sessionId && !draftProject)) return;
     setInput('');
     setErrorMsg(null);
     ask.mutate(q);
   };
 
   const currentSession = (sessions.data?.items ?? []).find((s) => s.session_id === sessionId);
-  const scopeIds = scopeOverride ?? currentSession?.scope_space_ids ?? [];
+  // 草稿态检索范围用本地选择，真实会话沿用「本地覆盖优先」
+  const scopeIds = sessionId
+    ? (scopeOverride ?? currentSession?.scope_space_ids ?? [])
+    : draftScope;
+  const displayProject = sessionId ? currentSession?.project_path : draftProject;
   const spaceOptions = [
     ...(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name })),
     ...(publicSpaces.data ?? [])
@@ -293,15 +316,15 @@ export function ChatPage() {
         <h1 className="truncate text-base font-semibold">
           {currentSession?.title || t('defaultTitle')}
         </h1>
-        {sessionId && (
+        {(sessionId || draftProject) && (
           <div className="flex items-center gap-2">
-            {!!currentSession?.project_path && (
+            {!!displayProject && (
               <span
                 className="flex max-w-56 items-center gap-1 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-                title={t('projectBadgeTitle', { path: currentSession.project_path })}
+                title={t('projectBadgeTitle', { path: displayProject })}
               >
                 <FolderOpen className="size-3 shrink-0" />
-                {currentSession.project_path}
+                {displayProject}
               </span>
             )}
             <span className="shrink-0 text-sm text-muted-foreground">{t('scopeLabel')}</span>
@@ -311,15 +334,19 @@ export function ChatPage() {
               placeholder={t('scopePlaceholder')}
               loading={spaces.isLoading || publicSpaces.isLoading || sessions.isLoading}
               onChange={(v) => {
-                setScopeOverride(v);
-                patchSession.mutate({ scope_space_ids: v });
+                if (sessionId) {
+                  setScopeOverride(v);
+                  patchSession.mutate({ scope_space_ids: v });
+                } else {
+                  setDraftScope(v); // 草稿态：随首条消息一并提交
+                }
               }}
             />
           </div>
         )}
       </div>
 
-      {sessionId && scopeIds.length === 0 && !agentDisabled && (
+      {(sessionId || draftProject) && scopeIds.length === 0 && !agentDisabled && (
         <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
           <ShieldAlert className="size-4 shrink-0 text-amber-600" />
           {t('noScopeHint')}
@@ -335,7 +362,10 @@ export function ChatPage() {
             </div>
           )}
           {msgs.length === 0 && !ask.isPending && !agentDisabled && (
-            <EmptyState title={t('startTitle')} description={t('emptyDesc')} />
+            <EmptyState
+              title={t('startTitle')}
+              description={sessionId || draftProject ? t('emptyDesc') : t('noProjectHint')}
+            />
           )}
           {msgs.map((m, i) => (
             <div key={i} className={m.role === 'user' ? 'flex justify-end' : ''}>
@@ -467,28 +497,11 @@ export function ChatPage() {
         </div>
       </div>
 
-      {/* 输入区：附件 chips + 输入框 + 发送/停止 */}
+      {/* 输入区：附件 chips + 输入框 + 发送/停止。
+          P5.6 起新对话自侧栏项目内创建（目录在创建时绑定），
+          无会话态输入框置灰并提示先去侧栏新建 */}
       <div className="border-t bg-background px-4 py-3">
         <div className="mx-auto w-full max-w-3xl space-y-2">
-          {/* 新会话绑定项目目录（P5.5a）：交付物将约定写入该 workspace 子目录 */}
-          {!sessionId && !agentDisabled && (
-            <div className="flex items-center gap-2">
-              <label
-                htmlFor="chat-project-dir"
-                className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
-              >
-                <FolderOpen className="size-3" />
-                {t('projectLabel')}
-              </label>
-              <Input
-                id="chat-project-dir"
-                className="h-8 text-xs"
-                placeholder={t('projectPlaceholder')}
-                value={projectDir}
-                onChange={(e) => setProjectDir(e.target.value)}
-              />
-            </div>
-          )}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {attachments.map((a) => (
@@ -528,15 +541,22 @@ export function ChatPage() {
               variant="ghost"
               size="icon"
               aria-label={t('addAttachment')}
+              title={t('needSessionFirst')}
               disabled={!sessionId || ask.isPending || attachments.length >= MAX_ATTACHMENTS}
               onClick={() => fileRef.current?.click()}
             >
               <Paperclip className="size-4" />
             </Button>
             <Input
-              placeholder={agentDisabled ? t('inputUnavailable') : t('inputPlaceholder')}
+              placeholder={
+                agentDisabled
+                  ? t('inputUnavailable')
+                  : !sessionId && !draftProject
+                    ? t('noProjectHint')
+                    : t('inputPlaceholder')
+              }
               value={input}
-              disabled={agentDisabled}
+              disabled={agentDisabled || (!sessionId && !draftProject)}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit();

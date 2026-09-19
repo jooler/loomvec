@@ -18,6 +18,7 @@ from loomvec.core.config import Settings
 from loomvec.core.db.models import (
     AgentEnvironment,
     AgentEnvironmentStatus,
+    AgentProject,
     AgentSession,
     Asset,
     AssetFolder,
@@ -416,6 +417,24 @@ class AgentEnvironmentRepo(Repository[AgentEnvironment]):
             title=title,
             status=AgentEnvironmentStatus.ACTIVE,
         )
+
+
+class AgentProjectRepo(Repository[AgentProject]):
+    """侧栏项目仓储：workspace 一级目录的「已打开」登记（移除为软删）。"""
+
+    model = AgentProject
+
+    async def list_visible(self, env_id: uuid.UUID) -> list[AgentProject]:
+        stmt = (
+            self._base_select(env_id=env_id)
+            .where(AgentProject.removed_at.is_(None))
+            .order_by(AgentProject.created_at.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def find_by_path(self, env_id: uuid.UUID, path: str) -> AgentProject | None:
+        stmt = self._base_select(env_id=env_id, path=path)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
 
 class AgentSessionRepo(Repository[AgentSession]):
