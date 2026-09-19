@@ -360,19 +360,38 @@ class TranscribeSettings(BaseModel):
     segment_max_seconds: float = 60.0  # 转写分块最大时长
 
 
+class AgentRuntimeSandboxSettings(BaseModel):
+    """L2 容器沙箱参数（P5.5a，docs/Research/01 §6.3/§7.1）。
+
+    provider=local 时整段不消费；docker 时逐容器强制资源上限。
+    per_env_uid 为 P5.5b 预留（需共享组 setgid+ACL 方案支撑，MVP 统一网关 uid）。
+    """
+
+    image: str = "loomvec/agent-sandbox:stable"
+    network: str = "agent-sandbox"
+    cpus: float = 2.0
+    memory: str = "2g"
+    pids_limit: int = 512
+    home_tmpfs: str = "128m"  # 容器内 $HOME（tmpfs，随容器丢弃）
+    docker_host: str = ""  # 空 = 宿主默认 daemon；可指 rootless/remote context
+    per_env_uid: bool = False  # P5.5b：per-env uid + 共享组
+
+
 class AgentRuntimeSettings(BaseModel):
     """dsh runtime 生命周期（14 文档 §5.1/§5.2）。
 
-    注：max_concurrent_streams_per_user / provider 的 k8s|e2b 档为 P1 预留，
-    当前实现为「同 env 串行 + local 子进程」，字段暂未消费。
+    provider=local 为同机子进程（L1）；docker 为每 env 一容器（L2，P5.5a，
+    docs/Research/01）；k8s/e2b 为预留档位。max_concurrent_streams_per_user
+    暂未消费。
     """
 
-    provider: str = "local"  # local | k8s | e2b（k8s/e2b 为 P1 预留档位）
+    provider: str = "local"  # local | docker | k8s | e2b（k8s/e2b 为预留档位）
     profile: str = "sdk"  # dsh profile：sdk = dsh-base 完整核心（D9）
     idle_timeout_s: int = 900  # 空闲回收阈值
     max_active_runtimes_per_node: int = 20
     spawn_timeout_s: int = 60
     max_concurrent_streams_per_user: int = 3
+    sandbox: AgentRuntimeSandboxSettings = Field(default_factory=AgentRuntimeSandboxSettings)
 
 
 class AgentModelSettings(BaseModel):
@@ -415,6 +434,9 @@ class AgentSandboxSettings(BaseModel):
 
 class AgentMcpSettings(BaseModel):
     url: str = "http://127.0.0.1:38080/api/v1/mcp"
+    # provider=docker 时渲染进 cordis.patch.yml 的 MCP 地址（host-gateway 可达，
+    # docs/Research/01 §6.5-3）；空值回落 url（仅 local 语义）。
+    url_sandbox: str = "http://host.docker.internal:38080/api/v1/mcp"
     token_ttl_s: int = 3600
 
 

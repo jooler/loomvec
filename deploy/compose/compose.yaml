@@ -18,7 +18,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-loomvec}
     ports:
       # 宿主机端口默认 35433：本机系统 PostgreSQL 占 5432，回退到 5432 会互相混淆
-      - "${POSTGRES_PORT:-35433}:5432"
+      # 127.0.0.1 绑定（P5.5a F12 整改）：基础设施端口不暴露外网/局域网，
+      # 也收敛 agent-sandbox 沙箱经 host-gateway 的宿主可达面
+      - "127.0.0.1:${POSTGRES_PORT:-35433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./postgres-age/init:/docker-entrypoint-initdb.d:ro
@@ -34,7 +36,7 @@ services:
     container_name: loomvec-redis
     restart: unless-stopped
     ports:
-      - "${REDIS_PORT:-36379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-36379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -53,8 +55,8 @@ services:
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-loomvec-secret}
       RUSTFS_VOLUMES: /data
     ports:
-      - "${RUSTFS_PORT:-39000}:9000"
-      - "${RUSTFS_CONSOLE_PORT:-39001}:9001"
+      - "127.0.0.1:${RUSTFS_PORT:-39000}:9000"
+      - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-39001}:9001"
     volumes:
       - rustfs_data:/data
     healthcheck:
@@ -100,8 +102,8 @@ services:
       MINIO_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-loomvec-secret}
       COMMON_STORAGETYPE: remote
     ports:
-      - "${MILVUS_PORT:-39530}:19530"
-      - "${MILVUS_METRICS_PORT:-39091}:9091"
+      - "127.0.0.1:${MILVUS_PORT:-39530}:19530"
+      - "127.0.0.1:${MILVUS_METRICS_PORT:-39091}:9091"
     volumes:
       - milvus_data:/var/lib/milvus
     depends_on:
@@ -134,7 +136,7 @@ services:
       MINERU_MODEL_SOURCE: modelscope
       MINERU_TOOLS_CONFIG_JSON: /models/mineru.template.json
     ports:
-      - "${MINERU_PORT:-38000}:8000"
+      - "127.0.0.1:${MINERU_PORT:-38000}:8000"
     volumes:
       - mineru_models:/models
     healthcheck:
@@ -153,7 +155,7 @@ services:
     environment:
       MILVUS_URL: milvus:19530
     ports:
-      - "${ATTU_PORT:-33001}:3000"
+      - "127.0.0.1:${ATTU_PORT:-33001}:3000"
     depends_on:
       milvus:
         condition: service_healthy
@@ -172,7 +174,7 @@ services:
     volumes:
       - ./keycloak/loomvec-realm.json:/opt/keycloak/data/import/loomvec-realm.json:ro
     ports:
-      - "${KEYCLOAK_PORT:-38088}:8080"
+      - "127.0.0.1:${KEYCLOAK_PORT:-38088}:8080"
 
   # ---------- P4-INF-01 监控告警栈 ----------
   prometheus:
@@ -187,7 +189,7 @@ services:
       - ../monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     ports:
-      - "${PROMETHEUS_PORT:-39090}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-39090}:9090"
 
   alertmanager:
     image: prom/alertmanager:v0.27.0
@@ -197,7 +199,7 @@ services:
     volumes:
       - ../monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
-      - "${ALERTMANAGER_PORT:-39093}:9093"
+      - "127.0.0.1:${ALERTMANAGER_PORT:-39093}:9093"
 
   grafana:
     image: grafana/grafana:11.3.0
@@ -211,7 +213,7 @@ services:
       - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     ports:
-      - "${GRAFANA_PORT:-33002}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-33002}:3000"
 
   loki:
     image: grafana/loki:3.4.2
@@ -223,7 +225,7 @@ services:
       - ../monitoring/loki.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
     ports:
-      - "${LOKI_PORT:-33100}:3100"
+      - "127.0.0.1:${LOKI_PORT:-33100}:3100"
 
   promtail:
     image: grafana/promtail:3.4.2
@@ -256,7 +258,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${AGENT_PORT:-38090}:8090"
+      - "127.0.0.1:${AGENT_PORT:-38090}:8090"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8090/internal/agent/health || exit 1"]
       interval: 15s
@@ -275,3 +277,14 @@ volumes:
   grafana_data:
   loki_data:
   agent_envs:
+
+networks:
+  # P5.5a 沙箱专用 bridge（docs/Research/01 §6.5）：固定子网供 sandbox-firewall.sh
+  # 引用；api/其他 compose 服务一律不加入该网络。compose 栈不引用它（沙箱容器
+  # 由网关经 docker run 按名接入），deploy.sh/dev.sh 以 docker network create 幂等保底。
+  agent-sandbox:
+    name: agent-sandbox
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${AGENT_SANDBOX_SUBNET:-172.31.77.0/24}

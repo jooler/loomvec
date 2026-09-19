@@ -47,6 +47,19 @@ async def _ensure_extensions(engine: AsyncEngine) -> None:
         await conn.exec_driver_sql('CREATE EXTENSION IF NOT EXISTS "pgcrypto"')
 
 
+# 既有库的增量补列（create_all 只建新表不改旧表；幂等，PG ≥ 9.6 支持 IF NOT EXISTS）
+_ADDITIVE_COLUMNS: list[tuple[str, str]] = [
+    # P5.5a：会话绑定项目目录（docs/Research/01 §6.1）
+    ("agent_session", "ADD COLUMN IF NOT EXISTS project_path VARCHAR(512) NOT NULL DEFAULT ''"),
+]
+
+
+async def _ensure_additive_columns(engine: AsyncEngine) -> None:
+    async with engine.begin() as conn:
+        for table, ddl in _ADDITIVE_COLUMNS:
+            await conn.exec_driver_sql(f"ALTER TABLE {table} {ddl}")
+
+
 async def _ensure_age_graph(engine: AsyncEngine) -> bool:
     """确保 AGE 扩展与 loomvec_graph 图存在；不可用时返回 False（运行时降级）。"""
     async with engine.begin() as conn:
@@ -159,6 +172,7 @@ async def init_database(engine: AsyncEngine) -> dict:
     age_ready = await _ensure_age_graph(engine)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _ensure_additive_columns(engine)
     await _seed(engine)
     return {"tables": len(Base.metadata.tables), "age_ready": age_ready}
 

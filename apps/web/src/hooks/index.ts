@@ -82,6 +82,7 @@ export function useSpaceLinkToggle() {
 export interface ChatSessionItem {
   session_id: string;
   title: string;
+  project_path: string;
   scope_space_ids: string[];
 }
 
@@ -108,11 +109,12 @@ export function useAgentSessions() {
       if (error) throw new Error(extractApiError(error, t('agent:loadSessionsFailed')));
       const items = (
         data as unknown as {
-          items: { id: string; title: string; scope_space_ids: string[] }[];
+          items: { id: string; title: string; project_path?: string | null; scope_space_ids: string[] }[];
         }
       ).items.map((s) => ({
         session_id: s.id,
         title: s.title,
+        project_path: s.project_path ?? '',
         scope_space_ids: s.scope_space_ids ?? [],
       }));
       return { items, total: items.length };

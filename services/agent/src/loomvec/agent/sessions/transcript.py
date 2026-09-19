@@ -11,6 +11,12 @@
 tool/result + tool/call（按 callId 配对）；轮次边界 turn/end（data.reason.kind）。
 assistant/message.data = {turn, step, message: {content: ContentBlock[]}, usage?}；
 ContentBlock 变体：text / reasoning / image / file / tool-call / tool-result。
+
+**守门约束（P5.5a，docs/Research/01 §6.1/§8）**：本模块按宿主 workspace 路径
+计算 project_key 定位 JSONL；docker 沙箱以路径恒等原则（容器内路径 = 宿主路径）
+保证 dsh 落盘位置与本模块查找位置一致——任何引入「容器内路径 ≠ 宿主路径」的
+改动都必须同步重审本模块的 `_project_dir` 与 `runtime/envs.py` 的 patch 渲染，
+并全量回归历史重放。
 """
 
 from __future__ import annotations

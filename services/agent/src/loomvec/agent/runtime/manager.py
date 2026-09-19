@@ -24,11 +24,24 @@ from typing import Any
 from loomvec.agent.config import AgentRuntimeConfig
 from loomvec.agent.runtime import envs as env_layout
 from loomvec.agent.runtime.local import LocalRuntimeProvider
+from loomvec.agent.runtime.provider import RuntimeProvider
 from loomvec.core.logging import get_logger
 
 logger = get_logger("loomvec.agent.manager")
 
 SPAWN_MUTEX_TTL_S = 60  # Redis agent:envlock:{env_id}（跨进程 spawn 互斥）
+
+
+def build_provider(cfg: AgentRuntimeConfig) -> RuntimeProvider:
+    """按 agent.runtime.provider 实例化隔离级别（14 文档 §5.2 分级）。"""
+    name = cfg.agent.runtime.provider
+    if name == "local":
+        return LocalRuntimeProvider()
+    if name == "docker":
+        from loomvec.agent.runtime.docker import DockerSandboxProvider
+
+        return DockerSandboxProvider()
+    raise ValueError(f"未知 runtime provider：{name}（可选 local | docker）")
 
 
 @dataclass
@@ -57,7 +70,7 @@ class RuntimeManager:
     def __init__(self, cfg: AgentRuntimeConfig, redis: Any = None) -> None:
         self._cfg = cfg
         self._redis = redis
-        self._provider = LocalRuntimeProvider()
+        self._provider: RuntimeProvider = build_provider(cfg)
         self._runtimes: dict[str, ManagedRuntime] = {}
         self._spawn_locks: dict[str, asyncio.Lock] = {}
         self._reaper_task: asyncio.Task | None = None
@@ -135,6 +148,7 @@ class RuntimeManager:
     # ---------- 空闲回收 ----------
 
     async def start_reaper(self) -> None:
+        await self._reconcile_orphans()
         if self._reaper_task is None or self._reaper_task.done():
             self._reaper_task = asyncio.create_task(self._reap_loop(), name="agent-runtime-reaper")
 
@@ -147,6 +161,23 @@ class RuntimeManager:
         for env_id in list(self._runtimes):
             await self.terminate(env_id, reason="shutdown")
 
+    async def _reconcile_orphans(self) -> None:
+        """孤儿容器对账（docker provider，§6.3-3）：网关重启/断电后的残留清理。
+
+        spawn 进行中（锁持有、容器已建未注册）的 env 视为存活，避免误删。
+        """
+        reconcile = getattr(self._provider, "reconcile", None)
+        if reconcile is None:
+            return
+        spawning = {env_id for env_id, lock in self._spawn_locks.items() if lock.locked()}
+        try:
+            removed = await reconcile(set(self._runtimes) | spawning)
+        except Exception as e:
+            logger.warning("sandbox_reconcile_failed", error=str(e)[:200])
+            return
+        if removed:
+            logger.info("sandbox_reconcile_done", removed=removed)
+
     async def _reap_loop(self) -> None:
         idle_timeout = self._cfg.agent.runtime.idle_timeout_s
         while True:
@@ -157,6 +188,7 @@ class RuntimeManager:
                     continue
                 if runtime.idle_seconds() >= idle_timeout:
                     await self.terminate(env_id, reason="idle_timeout")
+            await self._reconcile_orphans()
 
     # ---------- workspace ----------
 

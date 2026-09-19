@@ -79,6 +79,12 @@ class AgentSession(UuidPkMixin, TenantMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True, index=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="新会话")
+    # 会话绑定项目目录（workspace 相对路径，空 = workspace 根；P5.5a §6.1）：
+    # 提问时经 orchestrator 注入工作目录前缀，交付物约定写入该目录。
+    # server_default 与 init_db 的 ADD COLUMN DDL 对齐（裸 SQL 插入不缺省）
+    project_path: Mapped[str] = mapped_column(
+        String(512), nullable=False, default="", server_default=""
+    )
     # 会话检索范围：随提问签发进 agent token（严格遵循用户设置）；
     # 空列表 = 未设置 → MCP fail-closed，任何空间都不可检索
     scope_space_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)

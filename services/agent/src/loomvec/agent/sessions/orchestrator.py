@@ -30,6 +30,7 @@ from loomvec.agent.citations import (
 )
 from loomvec.agent.config import AgentRuntimeConfig
 from loomvec.agent.runtime.manager import ManagedRuntime, RuntimeManager
+from loomvec.agent.runtime.provider import SandboxUnavailableError
 from loomvec.agent.sessions import transcript
 from loomvec.agent.sessions.usage import TurnStats
 from loomvec.agent.sse import sse_event
@@ -57,6 +58,7 @@ class PromptContext:
     scope_space_ids: list[str]  # 会话检索范围（空 = 未设置 → MCP fail-closed 不检索）
     question: str
     attachments: list[dict[str, Any]]  # resolve_attachment 产物
+    project_path: str = ""  # 会话绑定项目目录（workspace 相对路径，空 = 根；P5.5a）
 
 
 class PromptOrchestrator:
@@ -82,12 +84,25 @@ class PromptOrchestrator:
         prompt_lock 持有到**底层 run 结束**（客户端断连也不提前释放：
         轮次在后台跑完、JSONL 事实源完整，且规避同 env 并发 prompt）。
         """
-        runtime = await self._manager.get_or_spawn(
-            ctx.env_id,
-            tenant_name=ctx.tenant_name,
-            user_display_name=ctx.user_display_name,
-            token=await self._issue_token(ctx),
-        )
+        runtime = None
+        try:
+            runtime = await self._manager.get_or_spawn(
+                ctx.env_id,
+                tenant_name=ctx.tenant_name,
+                user_display_name=ctx.user_display_name,
+                token=await self._issue_token(ctx),
+            )
+        except SandboxUnavailableError as e:
+            # fail-closed（docs/Research/01 §6.3-6）：沙箱不可用不回退 L1，
+            # 以 SSE error 收尾，前端可见明确错误码
+            logger.warning("sandbox_unavailable", env_id=ctx.env_id, error=str(e)[:200])
+            yield sse_event(
+                "error",
+                {"message": f"沙箱不可用：{e}", "code": "sandbox_unavailable"},
+            )
+            yield sse_event("done", {"message_id": "", "answer": "", "citations": [],
+                                     "graph_evidence": [], "usage": {}, "finish_reason": "error"})
+            return
         message_id = uuid.uuid4().hex
         model = self._cfg.agent.model.name
         yield sse_event(
@@ -165,10 +180,23 @@ class PromptOrchestrator:
             yield frame
 
     def _build_blocks(self, ctx: PromptContext, replay_note: str) -> list[dict[str, Any]]:
-        """prompt contentBlocks：重放前缀 + 附件说明/图片 + 问题。"""
+        """prompt contentBlocks：重放前缀 + 工作目录说明 + 附件说明/图片 + 问题。"""
         blocks: list[dict[str, Any]] = []
         if replay_note:
             blocks.append({"type": "text", "text": replay_note})
+        if ctx.project_path:
+            # 会话绑定项目目录（P5.5a §6.1）：cwd 是 runtime 级（F9），按项目拆
+            # runtime 不经济；以指令前缀约束相对路径落点，与重放前缀同机制
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"本次会话绑定的工作目录为 `{ctx.project_path}/`，"
+                        "交付物（文件、代码、报告等）一律写入该目录及其子目录；"
+                        "引用其中的文件时使用该目录下的相对路径。"
+                    ),
+                }
+            )
         for att in ctx.attachments:
             if att.get("is_image"):
                 with open(att["abs_path"], "rb") as f:

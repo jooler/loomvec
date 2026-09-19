@@ -126,6 +126,130 @@ stamp_deploy() {
   ok "已写入部署标记 ${STAMP}（dev.sh 检测到它不再重复拉起部署）"
 }
 
+load_api_port() {
+  local p
+  p="$(grep -E '^LOOMVEC_API_PORT=' .env 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+  echo "${p:-38080}"
+}
+
+# ---------------------------------------------------------------- P5.5a 沙箱（docs/Research/01）
+# 每 env 一容器的硬隔离运行环境。dev 本机（provider=local）全部跳过，零影响；
+# 启用后：构建沙箱镜像（存在性自检，杜绝首问误导性 pull）→ agent-sandbox 网络
+# 幂等保底 → 防火墙双链下发（INPUT + DOCKER-USER）→ api 监听与内核 landlock 预检。
+setup_sandbox() {
+  # ai.mock=true 时跳过：mock 供方是宿主本机服务，容器内经 127.0.0.1 不可达，
+  # docker provider 与离线 mock 是互斥组合（沙箱部署请配置真实模型供方）
+  local MOCK; MOCK="$(read_cfg ai.mock)"
+  if [[ "$MOCK" =~ ^[Tt]rue$ ]]; then
+    echo "${DIM}ai.mock=true（离线确定性供方）：沙箱不适用（容器内不可达本机 mock 服务），跳过${RST}"
+    return 0
+  fi
+  local provider; provider="$(read_cfg runtime.provider)"; provider="${provider:-local}"
+  if ! command -v docker >/dev/null 2>&1; then
+    [ "$provider" = "docker" ] && fail "配置为 provider=docker 但本机无 docker CLI"
+    echo "${DIM}未检测到 docker：跳过沙箱部署（provider=local，L1 同机子进程）${RST}"
+    return 0
+  fi
+  [ "$provider" = "docker" ] || provider="local"
+  # 交互确认；CI/非交互可用 LOOMVEC_SANDBOX 旁路（1/y 启用，其余值跳过）
+  local GO=""
+  if [ -n "${LOOMVEC_SANDBOX:-}" ]; then
+    GO="$(trim "$LOOMVEC_SANDBOX")"
+    echo "${DIM}LOOMVEC_SANDBOX=${GO}（环境变量旁路交互确认）${RST}"
+  else
+    read -r -p "是否启用每用户容器沙箱隔离（runtime.provider=docker，docs/Research/01 P5.5a）？[y/N]（当前: ${provider}）：" GO
+    GO="$(trim "$GO")"
+  fi
+  if [[ ! "$GO" =~ ^[Yy] ]]; then
+    if [ "$provider" = "docker" ]; then
+      warn "保持 provider=docker：沙箱前置条件继续自检"
+    else
+      ok "保持 provider=local（L1，无容器依赖）；沙箱可随时重跑 ./deploy.sh 启用"
+      return 0
+    fi
+  else
+    # 写入 provider 与沙箱用 MCP 地址（host-gateway 可达宿主 api）
+    local API_PORT; API_PORT="$(load_api_port)"
+    python3 - "$CFG" "$API_PORT" <<'PY'
+import json, sys
+path, api_port = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    cfg = json.load(f)
+cfg.setdefault("runtime", {})["provider"] = "docker"
+cfg.setdefault("mcp", {})["url_sandbox"] = f"http://host.docker.internal:{api_port}/api/v1/mcp"
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+    ok "已写入 runtime.provider=docker 与 mcp.url_sandbox（改完需重启 agent 生效）"
+    provider="docker"
+  fi
+
+  [ "$provider" = "docker" ] || return 0
+  step "沙箱部署（镜像 / 网络 / 防火墙 / 预检）"
+
+  # 内核预检：landlock 要求 ≥ 5.13 且 seccomp 放行（moby 默认清单已放行）。
+  # 仅 Linux 有意义——macOS 的 uname -r 是 XNU 版本，比较结果是噪音
+  if [ "$(uname -s)" != "Linux" ]; then
+    warn "宿主为 $(uname -s)：跳过内核 landlock 预检（生产部署请在 Linux 上复核，≥ 5.13）"
+  else
+    local KVER KMAJ KMIN
+    KVER="$(uname -r)"; KMAJ="${KVER%%.*}"; KMIN="$(echo "${KVER#*.}" | cut -d. -f1)"
+    if [ "$((KMAJ * 100 + KMIN))" -lt 513 ]; then
+      warn "内核 ${KVER} < 5.13：容器内 dsh landlock 沙箱将不可用（F5 会直接报错而非降级）"
+    else
+      ok "内核 ${KVER} 满足 landlock 要求（≥ 5.13）"
+    fi
+  fi
+
+  # 镜像构建（SDK 版本单源于 services/agent/pyproject.toml；正则截止于版本
+  # 字符，不吞 TOML 行尾引号）+ 存在性自检
+  local SDK_VERSION
+  SDK_VERSION="$(python3 -c "import re;print(re.search(r'deepseek-harness-sdk==([\w.]+)', open('services/agent/pyproject.toml').read()).group(1))")"
+  step "构建沙箱镜像 loomvec/agent-sandbox:stable（deepseek-harness-sdk==${SDK_VERSION}）"
+  if docker build -q -f deploy/compose/sandbox/Dockerfile \
+      --build-arg "SDK_VERSION=${SDK_VERSION}" \
+      -t loomvec/agent-sandbox:stable deploy/compose/sandbox; then
+    ok "沙箱镜像就绪"
+  else
+    fail "沙箱镜像构建失败（网络或 Dockerfile 问题，见上方输出）"; exit 1
+  fi
+  docker image inspect loomvec/agent-sandbox:stable >/dev/null 2>&1 \
+    || { fail "镜像自检失败：loomvec/agent-sandbox:stable 不存在"; exit 1; }
+
+  # agent-sandbox 网络幂等保底（compose 声明仅供单源参考，栈不引用该网络）
+  local SUBNET
+  SUBNET="$(grep -E '^AGENT_SANDBOX_SUBNET=' deploy/compose/.env 2>/dev/null | cut -d= -f2)"
+  SUBNET="${SUBNET:-172.31.77.0/24}"
+  if docker network inspect agent-sandbox >/dev/null 2>&1; then
+    ok "网络 agent-sandbox 已存在"
+  else
+    docker network create --driver bridge --subnet "$SUBNET" agent-sandbox >/dev/null \
+      || { fail "创建 agent-sandbox 网络失败（子网 ${SUBNET} 可能与现有网络冲突，可在 deploy/compose/.env 调整）"; exit 1; }
+    ok "网络 agent-sandbox 已创建（${SUBNET}）"
+  fi
+
+  # 防火墙双链下发：先探测免密 sudo，失败则给出手动命令（不阻断部署）
+  if iptables -L DOCKER-USER -n >/dev/null 2>&1; then
+    deploy/compose/sandbox-firewall.sh "$SUBNET" "$(load_api_port)" && ok "防火墙双链已下发"
+  elif sudo -n iptables -L DOCKER-USER -n >/dev/null 2>&1; then
+    sudo deploy/compose/sandbox-firewall.sh "$SUBNET" "$(load_api_port)" && ok "防火墙双链已下发"
+  else
+    warn "无法免密下发防火墙（需要 root），请手动执行："
+    echo "    sudo deploy/compose/sandbox-firewall.sh ${SUBNET} $(load_api_port)"
+  fi
+
+  # api 监听自检（§6.5-3 部署前置）：沙箱 MCP 回调经网桥来向，回环监听不可用
+  if grep -q 'host="0.0.0.0"' services/api/src/loomvec/api/__main__.py; then
+    ok "api 监听 0.0.0.0（网桥来向可达）"
+  else
+    warn "services/api 启动入口未监听 0.0.0.0：沙箱经 host-gateway 将无法回调 MCP"
+  fi
+
+  warn "安全提示：docker 组身份 ≈ root（网关被 RCE 等价宿主失陷，docs/Research/01 §6.6）；"
+  warn "沙箱容器不挂 socket、不在 docker 组。防火墙规则重启后丢失，需重跑本脚本或定时重刷。"
+}
+
 # ---------------------------------------------------------------- 前置检查
 step "前置检查"
 [ -f "$EXAMPLE" ] || { fail "请在仓库根目录运行（缺少 ${EXAMPLE}）"; exit 1; }
@@ -271,6 +395,7 @@ with open(p, "w", encoding="utf-8") as f:
     f.write("\n")
 PY
   ok "已置 ai.mock=true（确定性本地供方，离线跑通全链路）"
+  setup_sandbox
   stamp_deploy
   maybe_start
   exit 0
@@ -394,5 +519,6 @@ else echo "  VLM        （未配置，image.caption_enabled 已置 false）"; f
 if [ -n "$CLIP_URL" ]; then echo "  CLIP       $CLIP_URL   $CLIP_MODEL   key=$(keydesc ai.clip.api_key "$CLIP_KEY")"
 else echo "  CLIP       （未配置，以文搜图自动降级）"; fi
 warn "改动了 AI 配置时，需重启 api/agent/worker 才生效（./dev.sh stop && ./dev.sh start）"
+setup_sandbox
 stamp_deploy
 maybe_start

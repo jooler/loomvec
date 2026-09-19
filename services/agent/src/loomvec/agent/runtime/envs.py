@@ -40,6 +40,8 @@ AGENTS_MD_WORKSPACE = """# {tenant_name} 智能助手工作环境
 
 ## 工作区规范
 - 交付物（报告、代码、表格等）写入 workspace/ 下对应子目录，不写入隐藏目录。
+- 项目目录统一放在 workspace/projects/ 下（如 projects/report-2026Q3/）；
+  会话绑定了项目目录时（提问注入的工作目录前缀），交付物必须写入该目录。
 - 不改动 .loomvec/ 与 dsh-home/ 下的任何文件。
 - 涉及破坏性 shell 操作（rm -rf 等）主动说明影响后再执行。
 """
@@ -87,6 +89,7 @@ def ensure_env_layout(
         dsh_home / "skills",
         dsh_home / "sessions",
         workspace,
+        workspace / "projects",  # 用户的项目目录区（P5.5a，§6.1）
         workspace / ".loomvec",
         workspace / ".dsh" / "skills",
     ):
@@ -105,8 +108,16 @@ def ensure_env_layout(
             encoding="utf-8",
         )
     # MCP 挂载行 + 会话编码恒重渲染（网关单源；profile patchReload=startup
-    # 随下次 spawn 生效）
+    # 随下次 spawn 生效）。mcp url 按 provider 选择：docker 沙箱经 host-gateway
+    # 回调 api（url_sandbox），local 直连回环（url）；docs/Research/01 §6.5-3。
+    # patch 的 sessions root 渲染零改动：路径恒等原则使其在容器内同样有效（F13）。
+    mcp = cfg.agent.mcp
+    mcp_url = (
+        mcp.url_sandbox
+        if cfg.agent.runtime.provider == "docker" and mcp.url_sandbox
+        else mcp.url
+    )
     (dsh_home / "cordis.patch.yml").write_text(
-        CORDIS_PATCH.format(sessions_root=str(dsh_home / "sessions"), mcp_url=cfg.agent.mcp.url),
+        CORDIS_PATCH.format(sessions_root=str(dsh_home / "sessions"), mcp_url=mcp_url),
         encoding="utf-8",
     )

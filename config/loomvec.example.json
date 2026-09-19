@@ -182,7 +182,17 @@
       "profile": "sdk",
       "idle_timeout_s": 900,
       "max_active_runtimes_per_node": 20,
-      "spawn_timeout_s": 60
+      "spawn_timeout_s": 60,
+      "sandbox": {
+        "image": "loomvec/agent-sandbox:stable",
+        "network": "agent-sandbox",
+        "cpus": 2.0,
+        "memory": "2g",
+        "pids_limit": 512,
+        "home_tmpfs": "128m",
+        "docker_host": "",
+        "per_env_uid": false
+      }
     },
     "model": {
       "provider": "deepseek-official",
@@ -216,6 +226,7 @@
     },
     "mcp": {
       "url": "http://127.0.0.1:38080/api/v1/mcp",
+      "url_sandbox": "http://host.docker.internal:38080/api/v1/mcp",
       "token_ttl_s": 3600
     },
     "retention_days": 365,

@@ -46,6 +46,8 @@ class AgentStatusOut(BaseModel):
 class AgentSessionCreate(BaseModel):
     title: str | None = None
     scope_space_ids: list[uuid.UUID] | None = None
+    # 会话绑定项目目录（workspace 相对路径，可空；P5.5a §6.1）
+    project_path: str | None = None
 
 
 class AgentSessionUpdate(BaseModel):
@@ -57,6 +59,7 @@ class AgentSessionOut(BaseModel):
     id: uuid.UUID
     env_id: uuid.UUID
     title: str
+    project_path: str = ""
     scope_space_ids: list[uuid.UUID]
     created_at: datetime
     last_message_at: datetime | None = None

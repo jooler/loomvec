@@ -63,6 +63,17 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 
 `./dev.sh start` 一条命令拉起全部：镜像检查（缺失自动拉取/构建）→ 基础设施 + 监控栈 → 数据库初始化 → api/agent/worker + 三个前端（幂等，已在跑的自动跳过）。交互终端下启动完成后会实时跟随 FastAPI 日志（Ctrl-C 退出跟踪，服务继续运行；`--no-follow` 关闭），随时可用 `./dev.sh logs [api|agent|worker|web|admin|ops|all]` 跟踪任一服务输出。
 
+### 智能体容器沙箱（可选，P5.5a）
+
+智能体对话默认 `provider: local`（同机子进程，L1，无容器依赖）。生产/多租户部署建议启用每用户容器沙箱（L2 硬隔离，[研究文档](docs/Research/01-阶段P5.5-每用户容器化隔离运行环境.md)）：在 `./deploy.sh` 中按提示选择启用（或手工把 `config/loomvec.json` 的 `agent.runtime.provider` 改为 `docker` 后重跑 `./deploy.sh`），脚本会完成：
+
+1. **沙箱镜像构建**：`loomvec/agent-sandbox:stable`（dsh 自包含 runtime + 常用工具链，独立于网关镜像），构建后存在性自检——镜像缺失时首问只会得到 `sandbox_unavailable`，不会静默降级 L1；
+2. **agent-sandbox 专用网络**：固定子网（`AGENT_SANDBOX_SUBNET`，默认 `172.31.77.0/24`），api/其他服务不加入；
+3. **防火墙双链下发**：`deploy/compose/sandbox-firewall.sh`（INPUT + DOCKER-USER）——沙箱仅可访问宿主 api 端口与互联网出口，东西向互访、RFC1918、云 metadata 全拒；需 root（iptables），免密 sudo 不可用时脚本会给出手动执行命令；
+4. **前置自检**：内核 ≥ 5.13（landlock）、api 监听覆盖网桥来向（0.0.0.0）、`bridge-nf-call-iptables=1`。
+
+注意事项：基础设施端口已全部收敛为 `127.0.0.1` 绑定（请勿改回；局域网其他设备将无法直连这些服务，远程访问请走 SSH 隧道或反向代理）；防火墙规则重启后丢失，需重跑 `./deploy.sh` 或定时重刷；沙箱挂载 env 目录带 `:z` SELinux 重标（非 SELinux 宿主为无操作）；docker 组身份 ≈ root（网关被 RCE 等价宿主失陷，容器沙箱不挂 socket、不在 docker 组）。CI/非交互环境可用 `LOOMVEC_SANDBOX=1 ./deploy.sh` 旁路沙箱交互确认（`0` 强制跳过）。
+
 | 服务 | 地址 | 说明 |
 |---|---|---|
 | 用户端 | http://localhost:35173 | dev 登录：任意用户名 |

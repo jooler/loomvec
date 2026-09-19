@@ -218,7 +218,38 @@ start_bg() { # $1=名称 $2=pid名 $3=端口 $4=命令...
   save_pid "$pid_name" $!
 }
 
+# P5.5a：config 里 provider=docker 时，沙箱网络/镜像预检（缺失则 fail-closed，
+# 避免首问时 spawn 报 sandbox_unavailable）；provider=local 零影响
+check_sandbox_prereqs() {
+  local provider image subnet
+  provider="$(python3 -c "
+import json
+try:
+    print((json.load(open('config/loomvec.json', encoding='utf-8')).get('runtime') or {}).get('provider') or 'local')
+except Exception:
+    print('local')
+")"
+  [ "$provider" = "docker" ] || return 0
+  command -v docker >/dev/null 2>&1 || { fail "provider=docker 但本机无 docker CLI"; exit 1; }
+  subnet="$(grep -E '^AGENT_SANDBOX_SUBNET=' deploy/compose/.env 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+  subnet="${subnet:-172.31.77.0/24}"
+  docker network inspect agent-sandbox >/dev/null 2>&1 || \
+    docker network create --driver bridge --subnet "$subnet" agent-sandbox >/dev/null \
+    || { fail "agent-sandbox 网络创建失败（子网 ${subnet} 冲突？可调整 deploy/compose/.env）"; exit 1; }
+  image="$(python3 -c "
+import json
+try:
+    print((((json.load(open('config/loomvec.json', encoding='utf-8')).get('runtime') or {}).get('sandbox')) or {}).get('image') or 'loomvec/agent-sandbox:stable')
+except Exception:
+    print('loomvec/agent-sandbox:stable')
+")"
+  docker image inspect "$image" >/dev/null 2>&1 \
+    || { fail "沙箱镜像 $image 不存在：请先运行 ./deploy.sh 构建沙箱镜像"; exit 1; }
+  ok "沙箱前置就绪（agent-sandbox 网络 + 镜像 $image）"
+}
+
 step "应用进程"
+check_sandbox_prereqs
 start_bg api    api    "$API_PORT"    uv run python -m loomvec.api --reload  # 端口单源 LOOMVEC_API_PORT
 start_bg agent  agent  "$AGENT_PORT"  uv run python -m loomvec.agent --reload  # P5 智能体网关（内网 only）
 external_worker=$(pgrep -f "loomvec.worker.celery_app" | head -1)

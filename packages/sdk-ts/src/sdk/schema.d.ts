@@ -2282,6 +2282,8 @@ export interface components {
         };
         /** AgentSessionCreate */
         AgentSessionCreate: {
+            /** Project Path */
+            project_path?: string | null;
             /** Scope Space Ids */
             scope_space_ids?: string[] | null;
             /** Title */
@@ -2325,6 +2327,11 @@ export interface components {
              * @default
              */
             preview: string;
+            /**
+             * Project Path
+             * @default
+             */
+            project_path: string;
             /** Scope Space Ids */
             scope_space_ids: string[];
             /** Stats */

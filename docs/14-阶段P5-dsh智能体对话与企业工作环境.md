@@ -103,15 +103,18 @@ dsh 是 DeepSeek 官方开源的 TypeScript agent harness（MIT，`everything-is
 │  · 引用聚合：MCP 检索结果(Redis) → citations 事件            │
 │  · 审批裁决：request_permission → 策略矩阵程序化应答          │
 │  · 保留清理 / 配额计量 / Prometheus 指标                     │
-│  · RuntimeProvider 抽象：local（P0）→ k8s Pod（P2）→ VM     │
-└────┬───────────────────────────────────────────────────────┘
+│  · RuntimeProvider 抽象：local（L1）→ docker 容器（L2）→ k8s Pod / VM    │
+└────┬────────────────────────────────────────────────────────┘
      │ spawn（env: LOOMVEC_AGENT_TOKEN=短时per-session JWT）
 ┌────▼───────────── per-user 隔离单元（env_id）───────────────┐
-│ 进程: dsh --profile sdk（独立 DSH_HOME + cwd）               │
+│ local：dsh --profile sdk 子进程（独立 DSH_HOME + cwd）        │
+│ docker：每 env 一容器 loomvec-agent-env-{env_id}，           │
+│   docker run -i stdio 桥，入口即 dsh --profile sdk           │
 │  ├── DSH_HOME/settings.yaml（模型/凭据/审批等 settings）       │
 │  ├── DSH_HOME/cordis.patch.yml（MCP loomvec 挂载行）          │
 │  ├── DSH_HOME/sessions/…/session.jsonl（消息事实源）         │
-│  └── workspace/（用户工作目录 + AGENTS.md，持久卷）           │
+│  └── workspace/（用户工作目录 + AGENTS.md，持久卷；           │
+│      docker 下唯一 bind mount 该 env 子目录，路径恒等）        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -128,7 +131,7 @@ dsh 是 DeepSeek 官方开源的 TypeScript agent harness（MIT，`everything-is
 | D4  | 网关用 **Python SDK** 驱动 dsh                                                | 与 loomvec 同栈；wheel 自带 Node 运行时，容器无需装 Node；TS 客户端作备选（若未来网关改 Node）                                                                                                             |
 | D5  | 会话**消息**以 dsh JSONL 为事实源，PG `agent_session` 只存 UI 元数据与摘要                 | 避免双写漂移，忠实于「历史由 dsh 接管」；dsh 缺失的重命名/删除/列表语义由元数据表补齐                                                                                                                             |
 | ~~D6~~ | （v1.2 废止）legacy/agent 租户级开关不再存在：极早期开发阶段不做并行与回退，dsh 是唯一对话引擎。回退诉求由「版本锁定 + CI 协议冒烟 + git 回滚」承担 | dsh 回退走部署级回滚，而非应用内双引擎                                                                                                                                   |
-| D7  | 隔离分级演进：P0 进程 + `workspace-write` 沙箱 → P2 per-user 容器 → P3 可选 microVM     | dsh 沙箱官方声明不是安全边界；容器化前只在内部/受控租户开放 agent 引擎                                                                                                                                    |
+| D7  | 隔离分级演进：`local`（进程 + `workspace-write` 沙箱）→ `docker`（每 env 一容器，已实施）→ k8s Pod → 可选 microVM | dsh 沙箱官方声明不是安全边界；生产/多租户部署启用 `docker`，受控内部试点可用 `local`                                                                    |
 | D8  | 工作环境身份 `env_id` 与用户账号解耦（映射表 `agent_environment`）                         | 企业交接 = 重绑映射，而非搬目录；账号销毁不连带销毁工作成果                                                                                                                                              |
 | D9  | 网关固定使用 `sdk` **profile（dsh-base 完整核心）**，不用 Python SDK 演示用的 `sdk-minimal` | `sdk-minimal` 是刻意裁剪的独立配置树（仅 bash+editor，无 settings/凭据/subagent/AGENTS.md 发现/compaction/**skills**）；`sdk` 继承 dsh-base 完整能力面（代码编辑、skills、AGENTS.md、compaction、subagent），见 §4.4 |
 
@@ -155,10 +158,11 @@ ${agent.storage_root}/envs/{env_id}/
 │   └── sessions/                    # 会话 JSONL 根（dsh 按 cwd 归一目录再分层）
 └── workspace/                       # 智能体 cwd：用户的工作文件、交付物
     ├── AGENTS.md                    # 项目级指令（用户角色/知识范围/引用规则，网关模板渲染）
+    ├── projects/                    # 用户的项目目录区（会话可绑定其中子目录作为工作目录）
     └── .dsh/skills/                 # 项目级 skills（用户/团队自定义，随工作区持久化）
 ```
 
-- 权限 `0700`、属主为 agent 运行账户；P2 容器化后每 env 独立 OS uid + 独立卷（PVC），实现文件系统级隔离。
+- 权限 `0700`、属主为 agent 运行账户。`runtime.provider=local` 时 dsh 以网关子进程直接读写该目录树；`runtime.provider=docker` 时容器内路径与宿主路径**恒等**（唯一 bind mount 为 env 子目录自身），因此 cordis.patch.yml 的 `root:`（会话持久化根，绝对路径）与网关 `transcript.py` 按 workspace 路径计算 `project_key` 定位 JSONL 的逻辑在两种 provider 下零改动。
 - 一个用户默认持有一个 env；`agent_environment` 表允许一用户多 env（如「日常」与「项目 X」）的扩展。
 
 
@@ -195,6 +199,8 @@ User(账号) ──当前持有──> agent_environment(env_id, 目录树, 会�
 
 ## 工作区规范
 - 交付物（报告、代码、表格等）写入 workspace/ 下对应子目录，不写入隐藏目录。
+- 项目目录统一放在 workspace/projects/ 下（如 projects/report-2026Q3/）；
+  会话绑定了项目目录时（提问注入的工作目录前缀），交付物必须写入该目录。
 - 不改动 .loomvec/ 与 dsh-home/ 下的任何文件。
 - 涉及破坏性 shell 操作（rm -rf 等）主动说明影响后再执行。
 ```
@@ -232,6 +238,7 @@ User(账号) ──当前持有──> agent_environment(env_id, 目录树, 会�
 ### 5.1 进程生命周期（RuntimeManager）
 
 - **惰性 spawn**：用户首个请求到达时，若该 env 无存活 runtime，则经 RuntimeProvider 启动：`DeepSeekHarness(cwd=workspace, dsh_home=dsh-home, profile="sdk")`，注入 `LOOMVEC_AGENT_TOKEN`（短时 per-session JWT）等环境变量；初始化参数（provider/model/maxTokens/reasoningEffort）来自 `agent.model` 配置与租户覆盖。
+- **容器形态（`runtime.provider=docker`，L2）**：网关经宿主 docker CLI 以 `docker run --rm -i` stdio 桥拉起沙箱容器（容器入口即 dsh，argv 经 SDK `_launch_args` 整体替换），容器生命周期 = runtime 生命周期，本节其余机制（惰性 spawn/复用/空闲回收/池上限）不变。容器按名 `loomvec-agent-env-{env_id}`，运行约束：`--user` 网关进程 uid:gid、`--cpus/--memory/--pids-limit/--ulimit nofile`、`no-new-privileges`、`--cap-drop ALL`、只读 rootfs、tmpfs `/tmp` 与 `$HOME`（noexec）、唯一 bind mount 为 env 子目录自身（路径恒等，§4.1）、`--network agent-sandbox` + `--add-host host.docker.internal:host-gateway`；模型 key/MCP token 经 `-e` 注入容器环境。spawn 前 `docker rm -f` 清理同名容器（驱逐/复活竞态兜底），terminate 在 SDK 回收梯之后按名强制清容器；网关启动与 reaper 循环对账销毁注册表之外的孤儿容器。daemon 不可达、镜像缺失、创建失败均以 `SandboxUnavailableError` fail-closed（SSE `error(code=sandbox_unavailable)`），不回退 local 子进程。
 - **复用**：同一 env 的多会话复用同一 runtime 进程（dsh 支持进程内多 session）；**同一会话严格串行**（上一个 prompt 未结束则 409/排队），规避单写者约束。
 - **空闲回收**：`session.status == idle` 持续 `idle_timeout_s`（默认 900s）后优雅关闭（`shutdown` → stdin-EOF → SIGTERM → SIGKILL 回收梯，SDK 自带）；回收后再来消息走 `session/resume`（协议自带完整日志回放，崩溃恢复同路径）。
 - **上限**：每节点 `max_active_runtimes`、每用户 `max_concurrent_streams`；超限排队或 429，指标暴露排队深度。
@@ -247,11 +254,12 @@ User(账号) ──当前持有──> agent_environment(env_id, 目录树, 会�
 | 级别  | Provider     | 形态                                                                                       | 适用阶段         |
 | --- | ------------ | ---------------------------------------------------------------------------------------- | ------------ |
 | L1  | `local`      | 同机子进程 + dsh `workspace-write` 沙箱 + 审批白名单                                                 | P0（dev/内部试点） |
-| L2  | `k8s`        | 每 env 一个 Pod（PVC 挂 env 目录树，独立 uid），dsh 跑在 Pod 内，sidecar 把 stdio JSON-RPC 桥成 WS/TLS 供网关驱动 | P2（生产默认）     |
+| L2  | `docker`     | 每 env 一个容器 = 一个 runtime（宿主机网关 + `docker run -i` stdio 桥，路径恒等挂载），落地研究见 [01-阶段P5.5](./Research/01-阶段P5.5-每用户容器化隔离运行环境.md) | P5.5a（已实施） |
+| L2' | `k8s`        | 每 env 一个 Pod（PVC 挂 env 目录树，独立 uid），dsh 跑在 Pod 内，sidecar 把 stdio JSON-RPC 桥成 WS/TLS 供网关驱动 | P2（生产默认）     |
 | L3  | `vm` / `e2b` | microVM（Firecracker）或 dsh 原生 E2B 远程沙箱（文件/shell 全进沙箱，注意需另做持久卷同步才能满足工作区持久化）                | P3+（高隔离诉求租户） |
 
 
-Provider 接口只暴露 `spawn(env, token_env) / io / terminate(env)`，网关其余逻辑（会话编排、SSE、引用、审批）不感知级别。
+Provider 接口只暴露 `spawn(env, token_env) / terminate(handle)`，网关其余逻辑（会话编排、SSE、引用、审批）不感知级别。spawn 失败以 `SandboxUnavailableError`（`runtime/provider.py`）向上抛出，编排层翻译为 SSE `error(code=sandbox_unavailable)` 收尾；docker provider 另提供 `reconcile(live_env_ids)`（孤儿容器对账，manager 启动与 reaper 周期调用，spawn 进行中的 env 计入存活集避免误删）。
 
 ### 5.3 对外 SSE 事件协议（`/agent/*` 新契约）
 
@@ -270,7 +278,7 @@ Provider 接口只暴露 `spawn(env, token_env) / io / terminate(env)`，网关�
 | `status`         | `{status: "running" \| "idle" \| "cancelled"}`                         | 轮次状态；`cancelled` 对应停止按钮                                                  |
 | `permission`     | `{request_id, tool, reason, options}`                                  | P2：审批卡片（桥接 `session/request_permission`），P0 阶段不产生                       |
 | `done`           | `{message_id, answer, citations, graph_evidence, usage}`               | 轮次结束（`usage` 为轮次汇总；`answer` 已做 `[n]` 越界剔除后处理，正则逻辑随链路迁入网关 `citations.py`）         |
-| `error`          | `{message, code}`                                                      | 失败（i18n 文案在 `agent.json`；v1.2 起 `chat.json` 已删除）                       |
+| `error`          | `{message, code}`                                                      | 失败（i18n 文案在 `agent.json`；v1.2 起 `chat.json` 已删除）。`code` 取值：`runtime_restarted`（runtime 被杀/崩溃）、`model_turn_error`、`sandbox_unavailable`（docker provider 下 daemon/镜像/网络不可用，fail-closed） |
 
 > dsh 事件映射依据（已在源码核实，`packages/llm/llm/src/types.ts:424-436`）：dsh 流式 delta 原生含 `block-start / text-delta / reasoning-delta / tool-call-delta / block-end / usage / finish`，网关只做改名与裁剪，不丢事件种类；`usage` 的 `cacheReadTokens / cacheWriteTokens / uncachedInputTokens` 由 dsh 的 deepseek 适配器从 DeepSeek 计费用量（`prompt_cache_hit_tokens` 等）归一化（`packages/llm/llm-deepseek/src/protocols/chat-completions/translate.ts:56`，messages 协议路径为 `protocols/messages/translate.ts:36`）。
 
@@ -305,6 +313,7 @@ Provider 接口只暴露 `spawn(env, token_env) / io / terminate(env)`，网关�
 ### 5.6 会话治理（补齐 dsh 缺口）
 
 - **列表/重命名**：PG `agent_session` 元数据为准（首问自动命名会话，逻辑沿用旧链路）。
+- **会话绑定项目目录（`project_path`）**：`agent_session.project_path` 存 workspace 相对路径（空 = workspace 根）；新建会话时校验（workspace 相对路径、不含 `..` 与隐藏段、目录自动创建）。dsh 的 `cwd` 是 runtime 级（env 级），按项目拆分 runtime 不成立——绑定目录经提问的 contentBlocks 前缀 text 块注入（「本次会话绑定的工作目录为 `projects/<name>/`…」，与历史重放前缀同一机制），约束交付物落点；目录规范同时固化在 workspace AGENTS.md（§4.3）。
 - **历史读取**：`GET /agent/sessions/{sid}/messages` 由网关解析该会话 JSONL（P0 配置 `compression: 'none'` 简化解析；zstd 帧格式已文档化，P1 再支持压缩以省空间）。只返回 user/assistant 文本块 + 工具调用摘要 + 引用快照，不透传内部事件。解析词汇表（已在 Python SDK 源码核实，`python/sdk/src/deepseek_harness/api.py:210-248` 的 `final_response` / `finish_reason` 为参考解析器）：assistant 消息事件 `{"type": "assistant/message", "data": {"message": {"content": [{type: "text"|"reasoning"|"image"|"tool-call"|"tool-result", ...}]}}}`，轮次终止 `turn/end`（`data.reason.kind` = `completed|max-tokens|error|…`），用户消息与工具事件按 `tool/call` → `tool/result` 配对；实现集中在网关单一模块 `transcript.py`（§15.1），隔离 dsh 会话格式变动面。
 - **删除**：软删元数据 + 会话目录改名归档；物理删除由保留清理任务执行（见下）。
 - **保留清理**：Celery beat 周期任务，按 `agent.retention_days` 清理超期已删会话目录与 Redis 残留；容量指标上报 Grafana。
@@ -342,7 +351,7 @@ Provider 接口只暴露 `spawn(env, token_env) / io / terminate(env)`，网关�
 
 ### 6.1 端点与工具
 
-`/api/v1/mcp`（streamable-http，`Authorization: Bearer <agent token>`）。工具全部**只读**：
+`/api/v1/mcp`（streamable-http，`Authorization: Bearer <agent token>`）。工具全部**只读**。网关渲染 `cordis.patch.yml` 时，MCP 地址按 `runtime.provider` 取值：`local` 取 `mcp.url`（回环直连），`docker` 取 `mcp.url_sandbox`（沙箱经 `host.docker.internal` host-gateway 回调宿主 api，要求 api 监听覆盖网桥来向）；patch 恒重渲染，切换 provider 无残留：
 
 
 | 工具                  | 参数                                                        | 返回                               | 说明                                                                          |
@@ -391,6 +400,7 @@ class AgentSession(Base):
     env_id: Mapped[str]         # FK agent_environment
     created_by_user_id: Mapped[str]            # 审计不变量：创建者
     title: Mapped[str]
+    project_path: Mapped[str]   # 会话绑定项目目录（workspace 相对路径，空 = workspace 根）
     scope_space_ids: Mapped[list]               # JSONB，语义同旧 chat_session
     last_message_at: Mapped[datetime | None]
     message_count: Mapped[int]
@@ -400,6 +410,7 @@ class AgentSession(Base):
 
 - 旧 `chat_session` / `chat_message`（v1.2）：**两表与其 ORM 模型已删除**（迁移 0005 重写移除建表、0006 删除），不做数据迁移与留存；JSONL 事实源格式属 dsh 内部契约（v0 无迁移承诺），保留旧表只有维护成本。
 - （v1.2）`QaSettings` 已删除；`AgentSettings` 为对话唯一配置；`system_config` 支持租户级 `agent.model.name` 覆盖（无 engine 开关）。
+- schema 由 `uv run python -m loomvec.api.init_db` 幂等初始化（`create_all` + 存量库增量补列清单，如 `agent_session.project_path` 的 `ADD COLUMN IF NOT EXISTS`）。
 
 ---
 
@@ -413,7 +424,7 @@ class AgentSession(Base):
 | 方法与路径                                                                         | 说明                                                                           |
 | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `GET /api/v1/agent/status`                                                    | 引擎可用性（enabled + runtime 健康 + 当前租户 engine 开关）                                 |
-| `GET/POST /api/v1/agent/sessions`                                             | 会话列表 / 新建（body: `{title?, scope_space_ids?}`）                                |
+| `GET/POST /api/v1/agent/sessions`                                             | 会话列表 / 新建（body: `{title?, scope_space_ids?, project_path?}`；返回条目含 `project_path`）                                |
 | `PATCH/DELETE /api/v1/agent/sessions/{sid}`                                   | 重命名、改 scope / 软删归档                                                           |
 | `GET /api/v1/agent/sessions/{sid}/messages`                                   | 历史（JSONL 解析产物）                                                               |
 | `POST /api/v1/agent/sessions/{sid}/messages`                                  | 提问 → SSE（§5.3 协议；body: `{question, attachment_ids?}`，长度上限 `agent.session.max_question_chars`） |
@@ -471,8 +482,9 @@ class AgentSession(Base):
 | --- | --- |
 | `src/agent/agent.ts`（适配层） | SSE 客户端（fetch+ReadableStream）+ 引用编号 `n→index` 归一；`ChatCitation`/`GraphEvidence` 类型单源于此（v1.2：`chat.ts` 已删除，assistant-ui 桥接留待 P1 评估） |
 | `src/components/assistant-ui/*`（新） | CLI 生成的基础件 + 定制：ToolUI（知识检索卡/编辑器卡/shell 卡）、Reasoning 块、Composer 附件、统计条 |
-| `src/pages/ChatPage.tsx` → 重构 | 保留三段式布局与引用渲染/`jumpToCitation`；消息区换 assistant-ui Thread；`citations`/`usage` 增量合并入 store |
+| `src/pages/ChatPage.tsx` → 重构 | 保留三段式布局与引用渲染/`jumpToCitation`；消息区换 assistant-ui Thread；`citations`/`usage` 增量合并入 store；新会话输入区支持绑定项目目录（可选，随创建会话提交 `project_path`），会话头部展示绑定目录徽标 |
 | `src/layouts/chat-sessions.tsx` | 数据源切 `useAgentSessions`；侧栏加「历史检索」入口（P1） |
+| `src/hooks/index.ts` | `useAgentSessions` 条目携带 `project_path` |
 | `src/pages/WorkspacePage.tsx`（新） | 工作区文件浏览/预览/下载（智能体产出物的用户入口） |
 | ~~会话引擎切换~~（v1.2 移除） | ChatPage 即智能体对话视图（单引擎，无切换）；`/agent/status` 仅用于服务不可用时的入口降级提示 |
 | i18n | `apps/web/src/i18n/locales/zh-CN/agent.json` 为对话文案唯一来源（v1.2：`chat.json` 已删除） |
@@ -490,11 +502,21 @@ class AgentSession(Base):
     "enabled": true,
     "storage_root": "/data/loomvec/agent-envs",
     "runtime": {
-      "provider": "local",            // local | k8s | e2b
+      "provider": "local",            // local | docker
       "profile": "sdk",
       "idle_timeout_s": 900,
       "max_active_runtimes_per_node": 20,
-      "spawn_timeout_s": 60
+      "spawn_timeout_s": 60,
+      "sandbox": {                    // runtime.provider=docker 时的容器参数（逐容器强制）
+        "image": "loomvec/agent-sandbox:stable",
+        "network": "agent-sandbox",
+        "cpus": 2.0,
+        "memory": "2g",
+        "pids_limit": 512,
+        "home_tmpfs": "128m",         // 容器内 $HOME（tmpfs，随容器丢弃）
+        "docker_host": "",            // 空 = 宿主默认 daemon；可指 rootless/remote context
+        "per_env_uid": false          // per-env uid + 共享组（P5.5b）
+      }
     },
     "model": {
       "provider": "deepseek-official",
@@ -514,14 +536,18 @@ class AgentSession(Base):
     },
     "runtime_initialize_timeout_s": 30,
     "sandbox": { "mode": "workspace-write" },
-    "mcp": { "url": "http://127.0.0.1:8000/api/v1/mcp", "token_ttl_s": 3600 },
+    "mcp": {
+      "url": "http://127.0.0.1:38080/api/v1/mcp",
+      "url_sandbox": "http://host.docker.internal:38080/api/v1/mcp",  // provider=docker 时渲染进 patch
+      "token_ttl_s": 3600
+    },
     "retention_days": 365,
     "handover": { "archive_history_default": false }
   }
 }
 ```
 
-- 环境变量（.env）只新增基础设施项：`LOOMVEC_AGENT_SERVICE_URL`、`LOOMVEC_AGENT_STORAGE_ROOT`（K8s 里挂 PVC 的路径）。
+- 环境变量（.env）只新增基础设施项：`LOOMVEC_AGENT_SERVICE_URL`、`LOOMVEC_AGENT_STORAGE_ROOT`（K8s 里挂 PVC 的路径）；`deploy/compose/.env` 另有沙箱项 `AGENT_SANDBOX_SUBNET`、`AGENT_SANDBOX_API_PORT`（防火墙脚本与 `agent-sandbox` 网络创建的单源引用）。
 - DB `system_config` 覆盖项：`agent.model.name`（租户模型策略）。（v1.2：`qa.engine` 开关已废止删除）
 - dsh 凭据：`DSH_HOME/.credentials.yaml` 由网关按租户模型策略渲染；企业可选把 provider baseURL 指向内部 OpenAI 兼容代理，统一管钥、计量与审计（loomvec `ai.llm` 已是 deepseek，天然同源）。
 
@@ -532,7 +558,9 @@ class AgentSession(Base):
 ## 11. 部署与开发环境
 
 - **镜像**：`services/agent` 基于 python:3.12-slim + `pip install deepseek-harness-sdk==<锁定版本>`（wheel 自带 Node 运行时与前端资产，无需系统 Node）；dsh SDK 版本**精确锁定**并在 CI 做协议冒烟（spawn → prompt → 断言事件序列）。
-- **compose**：新增 `agent` 服务 + 命名卷 `agent-envs`；`dev.sh` 增加 agent 启动/日志（tmp/dev-agent.log）。dev 模式支持 `ai.mock` 对应的假模型端点（本地 OpenAI 兼容 echo server），保证无外部 API key 也能跑通全链路。
+- **沙箱镜像**（`runtime.provider=docker`）：`deploy/compose/sandbox/Dockerfile` 独立构建 `loomvec/agent-sandbox:stable`——python:3.12-slim 基底 + `pip install deepseek-harness-sdk==<锁定版本>`（版本经构建参数单源于 `services/agent/pyproject.toml`）+ git/jq/ripgrep 等常用工具链；入口即 dsh，构建自检经 `bundled_runtime_path()` 校验原生 runtime 完整。`deploy.sh` 负责构建与存在性自检（镜像缺失时对话 fail-closed 返回 `sandbox_unavailable`，不静默降级 local）。
+- **compose**：基础设施端口全部 `127.0.0.1:` 绑定；声明 `agent-sandbox` 专用 bridge 网络（固定子网 `AGENT_SANDBOX_SUBNET`，默认 `172.31.77.0/24`，`.env` 可配；api/其他服务不加入，compose 栈不引用，`deploy.sh`/`dev.sh` 以 `docker network create` 幂等保底）；新增 `agent` 服务 + 命名卷 `agent-envs`；`dev.sh` 增加 agent 启动/日志（tmp/dev-agent.log），并在 `runtime.provider=docker` 时于启动前预检 `agent-sandbox` 网络与沙箱镜像。dev 模式支持 `ai.mock` 对应的假模型端点（本地 OpenAI 兼容 echo server），保证无外部 API key 也能跑通全链路。
+- **沙箱网络隔离**：`deploy/compose/sandbox-firewall.sh`（Linux + root，幂等下发，规则带 `loomvec-sbx` 注释标记）双链白名单——INPUT 链：沙箱网段仅放行宿主 api 端口（`AGENT_SANDBOX_API_PORT`）与其 ESTABLISHED 回包，其余 DROP；DOCKER-USER（FORWARD）链：仅放行 ESTABLISHED 回包与互联网出口，东西向（沙箱互访）、云 metadata、RFC1918 全 DROP。前置自检 `bridge-nf-call-iptables=1`，不满足拒绝下发。deploy.sh 按提示启用 docker provider 时自动构建镜像、建网络、下发防火墙（免密 sudo 不可用时输出手动命令），并预检内核 landlock（≥ 5.13）与 api 监听覆盖网桥来向（0.0.0.0）。
 - **Helm**：`deploy/k8s/loomvec/` 新增 `agent` Deployment（单副本起步 + env_id 一致性哈希分片扩容路径）、PVC 模板（L2 阶段改 per-env PVC）、ServiceMonitor/PrometheusRule；`api` 服务无变化。
 - **观测**：Grafana 面板（runtime 池、排队、token 用量、磁盘、轮次时延）；Loki 聚合 agent 服务日志。
 
@@ -545,13 +573,13 @@ class AgentSession(Base):
 
 | 项               | 措施                                                                    |
 | --------------- | --------------------------------------------------------------------- |
-| 多租户隔离           | env 目录 0700；L2 起 per-env 容器 + 独立 uid + PVC；网关全链路带 tenant 校验           |
+| 多租户隔离           | env 目录 0700（属主=网关运行账户）；`runtime.provider=docker` 时每 env 一容器、唯一 bind mount 为该 env 子目录（路径恒等）、统一网关 uid、cap-drop ALL + no-new-privileges + 只读 rootfs + tmpfs /tmp 与 $HOME；per-env 独立 uid（共享组 setgid + default ACL）为 P5.5b；网关全链路带 tenant 校验 |
 | 提示注入（知识库内容→智能体） | 知识工具只读且强制 scope；智能体对 loomvec 无任何写能力；AGENTS.md 声明"知识内容是数据不是指令"（模板补充该条） |
-| 凭据              | 模型 key 只存服务端 DSH_HOME（0600）；MCP token 短时 + JTI 失效；交接轮换                |
-| 网络出口            | L1 依赖沙箱 + 审批拒绝网络类工具；L2 Pod NetworkPolicy 仅放行 api/mcp 与模型端点            |
-| 审计              | 工具调用、审批决策、交接、删除全量 AuditLog；会话内容归企业所有（合规导出 P3）                         |
-| 容量              | JSONL 无限累积 → retention 任务 + 磁盘水位告警；单会话串行防写冲突                          |
-| 供应链             | dsh developer preview → 版本锁定 + CI 协议冒烟 + 升级变更单（README 明示破坏性变更政策）      |
+| 凭据              | 模型 key 只经运行期注入（local：子进程环境变量；docker：容器 `-e`），不落镜像/卷；MCP token 短时 + JTI 失效；交接轮换 |
+| 网络出口            | L1 依赖沙箱 + 审批拒绝网络类工具；L2 容器经 `agent-sandbox` 专用网络 + INPUT/DOCKER-USER 双链白名单（仅放 api 端口与互联网出口，东西向/RFC1918/云 metadata 全 DROP）+ 基础设施端口 127.0.0.1 绑定；K8s 形态替换为 Pod NetworkPolicy |
+| 审计              | 工具调用、审批决策、交接、删除全量 AuditLog；容器创建/销毁/孤儿回收入 agent 服务日志；会话内容归企业所有（合规导出 P3） |
+| 容量              | JSONL 无限累积 → retention 任务 + 磁盘水位告警；单会话串行防写冲突；容器逐 cpu/memory/pids/nofile 限额 |
+| 供应链             | dsh developer preview → 版本锁定 + CI 协议冒烟 + 升级变更单（README 明示破坏性变更政策）；沙箱镜像 SDK 版本与网关 pyproject 单源 |
 
 
 ---
@@ -567,6 +595,7 @@ class AgentSession(Base):
 | **P1 工作环境完整化** | 2 周    | WorkspacePage 文件面板；会话重命名/删除；统计条（缓存命中率/时延，对齐 dsh web UI）；todo/plan 面板；保留清理任务；FTS 历史检索；zstd 会话压缩支持；Prometheus/Grafana；admin 端 engine 开关页                                  | 用户可浏览/下载智能体产出物；统计条数字与模型计费口径一致（cache_hit_rate 抽查）；历史会话治理闭环；监控面板上线                                                     |
 | **P2 服务化加固**   | 3–4 周  | k8s provider（per-env Pod + PVC + sidecar 桥）；审批卡片 UI（request_permission 桥）；subagent 嵌套卡片；配额计量入租户账单；同 env 多会话并发（写租约自研）；zstd 会话压缩；agent 模式接入 evals/               | 生产租户灰度；审批链路 e2e；单节点百 env 容量压测通过                                                    |
 | **P3 企业生命周期**  | 2 周    | 交接 admin 流程（transfer + 归档选项）；合规导出；microVM/E2B 试点评估（旧 chat 链路已于 v1.2 移除，无下线工作）                                                             | 离职交接演练：重绑后新员工 5 分钟内可用全部工作区/历史/知识范围                               |
+| **P5.5a 容器沙箱 MVP**（已交付） | — | `DockerSandboxProvider`（宿主机网关 + `docker run -i` stdio 桥）、沙箱镜像独立构建与 deploy 构建步骤、`agent-sandbox` 网络与防火墙双链脚本、基础设施端口 127.0.0.1 绑定、孤儿容器 reconcile、`mcp.url_sandbox` 渲染、会话绑定项目目录（DB/API/前端）、沙箱单测 | 双用户并行对话互不可见；skills（企业 + 项目级）正常执行；会话历史跨容器生命周期无损（resume）；空闲回收后容器消失；断电重启 reconcile 正常 |
 
 
 **旧问答下线**（v1.2）：已在 P0 实施中一次性完成——legacy 代码、契约、数据表全部移除，无前置条件与观察期。
@@ -581,7 +610,7 @@ class AgentSession(Base):
 | 风险                                | 等级  | 缓解                                                            |
 | --------------------------------- | --- | ------------------------------------------------------------- |
 | dsh 0.1.x 破坏性变更（协议/会话格式 v0 无迁移承诺） | 高   | 版本锁定 + CI 协议冒烟 + 部署级回滚（v1.2：应用内无回退开关）；升级走独立变更单并全量回归；JSONL 解析集中在网关单一模块隔离变动面 |
-| L1 沙箱不是安全边界                       | 高   | P0/P1 仅内部或签约受控租户启用 agent 引擎；生产默认 L2 容器；破坏性操作默认拒绝              |
+| L1 沙箱不是安全边界                       | 高   | `local` 仅 dev/内部试点；多租户/生产部署启用 `docker` 容器 provider（硬边界）；破坏性操作默认拒绝              |
 | 回答风格漂移（agentic vs 旧 RAG 纪律）       | 中   | AGENTS.md 引用规范 + done 前统一 `[n]` 后处理 + evals 对比门禁              |
 | 同 env 并发写 / 多副本 API 下 runtime 归属  | 中   | 网关单副本起步；会话级串行；K8s 阶段按 env_id 哈希分片 + 租约（Redis lock）            |
 | 磁盘无限增长                            | 中   | retention 任务 + 水位告警 + zstd（P2）                                |
@@ -604,27 +633,33 @@ services/agent/                             # 新 uv workspace member（pyprojec
     ├── app.py                              # FastAPI 工厂（风格对齐 services/api/app.py）
     ├── config.py                           # AgentSettings：读 config/loomvec.json 的 agent 段
     ├── runtime/
-    │   ├── provider.py                     # RuntimeProvider 协议：spawn(env,token_env)/io/terminate(env)
+    │   ├── provider.py                     # RuntimeProvider 协议：spawn(env,token_env)/terminate(handle) + SandboxUnavailableError
     │   ├── local.py                        # L1 本地 provider（Python SDK 子进程）
-    │   └── manager.py                      # env→runtime 注册表、惰性 spawn（Redis 互斥）、空闲回收、并发闸
+    │   ├── docker.py                       # L2 容器 provider（docker run -i stdio 桥；路径恒等挂载、统一 uid、资源限额、reconcile）
+    │   └── manager.py                      # env→runtime 注册表、惰性 spawn（Redis 互斥）、空闲回收、并发闸、provider 工厂、孤儿对账
     ├── sessions/
-    │   ├── orchestrator.py                 # prompt/resume/cancel 编排；on_notification → SSE 事件泵
-    │   ├── transcript.py                   # JSONL 解析（唯一感知 dsh 会话格式的模块，词汇表见 §5.6）
+    │   ├── orchestrator.py                 # prompt/resume/cancel 编排；on_notification → SSE 事件泵；project_path 前缀注入
+    │   ├── transcript.py                   # JSONL 解析（唯一感知 dsh 会话格式的模块，词汇表见 §5.6；守门约束：按宿主 workspace 计算 project_key，路径恒等前提下零改动）
     │   └── usage.py                        # usage 折叠：轮次/会话统计 + cache_hit_rate（§5.8）
     ├── citations.py                        # Redis 旁路聚合 → citations 事件
     ├── approvals.py                        # §5.5 策略矩阵 → onRequestPermission 应答
     ├── attachments.py                      # 上传落盘 workspace/.loomvec/uploads/ + realpath 防穿越
     ├── sse.py                              # SSE 帧序列化（event:/data:，对齐平台既有 SSE 格式）
-    └── routes.py                           # 内部 REST /internal/agent/*（仅 services/api 可达）
+    └── routes.py                           # 内部 REST /internal/agent/*（仅 services/api 可达；会话创建校验 project_path）
 services/api/src/loomvec/api/
 ├── routes/agent.py                         # /api/v1/agent/* facade：httpx.stream → StreamingResponse 透传
 ├── routes/mcp.py                           # /api/v1/mcp：官方 mcp python-sdk（streamable-http），鉴权复用 identity
+├── init_db.py                              # 幂等建库：create_all + 存量库增量补列（§7）
 └── services/agent_tokens.py                # agent JWT 签发/校验（claims 见 §6.2；JTI 黑名单走 Redis）
-services/core/src/loomvec/core/db/models/agent.py    # AgentEnvironment / AgentSession + repos
+services/core/src/loomvec/core/db/models/agent.py    # AgentEnvironment / AgentSession（含 project_path）+ repos
+deploy/compose/
+├── compose.yaml                            # 基础设施端口 127.0.0.1 绑定；agent-sandbox 网络声明（固定子网）
+├── sandbox/Dockerfile                      # loomvec/agent-sandbox 镜像（pip 装 SDK + 原生 runtime，入口即 dsh）
+└── sandbox-firewall.sh                     # 沙箱双链防火墙（INPUT + DOCKER-USER，幂等下发与自检）
 apps/web/src/
 ├── agent/agent.ts                          # SSE 客户端 + assistant-ui ExternalStoreRuntime 适配器
 ├── components/assistant-ui/*               # CLI 生成 + 定制（ToolUI/Reasoning/Composer/统计条）
-└── pages/ChatPage.tsx · WorkspacePage.tsx
+└── pages/ChatPage.tsx · WorkspacePage.tsx  # ChatPage：新会话可选绑定项目目录，头部目录徽标
 ```
 
 ### 15.2 契约级实现要点
@@ -641,7 +676,7 @@ apps/web/src/
 
 | 层 | 内容 |
 | --- | --- |
-| 单测 | transcript.py 解析（fixture JSONL 快照）、usage 折叠与 cache_hit_rate、citations 聚合去重、approvals 矩阵、agent token 签发/校验/JTI |
+| 单测 | transcript.py 解析（fixture JSONL 快照）、usage 折叠与 cache_hit_rate、citations 聚合去重、approvals 矩阵、agent token 签发/校验/JTI、docker provider argv 组装与路径恒等断言（挂载/uid/资源限额/stdio 桥）与 fail-closed、envs.py 按 provider 渲染 MCP url、project_path 校验与 prompt 前缀注入 |
 | 集成（无外网） | dev 模式假模型端点（OpenAI 兼容 echo server）+ 真 dsh 二进制：spawn → prompt → 断言 SSE 事件序列 → 结束进程 → resume → 断言历史回放一致 |
 | 契约 | export_openapi 快照 diff；sdk-ts 类型编译通过 |
 | e2e（可选） | apps/web Playwright：新会话 → 提问（mock 检索固定 ref_items）→ 断言工具卡/引用跳转/附件上传/停止按钮 |

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Brain, ChevronDown, FileUp, Paperclip, Send, ShieldAlert, Square, Wrench, X } from 'lucide-react';
+import { Brain, ChevronDown, FileUp, FolderOpen, Paperclip, Send, ShieldAlert, Square, Wrench, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
@@ -67,6 +67,7 @@ export function ChatPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [scopeOverride, setScopeOverride] = useState<string[] | null>(null);
+  const [projectDir, setProjectDir] = useState(''); // 新会话绑定项目目录（P5.5a）
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const streamingRef = useRef(false);
@@ -167,7 +168,7 @@ export function ChatPage() {
       let sid = sessionId;
       if (!sid) {
         const resp = await api.POST('/api/v1/agent/sessions', {
-          body: { title: question.slice(0, 50) },
+          body: { title: question.slice(0, 50), project_path: projectDir.trim() || undefined },
         });
         const s = resp.data as unknown as { id?: string } | undefined;
         sid = s?.id;
@@ -294,6 +295,15 @@ export function ChatPage() {
         </h1>
         {sessionId && (
           <div className="flex items-center gap-2">
+            {!!currentSession?.project_path && (
+              <span
+                className="flex max-w-56 items-center gap-1 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+                title={t('projectBadgeTitle', { path: currentSession.project_path })}
+              >
+                <FolderOpen className="size-3 shrink-0" />
+                {currentSession.project_path}
+              </span>
+            )}
             <span className="shrink-0 text-sm text-muted-foreground">{t('scopeLabel')}</span>
             <MultiSelect
               value={scopeIds}
@@ -460,6 +470,25 @@ export function ChatPage() {
       {/* 输入区：附件 chips + 输入框 + 发送/停止 */}
       <div className="border-t bg-background px-4 py-3">
         <div className="mx-auto w-full max-w-3xl space-y-2">
+          {/* 新会话绑定项目目录（P5.5a）：交付物将约定写入该 workspace 子目录 */}
+          {!sessionId && !agentDisabled && (
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="chat-project-dir"
+                className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
+              >
+                <FolderOpen className="size-3" />
+                {t('projectLabel')}
+              </label>
+              <Input
+                id="chat-project-dir"
+                className="h-8 text-xs"
+                placeholder={t('projectPlaceholder')}
+                value={projectDir}
+                onChange={(e) => setProjectDir(e.target.value)}
+              />
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {attachments.map((a) => (

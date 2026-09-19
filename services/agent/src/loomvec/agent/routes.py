@@ -90,6 +90,7 @@ def _session_out(row: AgentSession) -> dict[str, Any]:
         "id": str(row.id),
         "env_id": str(row.env_id),
         "title": row.title,
+        "project_path": row.project_path or "",
         "scope_space_ids": [str(s) for s in row.scope_space_ids or []],
         "created_at": row.created_at,
         "last_message_at": row.last_message_at,
@@ -124,11 +125,33 @@ async def _own_env(
 class SessionCreate(BaseModel):
     title: str | None = None
     scope_space_ids: list[uuid.UUID] | None = None
+    project_path: str | None = None  # 绑定项目目录（workspace 相对路径，可空）
 
 
 class SessionUpdate(BaseModel):
     title: str | None = None
     scope_space_ids: list[uuid.UUID] | None = None
+
+
+def normalize_project_path(cfg: AgentRuntimeConfig, env_id: str, raw: str | None) -> str:
+    """项目目录入参校验（P5.5a §6.1）：workspace 相对路径、防穿越、目录可建。
+
+    返回规范化后的 POSIX 相对路径（空串 = workspace 根）；目录不存在则创建。
+    """
+    if raw is None:
+        return ""
+    rel = raw.strip().strip("/").replace("\\", "/")
+    if rel in ("", "."):
+        return ""
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." or p.startswith(".") for p in parts):
+        raise ValidationError("项目目录须为 workspace 下的相对路径，且不含 .. 与隐藏段")
+    target = cfg.workspace(env_id) / Path(*parts)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise ValidationError(f"项目目录创建失败：{e}") from e
+    return "/".join(parts)
 
 
 class QuestionIn(BaseModel):
@@ -166,6 +189,7 @@ async def list_sessions(
 
 @router.post("/sessions", status_code=201)
 async def create_session(
+    request: Request,
     body: SessionCreate | None = None,
     identity: InternalIdentity = Depends(_identity),
     session: AsyncSession = Depends(_session_ctx),
@@ -174,12 +198,17 @@ async def create_session(
     scope = body.scope_space_ids if body else None
     if scope:
         await _assert_member_spaces(session, user_id, scope)
+    cfg: AgentRuntimeConfig = request.app.state.agent_config
+    project_path = normalize_project_path(
+        cfg, str(env.id), body.project_path if body else None
+    )
     row = await AgentSessionRepo(session).create(
         id=uuid.UUID(new_logical_session_id()),
         env_id=env.id,
         created_by_user_id=user_id,
         tenant_id=env.tenant_id,
         title=(body.title if body and body.title else None) or "新会话",
+        project_path=project_path,
         scope_space_ids=[str(s) for s in scope] if scope else [],
     )
     return _session_out(row)
@@ -357,6 +386,7 @@ async def ask(
             scope_space_ids=[str(s) for s in (row.scope_space_ids or [])],
             question=question,
             attachments=attachments,
+            project_path=row.project_path or "",
         )
     orchestrator: PromptOrchestrator = request.app.state.orchestrator
 

@@ -63,6 +63,17 @@ If you skip `./deploy.sh` and run `./dev.sh start` directly, the script detects 
 
 `./dev.sh start` brings up everything in one command: image check (auto pull/build) → infrastructure + observability stack → database init → api/agent/worker + the three front-ends (idempotent; already-running components are skipped). On an interactive terminal it then tails the FastAPI log live (Ctrl-C stops following; services keep running; use `--no-follow` to opt out). `./dev.sh logs [api|agent|worker|web|admin|ops|all]` follows any service at any time.
 
+### Agent container sandbox (optional, P5.5a)
+
+Agent conversations default to `provider: local` (same-host subprocess, L1, no container dependency). For production / multi-tenant deployments, enable the per-user container sandbox (L2 hard isolation, [research doc](docs/Research/01-阶段P5.5-每用户容器化隔离运行环境.md)): opt in via the `./deploy.sh` prompt (or set `agent.runtime.provider` to `docker` in `config/loomvec.json` and rerun `./deploy.sh`). The script then:
+
+1. **Builds the sandbox image** `loomvec/agent-sandbox:stable` (self-contained dsh runtime + common toolchain, separate from the gateway image) and verifies its presence — with the image missing, the first question fails fast with `sandbox_unavailable` instead of silently degrading to L1;
+2. **Creates the dedicated `agent-sandbox` network** with a fixed subnet (`AGENT_SANDBOX_SUBNET`, default `172.31.77.0/24`); the api and other services never join it;
+3. **Installs the two-chain firewall** `deploy/compose/sandbox-firewall.sh` (INPUT + DOCKER-USER): sandboxes can only reach the host api port and the internet; east-west traffic, RFC1918, and cloud metadata are dropped (root required; if passwordless sudo is unavailable the script prints the manual command);
+4. **Runs preflight checks**: kernel ≥ 5.13 (landlock), api listening covers the bridge source (0.0.0.0), and `bridge-nf-call-iptables=1`.
+
+Notes: all infrastructure ports are now bound to `127.0.0.1` (do not revert; these services are unreachable from other LAN hosts — use an SSH tunnel or reverse proxy for remote access); firewall rules are lost on reboot — rerun `./deploy.sh` or refresh them periodically; sandbox env mounts carry the `:z` SELinux relabel (a no-op on non-SELinux hosts); docker group membership ≈ root (a compromised gateway equals a compromised host; sandbox containers mount no socket and hold no docker group). In CI / non-interactive shells, `LOOMVEC_SANDBOX=1 ./deploy.sh` bypasses the sandbox prompt (`0` forces skip).
+
 | Service | URL | Notes |
 |---|---|---|
 | Web (end users) | http://localhost:35173 | dev login: any username |
