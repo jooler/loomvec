@@ -138,7 +138,24 @@ export async function streamAgentAnswer(
     handlers.onError?.(detail);
     return;
   }
-  await pumpSse(resp.body, handlers);
+  // 终止帧（done/error）缺失 = 流被上游中途掐断；补一个 error，避免 UI 永远停在"思考中"
+  let terminated = false;
+  await pumpSse(resp.body, {
+    ...handlers,
+    onDone: (d) => {
+      terminated = true;
+      handlers.onDone?.(d);
+    },
+    onError: (m, code) => {
+      terminated = true;
+      handlers.onError?.(m, code);
+    },
+    onStatus: (st) => {
+      if (st === 'cancelled') terminated = true;
+      handlers.onStatus?.(st);
+    },
+  });
+  if (!terminated && !signal?.aborted) handlers.onError?.(t('agent:streamInterrupted'));
 }
 
 async function pumpSse(body: ReadableStream<Uint8Array>, handlers: StreamHandlers) {

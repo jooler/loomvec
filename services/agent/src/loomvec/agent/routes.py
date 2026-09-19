@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.agent.attachments import AttachmentError, resolve_attachment, store_attachment
-from loomvec.agent.config import AgentRuntimeConfig
+from loomvec.agent.config import AgentRuntimeConfig, load_llm_overrides
 from loomvec.agent.runtime.manager import RuntimeManager, new_logical_session_id
 from loomvec.agent.sessions.orchestrator import PromptContext, PromptOrchestrator
 from loomvec.agent.sessions.transcript import aggregate_transcript
@@ -478,6 +478,7 @@ async def ask(
             attachments=attachments,
             project_path=row.project_path or "",
         )
+        ctx.llm_base_url, ctx.llm_api_key = await load_llm_overrides(session)
     orchestrator: PromptOrchestrator = request.app.state.orchestrator
 
     async def _gen():

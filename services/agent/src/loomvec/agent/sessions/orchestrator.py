@@ -59,6 +59,8 @@ class PromptContext:
     question: str
     attachments: list[dict[str, Any]]  # resolve_attachment 产物
     project_path: str = ""  # 会话绑定项目目录（workspace 相对路径，空 = 根；P5.5a）
+    llm_base_url: str | None = None  # 运维端 DB 配置的 LLM 覆盖（空 = 用配置文件）
+    llm_api_key: str | None = None
 
 
 class PromptOrchestrator:
@@ -91,6 +93,7 @@ class PromptOrchestrator:
                 tenant_name=ctx.tenant_name,
                 user_display_name=ctx.user_display_name,
                 token=await self._issue_token(ctx),
+                llm=(ctx.llm_base_url, ctx.llm_api_key),
             )
         except SandboxUnavailableError as e:
             # fail-closed（docs/Research/01 §6.3-6）：沙箱不可用不回退 L1，
@@ -99,6 +102,18 @@ class PromptOrchestrator:
             yield sse_event(
                 "error",
                 {"message": f"沙箱不可用：{e}", "code": "sandbox_unavailable"},
+            )
+            yield sse_event("done", {"message_id": "", "answer": "", "citations": [],
+                                     "graph_evidence": [], "usage": {}, "finish_reason": "error"})
+            return
+        except Exception as e:
+            # 环境目录不可写 / runtime 拉起失败等：必须以 error+done 收尾，
+            # 否则 SSE 中途断开，前端得不到终止帧会一直停在"思考中"
+            logger.exception("runtime_spawn_failed", env_id=ctx.env_id)
+            yield sse_event(
+                "error",
+                {"message": f"智能体运行环境启动失败：{type(e).__name__}: {str(e)[:200]}",
+                 "code": "runtime_spawn_failed"},
             )
             yield sse_event("done", {"message_id": "", "answer": "", "citations": [],
                                      "graph_evidence": [], "usage": {}, "finish_reason": "error"})
@@ -234,6 +249,7 @@ class PromptOrchestrator:
         saw_first_assistant = False
         finish_reason: str | None = None
         error_seen: str | None = None
+        turn_error: dict[str, Any] = {}  # turn/end 携带的底层错误（如 MISSING_CREDENTIAL）
         started = time.monotonic()
 
         while True:
@@ -331,6 +347,8 @@ class PromptOrchestrator:
                 reason = data.get("reason") or {}
                 finish_reason = str(reason.get("kind") or "")
                 stats.turns += 1
+                if isinstance(reason.get("error"), dict):
+                    turn_error = reason["error"]
             elif etype in ("approval/asked", "approval/decided"):
                 logger.info(
                     "approval_event",
@@ -356,9 +374,13 @@ class PromptOrchestrator:
         answer = "".join(answer_parts)
         answer = strip_out_of_range_citations(answer, aggregator.citations)
         if error_seen:
-            yield sse_event(
-                "error", {"message": "运行时中断，请重试", "code": error_seen.split(":")[0]}
-            )
+            code = error_seen.split(":")[0]
+            message = "运行时中断，请重试"
+            if turn_error.get("message"):
+                # 透出底层真实原因（如未配置模型 API Key），避免前端只见笼统文案
+                message = f"模型调用失败：{str(turn_error['message'])[:300]}"
+                code = str(turn_error.get("code") or code)
+            yield sse_event("error", {"message": message, "code": code})
         usage_payload = stats.usage.to_event(stats.ttft_ms)
         usage_payload["turns"] = stats.turns
         yield sse_event(
