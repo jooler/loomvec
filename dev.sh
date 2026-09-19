@@ -27,6 +27,8 @@ LOG_DIR="$ROOT/tmp"; PID_FILE="$LOG_DIR/dev.pids"; mkdir -p "$LOG_DIR"
 DEPLOY_STAMP="$LOG_DIR/loomvec-deployed.stamp"  # ./deploy.sh 成功完成时写入；缺失则 dev.sh 先拉起部署
 COMPOSE="docker compose -f deploy/compose/compose.yaml --profile observability"
 export PYTHONUNBUFFERED=1  # uvicorn/celery 日志实时落盘，tail 即时可见
+# 智能体 env 根目录：开发默认落仓库内 tmp/（配置默认 /data/... 在开发机通常不可写）；显式 export 可覆盖
+export LOOMVEC_AGENT_STORAGE_ROOT="${LOOMVEC_AGENT_STORAGE_ROOT:-$ROOT/tmp/agent-envs}"
 
 # 服务端口单源 .env（LOOMVEC_API_PORT/WEB/ADMIN/OPS_PORT；缺省 38080/35173/35174/35175）
 load_env_var() {  # load_env_var KEY DEFAULT —— 从仓库根 .env 读取（存在时）

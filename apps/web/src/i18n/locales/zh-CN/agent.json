@@ -14,6 +14,7 @@
   "updateSessionFailed": "会话更新失败",
   "sessionCreateFailed": "会话创建失败",
   "requestFailedStatus": "请求失败（HTTP {{status}}）",
+  "streamInterrupted": "回答被意外中断，请重试",
   "generateFailed": "生成失败",
   "generateFailedRetry": "生成失败，请重试",
   "cancelFailed": "停止请求失败",

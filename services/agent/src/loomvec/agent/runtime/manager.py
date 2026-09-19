@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -57,6 +58,7 @@ class ManagedRuntime:
     physical_sessions: dict[str, str] = field(default_factory=dict)
     prompt_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     cancelled: bool = False  # 最近一次 terminate 的原因标记（SSE 终态判定）
+    llm: tuple[str | None, str | None] = (None, None)  # spawn 时注入的 LLM 覆盖（变更则重建）
 
     def touch(self, running: bool) -> None:
         self.last_active_at = time.monotonic()
@@ -87,7 +89,13 @@ class RuntimeManager:
     # ---------- spawn / terminate ----------
 
     async def get_or_spawn(
-        self, env_id: str, *, tenant_name: str, user_display_name: str, token: str
+        self,
+        env_id: str,
+        *,
+        tenant_name: str,
+        user_display_name: str,
+        token: str,
+        llm: tuple[str | None, str | None] = (None, None),
     ) -> ManagedRuntime:
         """取活 runtime 或启动新进程（env 目录渲染 + token 注入）。
 
@@ -96,7 +104,10 @@ class RuntimeManager:
         """
         existing = self._runtimes.get(env_id)
         if existing is not None:
-            return existing
+            if existing.llm == llm or existing.prompt_lock.locked():
+                return existing
+            # 运维端改了 LLM 地址/密钥：空闲 runtime 重建以应用新凭证（进行中的轮次不打断）
+            await self.terminate(env_id, reason="llm_config_changed")
         lock = self._spawn_locks.setdefault(env_id, asyncio.Lock())
         async with lock:
             existing = self._runtimes.get(env_id)
@@ -115,8 +126,11 @@ class RuntimeManager:
             env_layout.ensure_env_layout(
                 self._cfg, env_id, tenant_name=tenant_name, user_display_name=user_display_name
             )
-            handle = await self._provider.spawn(self._cfg, env_id, {"LOOMVEC_AGENT_TOKEN": token})
-            runtime = ManagedRuntime(env_id=env_id, handle=handle)
+            cfg = dataclasses.replace(
+                self._cfg, llm_base_url_override=llm[0], llm_api_key_override=llm[1]
+            )
+            handle = await self._provider.spawn(cfg, env_id, {"LOOMVEC_AGENT_TOKEN": token})
+            runtime = ManagedRuntime(env_id=env_id, handle=handle, llm=llm)
             self._runtimes[env_id] = runtime
             logger.info("runtime_registered", env_id=env_id, active=len(self._runtimes))
             return runtime

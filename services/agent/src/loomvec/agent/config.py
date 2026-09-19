@@ -19,6 +19,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from loomvec.core.config import AgentSettings, Settings
 
 
@@ -28,6 +31,10 @@ class AgentRuntimeConfig:
 
     settings: Settings
     agent: AgentSettings
+    # 运维端「AI 供方配置」写入 system_config（DB），优先于 config/loomvec.json；
+    # 由 routes 在提问时读出，manager spawn 时经 dataclasses.replace 注入
+    llm_base_url_override: str | None = None
+    llm_api_key_override: str | None = None
 
     @property
     def storage_root(self) -> Path:
@@ -64,14 +71,29 @@ class AgentRuntimeConfig:
 
     @property
     def llm_base_url(self) -> str | None:
-        return self.settings.ai.llm.base_url
+        return self.llm_base_url_override or self.settings.ai.llm.base_url
 
     @property
     def llm_api_key(self) -> str | None:
-        return self.settings.ai.llm.api_key
+        return self.llm_api_key_override or self.settings.ai.llm.api_key
 
 
 def load_agent_config() -> AgentRuntimeConfig:
     from loomvec.core.config import get_app_config, get_settings
 
     return AgentRuntimeConfig(settings=get_settings(), agent=get_app_config().agent)
+
+
+async def load_llm_overrides(session: AsyncSession) -> tuple[str | None, str | None]:
+    """读运维端写入的 ai.llm.base_url / ai.llm.api_key（DB 有非空值即覆盖文件配置）。"""
+    from loomvec.core.db.models import SystemConfig
+
+    rows = (
+        await session.execute(
+            select(SystemConfig).where(
+                SystemConfig.key.in_(("ai.llm.base_url", "ai.llm.api_key"))
+            )
+        )
+    ).scalars().all()
+    vals = {r.key: (r.value.strip() if isinstance(r.value, str) else "") for r in rows}
+    return vals.get("ai.llm.base_url") or None, vals.get("ai.llm.api_key") or None
