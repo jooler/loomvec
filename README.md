@@ -42,7 +42,7 @@ LoomVec is a multi-tenant, self-hostable knowledge platform for enterprises: doc
 | `apps/admin` | Platform admins | Tenants, users, spaces governance, review, pipelines, open platform, config, audit |
 | `apps/ops` | Content operations | Public knowledge spaces, user groups, group-based visibility |
 
-Open API: contract-first OpenAPI → generated TypeScript SDK (`packages/sdk-ts`, hand-written client types are forbidden); API keys, OAuth 2.0, and webhook subscriptions for third-party integrations.
+Open API: contract-first OpenAPI → generated TypeScript SDK (`packages/sdk-ts`, hand-written client types are forbidden); API keys, OAuth 2.0, and webhook subscriptions for third-party integrations. Self-hosted MinerU parsing is additionally exposed via a **MinerU-official-compatible API** (`/api/v4`, mineru.net Precise Parsing API endpoints & envelope — point existing MinerU integrations at LoomVec and swap the token; see `docs/15`).
 
 ## Documentation
 

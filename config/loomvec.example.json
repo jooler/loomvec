@@ -48,7 +48,8 @@
   "mineru": {
     "base_url": "http://localhost:38000",
     "backend": "pipeline",
-    "timeout_seconds": 1800.0
+    "timeout_seconds": 1800.0,
+    "compat_enabled": true
   },
   "search": {
     "default_top_k": 10,

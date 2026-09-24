@@ -22,6 +22,7 @@ from loomvec.api.ratelimit import RateLimitMiddleware
 from loomvec.api.routes import agent as agent_routes
 from loomvec.api.routes import graph as graph_routes
 from loomvec.api.routes import mcp as mcp_routes
+from loomvec.api.routes import mineru_compat as mineru_compat_routes
 from loomvec.api.routes.admin import admin_api_router
 from loomvec.api.routes.api_keys import router as api_keys_router
 from loomvec.api.routes.assets import router as assets_router
@@ -180,6 +181,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_api_router)  # P4-API 管理 API 域
     app.include_router(oauth_router)  # P4-API-07 OAuth 授权码流程
     app.include_router(oidc_router)  # P4-API-06 OIDC SSO
+    # MinerU 官方 API 兼容层（/api/v4，mineru.net 精准解析 API 同构；不出现在
+    # 本平台 OpenAPI 契约/SDK 中——它是外部 MinerU 生态的兼容面，非 loomvec API）
+    mineru_compat_routes.register_mineru_compat_exception_handler(app)
+    if settings.mineru.compat_enabled:
+        app.include_router(mineru_compat_routes.router)
     auth_module.register_auth_routes(app, settings)
 
     @app.get("/metrics", include_in_schema=False)

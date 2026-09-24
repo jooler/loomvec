@@ -42,7 +42,7 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 | `apps/admin` | 平台管理员 | 租户、用户、空间治理、审核、管线、开放平台、系统配置、审计 |
 | `apps/ops` | 内容运营 | 公共知识空间、用户分组、分组可见性 |
 
-开放 API：契约先行，OpenAPI → 生成 TypeScript SDK（`packages/sdk-ts`，禁止手写接口类型）；第三方集成走 API Key、OAuth 2.0 与 Webhook 订阅。
+开放 API：契约先行，OpenAPI → 生成 TypeScript SDK（`packages/sdk-ts`，禁止手写接口类型）；第三方集成走 API Key、OAuth 2.0 与 Webhook 订阅。自建 MinerU 解析能力另经 **MinerU 官方 API 兼容层**（`/api/v4`，与 mineru.net 精准解析 API 同构——既有 MinerU 集成把地址指向 LoomVec、token 换成平台凭证即可迁移，见 `docs/15`）。
 
 ## 文档
 

@@ -119,6 +119,8 @@ class MineruSettings(BaseModel):
     # 大 PDF 首次/冷启动解析可能超过 10 分钟（模型加载 + 版面推理）
     timeout_seconds: float = 1800.0
     backend: Literal["pipeline", "vlm-transformers", "vlm-vllm-engine"] = "pipeline"
+    # 是否对外暴露 MinerU 官方 API 兼容层（/api/v4，mineru.net 精准解析 API 同构）
+    compat_enabled: bool = True
 
 
 class AiProviderConfig(BaseModel):
