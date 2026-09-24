@@ -1,4 +1,9 @@
-"""P1-API-04 API Key 基础版：签发/列表/吊销（scopes 仅 read/write 两类）。"""
+"""P1-API-04 API Key 基础版：签发/列表/吊销（scopes 仅 read/write 两类）。
+
+签发语义（P5 起）：用户级身份（JWT/OAuth 令牌）调用即「为我签发」——
+新 Key 绑定 `user_id`，认证后走用户语义（PAT，见 identity._identity_from_user_bound_key）；
+租户级 Key（X-API-Key 身份）签发的仍是应用级 Key（user_id 空，租户兜底鉴权）。
+"""
 
 from __future__ import annotations
 
@@ -48,6 +53,7 @@ class ApiKeyOut(BaseModel):
     expires_at: datetime | None
     created_at: datetime
     last_used_at: datetime | None
+    user_id: uuid.UUID | None = None  # 非空 = 绑定用户的 PAT（用户语义鉴权）
 
 
 class ApiKeyCreatedOut(ApiKeyOut):
@@ -63,6 +69,7 @@ def _out(k: ApiKey) -> ApiKeyOut:
         expires_at=k.expires_at,
         created_at=k.created_at,
         last_used_at=k.last_used_at,
+        user_id=k.user_id,
     )
 
 
@@ -74,6 +81,11 @@ async def create_api_key(
 ) -> ApiKeyCreatedOut:
     raw, key_hash = generate_api_key()
     tenant_uuid = uuid.UUID(identity.tenant_id) if identity.tenant_id else None
+    # 用户级身份调用 = 「为我签发」：Key 绑定签发者，认证后走用户语义（PAT）；
+    # X-API-Key（租户级）身份签发保持应用级 Key 语义（user_id 空）
+    bound_user_id = (
+        uuid.UUID(identity.user_id) if not identity.user_id.startswith("apikey:") else None
+    )
     key = ApiKey(
         tenant_id=tenant_uuid,
         name=body.name,
@@ -85,6 +97,7 @@ async def create_api_key(
             if body.expires_in_seconds
             else None
         ),
+        user_id=bound_user_id,
     )
     session.add(key)
     await session.commit()

@@ -131,6 +131,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=settings)  # P4-INF-04 全局限流
     app.add_middleware(RequestIDMiddleware)
+    # CORS 白名单（P5 开放服务基础设施）：默认空 = 不挂载，行为与未配置一致；
+    # dev_mode 未显式配置时兜底放行 localhost 正则（本地第三方 dev 联调，含
+    # InkCop 等 desktop dev server）。置于最外层：OPTIONS 预检直接短路返回，
+    # 不进入限流与路由鉴权（预检请求本就不携带凭据）。
+    _cors_origins = settings.security.cors_allow_origins
+    _cors_regex = settings.security.cors_allow_origin_regex or (
+        r"^http://localhost:\d+$" if settings.auth.dev_mode else None
+    )
+    if _cors_origins or _cors_regex:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_cors_origins,
+            allow_origin_regex=_cors_regex,
+            # 凭据全部在 header（API Key / JWT），不使用 Cookie；同时避免
+            # allow_credentials 与正则白名单的非法组合（浏览器拒绝）
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+            allow_headers=["Authorization", "X-API-Key", "Content-Type", "X-Request-Id"],
+            # CORS 默认只暴露简单响应头：限流提示与排障依赖这两个头可读
+            expose_headers=["X-RateLimit-Limit", "X-Request-Id"],
+            max_age=settings.security.cors_max_age_seconds,
+        )
 
     register_exception_handlers(app)
 

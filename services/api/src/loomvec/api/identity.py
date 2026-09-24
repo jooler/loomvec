@@ -1,7 +1,8 @@
 """P1/P2 身份解析（deps 的职责切片）：API Key 认证、dev JWT 用户落库、scope 校验。
 
 - API Key（P1-API-04）：`X-API-Key: lv-...` → sha256 查库 → 过期校验 → Redis 固定
-  窗口限流；scopes 即 read/write 两类；
+  窗口限流；scopes 即 read/write 两类；绑定用户的 Key（PAT，user_id 非空）按
+  绑定用户派生身份（用户语义：空间列表/公共空间/聚合检索可用）；
 - dev JWT（P2）：首次请求 get_or_create User（挂种子租户）并加入默认空间为 editor
   （P1 单空间行为连续性），Identity.user_id 此后为 DB 用户 ID；DB 不可用时降级
   为无状态身份（仅 /me 等无库接口可用）；
@@ -61,7 +62,11 @@ def hash_api_key(raw: str) -> str:
 async def identity_from_api_key(
     raw_key: str, session: AsyncSession, redis: aioredis.Redis
 ) -> Identity:
-    """API Key → Identity：哈希查库、过期/吊销校验、固定窗口限流、更新 last_used。"""
+    """API Key → Identity：哈希查库、过期/吊销校验、固定窗口限流、更新 last_used。
+
+    - 租户级 Key（user_id 为空）：`apikey:<key_id>` 身份，按租户鉴权（上限 editor）；
+    - 绑定用户的 Key（PAT，user_id 非空）：走用户语义身份（_identity_from_user_bound_key）。
+    """
     key = (
         await session.execute(
             select(ApiKey).where(
@@ -84,12 +89,57 @@ async def identity_from_api_key(
     key.last_used_at = datetime.now()
     await session.commit()
 
+    if key.user_id is not None:
+        return await _identity_from_user_bound_key(key, session)
     return Identity(
         user_id=f"apikey:{key.id}",
         username=key.name,
         tenant_id=str(key.tenant_id) if key.tenant_id else None,
         roles=("api_key",),
         scopes=tuple(key.scopes or []),
+    )
+
+
+async def _identity_from_user_bound_key(key: ApiKey, session: AsyncSession) -> Identity:
+    """绑定用户的 API Key（PAT）→ 用户语义 Identity。
+
+    - 身份字段取自绑定用户（存在性 × 未禁用校验），平台角色单源 DB
+      （与 dev JWT 的 resolve_user_row 合并口径一致）；
+    - scopes = key 声明 scopes ∩ 用户平台角色派生 scopes：PAT 只能收紧
+      read/write 基础面，admin 面不随 PAT 开放（管理域仍走平台 JWT）；
+    - 后续鉴权全部走用户语义：空间成员关系、公共空间链接、聚合检索与
+      普通 JWT 用户同路（deps.resolve_space_access 不再进租户兜底分支）。
+    """
+    from loomvec.api.deps import scopes_for_roles  # 延迟导入：deps 反向依赖本模块
+
+    user = (
+        await session.execute(select(User).where(User.id == key.user_id, User.deleted_at.is_(None)))
+    ).scalar_one_or_none()
+    if user is None or user.status == UserStatus.DISABLED:
+        raise UnauthenticatedError(reason="API Key 绑定用户不可用")
+    roles = tuple(
+        (
+            await session.execute(
+                select(Role.code)
+                .join(UserRole, UserRole.role_id == Role.id)
+                .where(
+                    UserRole.user_id == user.id,
+                    Role.is_platform_role.is_(True),
+                    Role.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    derived = scopes_for_roles(roles)
+    scopes = tuple(s for s in (key.scopes or []) if s in derived)
+    return Identity(
+        user_id=str(user.id),
+        username=user.username,
+        tenant_id=str(user.tenant_id) if user.tenant_id else None,
+        roles=roles,
+        scopes=scopes,
     )
 
 

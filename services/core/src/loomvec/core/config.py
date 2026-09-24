@@ -473,12 +473,26 @@ class AuthSettings(BaseModel):
 
 
 class SecuritySettings(BaseModel):
-    """P4-INF-04 安全加固：全局限流（fail-open）、密钥管理约定见 api/ratelimit.py。"""
+    """P4-INF-04 安全加固：全局限流（fail-open）、密钥管理约定见 api/ratelimit.py。
+
+    CORS 白名单（P5 开放服务基础设施）：默认空 = 不挂 CORS 中间件，行为与
+    未配置时完全一致（多租户平台默认收紧，开放由部署方显式决定）。
+    **与反向代理两层不叠加**：实例位于统一处理 CORS 的网关（nginx/ingress）
+    之后时应用层配置留空——两层同时注入 Access-Control-Allow-Origin 会被
+    浏览器判为非法（重复头）。
+    """
 
     rate_limit_enabled: bool = True
     rate_limit_per_min: int = 300
     # 是否拒绝无 Token 的匿名写流量（/healthz、/metrics、/readyz 除外）
     anonymous_write_allowed: bool = False
+    # 显式来源白名单（如 ["https://inkcop.example.com"]）；空 = 关闭 CORS
+    cors_allow_origins: list[str] = Field(default_factory=list)
+    # 正则白名单（Starlette CORSMiddleware 原生支持），用于端口不确定的本地
+    # dev 联调；auth.dev_mode 且未显式配置时由 app.py 兜底 ^http://localhost:\d+$
+    cors_allow_origin_regex: str | None = None
+    # 预检缓存时长（减少 OPTIONS 往返）
+    cors_max_age_seconds: int = 3600
 
 
 class AppConfig(BaseModel):

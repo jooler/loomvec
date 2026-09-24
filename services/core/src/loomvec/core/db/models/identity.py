@@ -161,7 +161,12 @@ class AuditLog(UuidPkMixin, TenantMixin, TimestampMixin, Base):
 
 
 class ApiKey(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """API Key 骨架（P4 实现签发/校验，P0 先落表结构预留）。"""
+    """API Key（P4 实现签发/校验）。
+
+    user_id 为空 = 租户级 Key（默认，应用级集成，空间权限上限 editor）；
+    非空 = 绑定用户的 PAT：认证后走用户语义（identity.identity_from_api_key
+    按该用户派生身份），用户空间列表/公共空间/聚合检索自然可用。
+    """
 
     __tablename__ = "api_key"
 
@@ -171,3 +176,6 @@ class ApiKey(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
     rate_limit_per_min: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
+    )

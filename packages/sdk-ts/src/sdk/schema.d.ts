@@ -2461,6 +2461,8 @@ export interface components {
             rate_limit_per_min: number;
             /** Scopes */
             scopes: string[];
+            /** User Id */
+            user_id?: string | null;
         };
         /** ApiKeyOut */
         ApiKeyOut: {
@@ -2484,6 +2486,8 @@ export interface components {
             rate_limit_per_min: number;
             /** Scopes */
             scopes: string[];
+            /** User Id */
+            user_id?: string | null;
         };
         /**
          * AssetCopyRequest

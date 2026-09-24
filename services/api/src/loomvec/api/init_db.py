@@ -51,6 +51,14 @@ async def _ensure_extensions(engine: AsyncEngine) -> None:
 _ADDITIVE_COLUMNS: list[tuple[str, str]] = [
     # P5.5a：会话绑定项目目录（docs/Research/01 §6.1）
     ("agent_session", "ADD COLUMN IF NOT EXISTS project_path VARCHAR(512) NOT NULL DEFAULT ''"),
+    # API Key 绑定用户（PAT）：非空即按用户语义鉴权。新库由 create_all 建全
+    # （含 FK/索引）；既有库补列 + 索引，FK 省略（列可空，历史行全空）
+    ("api_key", "ADD COLUMN IF NOT EXISTS user_id UUID"),
+]
+
+# 既有库的增量补索引（幂等；须在对应补列之后执行）
+_ADDITIVE_INDEXES: list[str] = [
+    "CREATE INDEX IF NOT EXISTS ix_api_key_user_id ON api_key (user_id)",
 ]
 
 
@@ -58,6 +66,8 @@ async def _ensure_additive_columns(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         for table, ddl in _ADDITIVE_COLUMNS:
             await conn.exec_driver_sql(f"ALTER TABLE {table} {ddl}")
+        for ddl in _ADDITIVE_INDEXES:
+            await conn.exec_driver_sql(ddl)
 
 
 async def _ensure_age_graph(engine: AsyncEngine) -> bool:

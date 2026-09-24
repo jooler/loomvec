@@ -87,14 +87,20 @@ def decide_asset_visibility(
 
 @dataclass(frozen=True)
 class SpaceAccess:
-    """通过校验后的空间访问上下文（space + 成员行）。"""
+    """通过校验后的空间访问上下文（space + 成员行）。
+
+    member 为 None 表示 API Key 身份的租户级兜底（deps.resolve_space_access）：
+    无成员行，权限上限 editor——role 据此返回 EDITOR，消费方无需各自判空
+    （检索 _resolve_scope / 资产列表 include_unreviewed 等此前直接取 .role）。
+    """
 
     space: Space
-    member: SpaceMember
+    member: SpaceMember | None
 
     @property
     def role(self) -> SpaceRole:
-        return self.member.role
+        # API Key（租户兜底）无成员行：上限 editor，与 deps.py 的 key 权限约定一致
+        return self.member.role if self.member is not None else SpaceRole.EDITOR
 
 
 async def get_membership(
