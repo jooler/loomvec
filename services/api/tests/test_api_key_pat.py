@@ -221,3 +221,94 @@ async def test_expired_key_rejected():
 def test_hash_api_key_stable():
     assert hash_api_key("lv_x") == hash_api_key("lv_x")
     assert hash_api_key("lv_x") != hash_api_key("lv_y")
+
+
+# ---------------------------------------------------------------------------
+# Key 列表/吊销可见范围（_key_list_scope）：平台三角色全量、租户 Key 本租户、
+# 用户级身份仅本人绑定（个人中心「我的 API Key」前置收敛，修跨租户全量泄露）
+# ---------------------------------------------------------------------------
+
+
+def _identity(user_id: str, roles: tuple[str, ...], tenant: str | None = str(TENANT)) -> Identity:
+    return Identity(
+        user_id=user_id,
+        username="u",
+        tenant_id=tenant,
+        roles=roles,
+        scopes=("read", "write"),
+    )
+
+
+def test_key_list_scope_platform_roles_see_all():
+    from loomvec.api.routes.api_keys import _key_list_scope
+
+    for role in ("super_admin", "operator", "auditor"):
+        kind, value = _key_list_scope(_identity(str(USER_ID), (role,)))
+        assert (kind, value) == ("all", None), role
+
+
+def test_key_list_scope_regular_user_sees_own():
+    from loomvec.api.routes.api_keys import _key_list_scope
+
+    kind, value = _key_list_scope(_identity(str(USER_ID), ()))
+    assert (kind, value) == ("user", USER_ID)
+
+
+def test_key_list_scope_pat_sees_own():
+    """PAT 即用户语义：列自己签发的 Key。"""
+    from loomvec.api.routes.api_keys import _key_list_scope
+
+    kind, value = _key_list_scope(_identity(str(USER_ID), ()))
+    assert (kind, value) == ("user", USER_ID)
+
+
+def test_key_list_scope_tenant_key_sees_tenant():
+    from loomvec.api.routes.api_keys import _key_list_scope
+
+    kind, value = _key_list_scope(
+        _identity("apikey:00000000-0000-0000-0000-0000000000f0", ("api_key",))
+    )
+    assert (kind, value) == ("tenant", TENANT)
+
+
+def test_key_list_scope_tenant_key_without_tenant():
+    from loomvec.api.routes.api_keys import _key_list_scope
+
+    kind, value = _key_list_scope(
+        _identity("apikey:00000000-0000-0000-0000-0000000000f0", ("api_key",), tenant=None)
+    )
+    assert (kind, value) == ("tenant", None)
+
+
+async def test_revoke_rejects_key_out_of_scope():
+    """普通用户吊销他人 Key → 404（不泄露存在性）；自己的 Key 可吊销。"""
+    from loomvec.api.routes.api_keys import revoke_api_key
+    from loomvec.core.errors import NotFoundError
+
+    other_id = uuid.uuid4()
+    other_key = ApiKey(
+        name="other",
+        key_hash="h",
+        scopes=["read"],
+        rate_limit_per_min=600,
+        tenant_id=TENANT,
+        user_id=other_id,
+    )
+    mine = ApiKey(
+        name="mine",
+        key_hash="h2",
+        scopes=["read"],
+        rate_limit_per_min=600,
+        tenant_id=TENANT,
+        user_id=USER_ID,
+    )
+    identity = _identity(str(USER_ID), ())
+
+    with pytest.raises(NotFoundError):
+        await revoke_api_key(
+            key_id=other_key.id, identity=identity, session=_FakeSession(other_key)
+        )
+
+    session = _FakeSession(mine)
+    await revoke_api_key(key_id=mine.id, identity=identity, session=session)
+    assert mine.deleted_at is not None

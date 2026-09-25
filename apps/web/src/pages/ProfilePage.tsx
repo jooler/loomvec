@@ -4,6 +4,7 @@ import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
 import { useMe, useMySpaces } from '@/hooks';
 import { extractApiError, formatBytes, percentOf } from '@/utils';
+import { ApiKeysCard } from '@/components/api-keys-card';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
 import { Avatar, AvatarFallback } from '@loomvec/ui/components/ui/avatar';
@@ -13,7 +14,7 @@ import { Progress } from '@loomvec/ui/components/ui/progress';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 
 /**
- * P2-WEB-07 个人中心：当前用户信息 + 各空间配额进度。
+ * P2-WEB-07 个人中心：当前用户信息 + 各空间配额进度 + API Key 管理（P5 开放授权）。
  * 通知管理已独立为「通知」页面（侧栏条目进入），此处不再展示。
  */
 
@@ -141,6 +142,8 @@ export function ProfilePage() {
           )}
         </CardContent>
       </Card>
+
+      <ApiKeysCard />
     </div>
   );
 }

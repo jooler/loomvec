@@ -104,14 +104,40 @@ async def create_api_key(
     return ApiKeyCreatedOut(**_out(key).model_dump(), key=raw)
 
 
+def _key_list_scope(
+    identity: Identity,
+) -> tuple[Literal["all", "user", "tenant"], uuid.UUID | None]:
+    """列表可见范围（P5 用户端「我的 API Key」前置收敛）：
+
+    - 平台三角色（super_admin/operator/auditor）→ 全量（管理端运维视图不变）；
+    - 租户级 Key（apikey:）→ 仅本租户的 Key（修复原实现跨租户全量泄露）；
+    - 其余用户级身份（用户 JWT / OAuth 令牌 / PAT）→ 仅绑定本人的 Key
+      （个人中心「我的 Key」语义；PAT 即用户语义，看自己签发的）。
+    """
+    if any(r in identity.roles for r in ("super_admin", "operator", "auditor")):
+        return "all", None
+    if identity.user_id.startswith("apikey:"):
+        tenant = uuid.UUID(identity.tenant_id) if identity.tenant_id else None
+        return "tenant", tenant
+    return "user", uuid.UUID(identity.user_id)
+
+
 @router.get("", response_model=list[ApiKeyOut])
 async def list_api_keys(
     identity: Identity = Depends(require_scope("read")),
     session: AsyncSession = Depends(get_session),
 ) -> list[ApiKeyOut]:
-    keys = (
-        (await session.execute(select(ApiKey).where(ApiKey.deleted_at.is_(None)))).scalars().all()
-    )
+    kind, scope_value = _key_list_scope(identity)
+    stmt = select(ApiKey).where(ApiKey.deleted_at.is_(None))
+    if kind == "user":
+        stmt = stmt.where(ApiKey.user_id == scope_value)
+    elif kind == "tenant":
+        stmt = (
+            stmt.where(ApiKey.tenant_id == scope_value)
+            if scope_value is not None
+            else stmt.where(ApiKey.tenant_id.is_(None))
+        )
+    keys = (await session.execute(stmt)).scalars().all()
     return [_out(k) for k in keys]
 
 
@@ -128,6 +154,12 @@ async def revoke_api_key(
             select(ApiKey).where(ApiKey.id == key_id, ApiKey.deleted_at.is_(None))
         )
     ).scalar_one_or_none()
+    # 可见性同列表口径（_key_list_scope）：越范围一律 404，不泄露存在性
+    kind, scope_value = _key_list_scope(identity)
+    if kind == "user" and key is not None and key.user_id != scope_value:
+        key = None
+    elif kind == "tenant" and key is not None and key.tenant_id != scope_value:
+        key = None  # 双 None（无租户 Key 吊销无租户 Key）时 != 为 False，恰好放行
     if key is None:
         raise NotFoundError(resource="api_key", id=str(key_id))
     key.deleted_at = _dt.now(UTC)

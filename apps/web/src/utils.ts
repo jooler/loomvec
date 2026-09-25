@@ -10,6 +10,7 @@ export {
   blobToArrayBuffer,
   extractApiError,
   formatBytes,
+  formatDateTime,
   sha256Hex,
 } from '@loomvec/ui/lib/format';
 
