@@ -11,6 +11,7 @@ boto3 为同步 SDK；put/get 等阻塞操作统一经 `asyncio.to_thread` 暴�
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from typing import Any
 
 import boto3
@@ -19,6 +20,11 @@ from botocore.exceptions import ClientError
 
 from loomvec.core.config import StorageSettings
 from loomvec.core.errors import UpstreamUnavailableError
+
+# 浏览器经前端代理同源访问对象存储时的路径前缀（如 "/s3"）：API 中间件按请求头设置，
+# 预签名 URL 的 endpoint 部分替换为该前缀。代理须剥掉前缀并把 Host 改回 endpoint，
+# 否则 SigV4 签名（含 host 与 path）校验失败。直连 API 的脚本不带该头，URL 不变。
+presign_prefix_var: ContextVar[str | None] = ContextVar("presign_prefix", default=None)
 
 
 class ObjectStorage:
@@ -118,22 +124,33 @@ class ObjectStorage:
 
     # ---------- 预签名（上传直传 / 下载分发，流量不过 API 服务） ----------
 
+    def _public_url(self, url: str) -> str:
+        prefix = presign_prefix_var.get()
+        endpoint = self._settings.endpoint.rstrip("/")
+        if prefix and url.startswith(endpoint):
+            return prefix + url[len(endpoint) :]
+        return url
+
     def presign_put(
         self, bucket: str, key: str, expires_in: int = 3600, content_type: str | None = None
     ) -> str:
         params: dict[str, Any] = {"Bucket": bucket, "Key": key}
         if content_type:
             params["ContentType"] = content_type
-        return self._guarded(
-            lambda: self._client.generate_presigned_url(
-                "put_object", Params=params, ExpiresIn=expires_in
+        return self._public_url(
+            self._guarded(
+                lambda: self._client.generate_presigned_url(
+                    "put_object", Params=params, ExpiresIn=expires_in
+                )
             )
         )
 
     def presign_get(self, bucket: str, key: str, expires_in: int = 3600) -> str:
-        return self._guarded(
-            lambda: self._client.generate_presigned_url(
-                "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=expires_in
+        return self._public_url(
+            self._guarded(
+                lambda: self._client.generate_presigned_url(
+                    "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=expires_in
+                )
             )
         )
 
@@ -158,16 +175,18 @@ class ObjectStorage:
     def presign_part(
         self, bucket: str, key: str, upload_id: str, part_number: int, expires_in: int = 86400
     ) -> str:
-        return self._guarded(
-            lambda: self._client.generate_presigned_url(
-                "upload_part",
-                Params={
-                    "Bucket": bucket,
-                    "Key": key,
-                    "UploadId": upload_id,
-                    "PartNumber": part_number,
-                },
-                ExpiresIn=expires_in,
+        return self._public_url(
+            self._guarded(
+                lambda: self._client.generate_presigned_url(
+                    "upload_part",
+                    Params={
+                        "Bucket": bucket,
+                        "Key": key,
+                        "UploadId": upload_id,
+                        "PartNumber": part_number,
+                    },
+                    ExpiresIn=expires_in,
+                )
             )
         )
 

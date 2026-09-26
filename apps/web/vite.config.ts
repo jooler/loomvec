@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { apiTarget, loomvecPort } from './vite.env';
+import { apiTarget, devProxy, loomvecPort } from './vite.env';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -17,7 +17,7 @@ export default defineConfig({
     host: '127.0.0.1',
     allowedHosts: true, // Cloudflare Tunnel Host: loomvec.omnecells.com
     proxy: {
-      '/api': { target: apiTarget, changeOrigin: true },
+      ...devProxy,
       '/metrics': { target: apiTarget, changeOrigin: true },
     },
   },

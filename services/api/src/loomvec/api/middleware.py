@@ -6,6 +6,7 @@ tracing instrumentation 亦在 app 工厂装配。
 
 from __future__ import annotations
 
+import re
 import time
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14,8 +15,26 @@ from starlette.responses import Response
 
 from loomvec.core.logging import bind_request_id, get_logger, request_id_var
 from loomvec.core.metrics import http_request_duration_seconds, http_requests_total
+from loomvec.core.storage import presign_prefix_var
 
 logger = get_logger("loomvec.api.access")
+
+STORAGE_PREFIX_HEADER = "x-loomvec-storage-prefix"
+_STORAGE_PREFIX_RE = re.compile(r"^/[A-Za-z0-9_-]+$")
+
+
+class StoragePrefixMiddleware(BaseHTTPMiddleware):
+    """前端代理声明同源对象存储前缀（X-Loomvec-Storage-Prefix）→ 预签名 URL 走该前缀。"""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        prefix = request.headers.get(STORAGE_PREFIX_HEADER, "")
+        if not _STORAGE_PREFIX_RE.match(prefix):
+            return await call_next(request)
+        token = presign_prefix_var.set(prefix)
+        try:
+            return await call_next(request)
+        finally:
+            presign_prefix_var.reset(token)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):

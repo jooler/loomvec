@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { apiTarget, loomvecPort } from './vite.env';
+import { apiTarget, devProxy, loomvecPort } from './vite.env';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -17,7 +17,7 @@ export default defineConfig({
     // 端口单源 LOOMVEC_OPS_PORT（.env，默认 35175）；API 代理目标单源 LOOMVEC_API_PORT
     port: loomvecPort('LOOMVEC_OPS_PORT', 35175),
     proxy: {
-      '/api': { target: apiTarget, changeOrigin: true },
+      ...devProxy,
       '/metrics': { target: apiTarget, changeOrigin: true },
     },
   },

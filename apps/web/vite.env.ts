@@ -27,3 +27,26 @@ export function loomvecPort(envKey: string, fallback: number): number {
 }
 
 export const apiTarget = `http://localhost:${loomvecPort('LOOMVEC_API_PORT', 38080)}`;
+
+/** 对象存储 endpoint（.env LOOMVEC_STORAGE__ENDPOINT）：/s3 同源代理目标，须与 API 签名用的 endpoint 一致。 */
+export const storageTarget =
+  process.env.LOOMVEC_STORAGE__ENDPOINT ??
+  envVars.LOOMVEC_STORAGE__ENDPOINT ??
+  'http://localhost:39000';
+
+/**
+ * 预签名 URL 同源代理：API 请求带上前缀声明，对象存储请求经 /s3 转发。
+ * changeOrigin 把 Host 改回 endpoint、rewrite 剥掉前缀，二者都是 SigV4 签名校验的前提。
+ */
+export const devProxy = {
+  '/api': {
+    target: apiTarget,
+    changeOrigin: true,
+    headers: { 'X-Loomvec-Storage-Prefix': '/s3' },
+  },
+  '/s3': {
+    target: storageTarget,
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/s3/, ''),
+  },
+};

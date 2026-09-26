@@ -17,7 +17,11 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 import loomvec.api
 from loomvec.api import auth as auth_module
 from loomvec.api.errors import register_exception_handlers
-from loomvec.api.middleware import AccessLogMiddleware, RequestIDMiddleware
+from loomvec.api.middleware import (
+    AccessLogMiddleware,
+    RequestIDMiddleware,
+    StoragePrefixMiddleware,
+)
 from loomvec.api.ratelimit import RateLimitMiddleware
 from loomvec.api.routes import agent as agent_routes
 from loomvec.api.routes import graph as graph_routes
@@ -129,6 +133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     # ---- 中间件链（后注册的先执行）----
+    app.add_middleware(StoragePrefixMiddleware)
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=settings)  # P4-INF-04 全局限流
     app.add_middleware(RequestIDMiddleware)
