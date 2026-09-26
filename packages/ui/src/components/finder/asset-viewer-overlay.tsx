@@ -17,11 +17,11 @@ import { ReviewStatusTag } from '../review-status-tag';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { AssetChunksPanel } from '../asset-chunks-panel';
 import { MarkdownView } from '../markdown-view';
-import { OriginalFileViewer } from '../original-file-viewer';
+import { OriginalFileViewer, resolveAssetUrl } from '../original-file-viewer';
 import { STATUS_TONE } from './finder-views';
 
 interface PreviewData {
-  mode: 'pdf' | 'markdown' | 'image';
+  mode: 'pdf' | 'markdown' | 'image' | 'file';
   url: string | null;
   content: string | null;
   page_count: number | null;
@@ -80,9 +80,9 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
     if (!assetId || !p) return;
     if (p.mode === 'markdown') {
       if (p.content) setMarkdown(p.content);
-      else if (p.url) void fetch(p.url).then((r) => r.text()).then(setMarkdown);
+      else if (p.url) void fetch(resolveAssetUrl(p.url)).then((r) => r.text()).then(setMarkdown);
     } else if (p.mode === 'pdf' && p.parsed_url) {
-      void fetch(p.parsed_url).then((r) => r.text()).then(setMarkdown);
+      void fetch(resolveAssetUrl(p.parsed_url)).then((r) => r.text()).then(setMarkdown);
     }
   }, [assetId, preview.data]);
 
@@ -117,6 +117,13 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
     (preview.data && (preview.data.mode === 'pdf' || preview.data.mode === 'image')
       ? preview.data.url
       : null);
+  // 有原文优先「原文」；file 模式无解析产物，避免空转圈
+  const defaultTab = originalUrl ? 'original' : 'parsed';
+  const hasParsedPayload = !!(
+    preview.data?.parsed_url ||
+    preview.data?.content ||
+    (preview.data?.mode === 'markdown' && preview.data?.url)
+  );
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col gap-0 rounded-lg border bg-background shadow-lg">
@@ -182,12 +189,7 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
             <Spinner className="size-5 text-muted-foreground" />
           </div>
         ) : (
-          <Tabs
-            defaultValue={
-              preview.data.mode === 'markdown' ? 'parsed' : 'original'
-            }
-            className="flex min-h-0 flex-1 flex-col"
-          >
+          <Tabs defaultValue={defaultTab} className="flex min-h-0 flex-1 flex-col">
             <TabsList className="shrink-0">
               <TabsTrigger value="original">{t('viewer.tabOriginal')}</TabsTrigger>
               <TabsTrigger value="parsed">{t('viewer.tabParsed')}</TabsTrigger>
@@ -203,7 +205,7 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
                   content={markdown}
                   className="h-full overflow-auto rounded-md border p-4"
                 />
-              ) : preview.data.parsed_url || preview.data.mode === 'markdown' ? (
+              ) : hasParsedPayload ? (
                 <div className="grid h-full place-items-center">
                   <Spinner className="size-5 text-muted-foreground" />
                 </div>

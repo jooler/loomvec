@@ -1,4 +1,4 @@
-import { lazy, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { FileQuestion } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useTranslation } from 'react-i18next';
@@ -21,6 +21,20 @@ export type OriginalViewerKind =
   | 'unsupported';
 
 const TEXT_EXTS = new Set(['.txt', '.md', '.markdown', '.csv', '.json', '.log', '.xml', '.yaml', '.yml']);
+
+/**
+ * 预签名 / 代理后的资源 URL 统一成绝对地址。
+ * Vite/反向代理常给出同源相对路径（如 `/s3/...`）；PDF worker 与 fetch 对相对路径解析不一致。
+ * 以当前页 URL 为 base，兼容 path-relative（`s3/x`）与 root-relative（`/s3/x`）。
+ */
+export function resolveAssetUrl(url: string): string {
+  if (typeof window === 'undefined') return url;
+  try {
+    return new URL(url, window.location.href).href;
+  } catch {
+    return url;
+  }
+}
 
 /** 按扩展名/MIME 分派查看器（MinerU 支持的解析类格式优先走专用预览）。 */
 export function resolveViewerKind(
@@ -107,50 +121,52 @@ function PdfPane({ url, page }: { url: string; page?: number }) {
   }, [preference]);
 
   return (
-    <LazyPdfViewer
-      config={{
-        src: url,
-        // 自托管：不请求外部字体 CDN（缺失字形回退系统字体栈）
-        fontFallback: null,
-        // 明暗风格与应用一致（默认主题偏好也随 next-themes）
-        theme: { preference },
-        // 界面语言简体中文（i18n 插件默认注册全部内置语言，含 zh-CN）
-        i18n: { defaultLocale: 'zh-CN', fallbackLocale: 'en' },
-        // 只读查看器：分类禁用同时作用于 UI（工具栏/菜单/选中菜单）与命令系统——
-        // annotation/redaction = 批注/形状/墨迹/图章/签名/密文等编辑工具；
-        // insert/form = 顶栏「插入」「表单」下拉；panel-comment / panel-annotation-style
-        // = 「评论」侧栏与标注样式面板
-        disabledCategories: [
-          'annotation',
-          'redaction',
-          'insert',
-          'form',
-          'panel-comment',
-          'panel-annotation-style',
-        ],
-        // 权限位兜底（第二道闸）：无论 PDF 自身如何声明，一律禁止改内容/改标注/
-        // 填表单/重组文档——annotation 插件的 create/update/delete 均检查
-        // ModifyAnnotations，表单交互检查 FillForms
-        permissions: {
-          enforceDocumentPermissions: true,
-          overrides: {
-            modifyContents: false,
-            modifyAnnotations: false,
-            fillForms: false,
-            assembleDocument: false,
+    <Suspense fallback={<ViewerLoading />}>
+      <LazyPdfViewer
+        config={{
+          src: url,
+          // 自托管：不请求外部字体 CDN（缺失字形回退系统字体栈）
+          fontFallback: null,
+          // 明暗风格与应用一致（默认主题偏好也随 next-themes）
+          theme: { preference },
+          // 界面语言简体中文（i18n 插件默认注册全部内置语言，含 zh-CN）
+          i18n: { defaultLocale: 'zh-CN', fallbackLocale: 'en' },
+          // 只读查看器：分类禁用同时作用于 UI（工具栏/菜单/选中菜单）与命令系统——
+          // annotation/redaction = 批注/形状/墨迹/图章/签名/密文等编辑工具；
+          // insert/form = 顶栏「插入」「表单」下拉；panel-comment / panel-annotation-style
+          // = 「评论」侧栏与标注样式面板
+          disabledCategories: [
+            'annotation',
+            'redaction',
+            'insert',
+            'form',
+            'panel-comment',
+            'panel-annotation-style',
+          ],
+          // 权限位兜底（第二道闸）：无论 PDF 自身如何声明，一律禁止改内容/改标注/
+          // 填表单/重组文档——annotation 插件的 create/update/delete 均检查
+          // ModifyAnnotations，表单交互检查 FillForms
+          permissions: {
+            enforceDocumentPermissions: true,
+            overrides: {
+              modifyContents: false,
+              modifyAnnotations: false,
+              fillForms: false,
+              assembleDocument: false,
+            },
           },
-        },
-      }}
-      className="h-full w-full"
-      onInit={(container) => {
-        containerRef.current = container as unknown as {
-          setTheme: (theme: 'light' | 'dark' | 'system') => void;
-        };
-      }}
-      onReady={(registry) => {
-        registryRef.current = registry as unknown as { getPlugin: (id: string) => unknown };
-      }}
-    />
+        }}
+        className="h-full w-full"
+        onInit={(container) => {
+          containerRef.current = container as unknown as {
+            setTheme: (theme: 'light' | 'dark' | 'system') => void;
+          };
+        }}
+        onReady={(registry) => {
+          registryRef.current = registry as unknown as { getPlugin: (id: string) => unknown };
+        }}
+      />
+    </Suspense>
   );
 }
 
@@ -190,6 +206,25 @@ function DocxPane({ url }: { url: string }) {
   );
 }
 
+/** 剥离 SheetJS HTML 中的脚本/事件处理器，降低 untrusted xlsx 的 XSS 面。 */
+function sanitizeSheetHtml(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const el of Array.from(doc.querySelectorAll('script, iframe, object, embed'))) {
+    el.remove();
+  }
+  for (const el of Array.from(doc.body.querySelectorAll('*'))) {
+    for (const attr of Array.from(el.attributes)) {
+      if (
+        attr.name.startsWith('on') ||
+        (attr.name === 'href' && /^\s*javascript:/i.test(attr.value))
+      ) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  return doc.body.innerHTML;
+}
+
 /** xlsx/xls 原文预览：SheetJS 解析后逐表渲染只读 HTML 表格。 */
 function SheetPane({ url }: { url: string }) {
   const [sheets, setSheets] = useState<{ name: string; html: string }[]>([]);
@@ -203,13 +238,10 @@ function SheetPane({ url }: { url: string }) {
         if (!res.ok) throw new Error(t('originalViewer.loadFailedHttp', { status: res.status }));
         const workbook = XLSX.read(await res.arrayBuffer(), { type: 'array' });
         if (cancelled) return;
-        const parsed = workbook.SheetNames.map((name) => {
-          const doc = new DOMParser().parseFromString(
-            XLSX.utils.sheet_to_html(workbook.Sheets[name]),
-            'text/html',
-          );
-          return { name, html: doc.body.innerHTML };
-        });
+        const parsed = workbook.SheetNames.map((name) => ({
+          name,
+          html: sanitizeSheetHtml(XLSX.utils.sheet_to_html(workbook.Sheets[name])),
+        }));
         setSheets(parsed);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : t('originalViewer.loadFailed'));
@@ -311,7 +343,8 @@ export function OriginalFileViewer({
   const kind = resolveViewerKind(mime_type, ext);
   const { t } = useTranslation();
   const cls = cn('h-full w-full overflow-hidden rounded-md border bg-background', className);
-  if (!url)
+  const absUrl = url ? resolveAssetUrl(url) : null;
+  if (!absUrl)
     return (
       <div className={cn(cls, 'grid place-items-center text-sm text-muted-foreground')}>
         {t('originalViewer.noOriginalFile')}
@@ -323,7 +356,7 @@ export function OriginalFileViewer({
         <FileQuestion className="size-8 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">{t('originalViewer.unsupportedFormat')}</p>
         <Button variant="outline" size="sm" asChild>
-          <a href={url} target="_blank" rel="noreferrer">
+          <a href={absUrl} target="_blank" rel="noreferrer">
             {t('originalViewer.openInNewWindow')}
           </a>
         </Button>
@@ -331,23 +364,23 @@ export function OriginalFileViewer({
     );
   return (
     <div className={cls}>
-      {kind === 'pdf' && <PdfPane url={url} page={page} />}
-      {kind === 'docx' && <DocxPane url={url} />}
-      {kind === 'sheet' && <SheetPane url={url} />}
+      {kind === 'pdf' && <PdfPane url={absUrl} page={page} />}
+      {kind === 'docx' && <DocxPane url={absUrl} />}
+      {kind === 'sheet' && <SheetPane url={absUrl} />}
       {kind === 'image' && (
         <div className="grid h-full place-items-center overflow-auto p-2">
-          <img src={url} alt={t('originalViewer.imageAlt')} className="max-h-full max-w-full object-contain" />
+          <img src={absUrl} alt={t('originalViewer.imageAlt')} className="max-h-full max-w-full object-contain" />
         </div>
       )}
-      {kind === 'text' && <TextPane url={url} />}
+      {kind === 'text' && <TextPane url={absUrl} />}
       {kind === 'media' &&
         ((mime_type ?? '').startsWith('audio/') ? (
           <div className="grid h-full place-items-center p-4">
-            <audio src={url} controls className="w-full max-w-md" />
+            <audio src={absUrl} controls className="w-full max-w-md" />
           </div>
         ) : (
           <div className="grid h-full place-items-center p-2">
-            <video src={url} controls className="max-h-full max-w-full" />
+            <video src={absUrl} controls className="max-h-full max-w-full" />
           </div>
         ))}
     </div>

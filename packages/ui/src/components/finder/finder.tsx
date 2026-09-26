@@ -88,7 +88,7 @@ export interface FinderProps {
   onUploadFiles: (files: File[]) => void;
   onRefresh: () => void;
   thumbFor?: (asset: FinderAsset) => string | null;
-  onOpenAsset: (asset: FinderAsset) => void;
+  onOpenAsset: (assetId: string) => void;
   /** 工具栏第二行插槽（筛选条等）。 */
   toolbarExtra?: React.ReactNode;
   /** 查看覆盖层插槽（absolute 占满本容器）。 */
@@ -209,20 +209,28 @@ export function Finder(props: FinderProps) {
   const currentChildren = useMemo(() => sortedChildren(currentFolderId), [sortedChildren, currentFolderId]);
 
   const thumbFor = props.thumbFor ?? (() => null);
-
-  /** 分栏视图右侧预览的资产：选中集恰为一个时，在列链各列与当前文件夹中定位。 */
   const columnsAssetsOf = props.columnsAssetsOf;
+  const onOpenAsset = props.onOpenAsset;
+
+  /** 分栏/当前列表中按 id 定位资产（打开与右侧预览共用）。 */
+  const findAssetById = useCallback(
+    (id: string): FinderAsset | undefined => {
+      if (columnsAssetsOf) {
+        for (const fid of [null, ...path]) {
+          const hit = columnsAssetsOf(fid).find((a) => a.id === id);
+          if (hit) return hit;
+        }
+      }
+      return assets.find((a) => a.id === id) ?? currentChildren.assets.find((a) => a.id === id);
+    },
+    [assets, columnsAssetsOf, currentChildren.assets, path],
+  );
+
+  /** 分栏视图右侧预览的资产：选中集恰为一个时定位。 */
   const resolvePreviewAsset = useCallback((): FinderAsset | null => {
     if (selectedAssets.size !== 1) return null;
-    const id = [...selectedAssets][0];
-    if (columnsAssetsOf) {
-      for (const fid of [null, ...path]) {
-        const hit = columnsAssetsOf(fid).find((a) => a.id === id);
-        if (hit) return hit;
-      }
-    }
-    return assets.find((a) => a.id === id) ?? null;
-  }, [assets, columnsAssetsOf, path, selectedAssets]);
+    return findAssetById([...selectedAssets][0]) ?? null;
+  }, [findAssetById, selectedAssets]);
 
   // ------------------------------------------------------------------
   // 选择 / 打开
@@ -304,10 +312,10 @@ export function Finder(props: FinderProps) {
         openFolder(id);
         return;
       }
-      const asset = assets.find((a) => a.id === id);
-      if (asset) props.onOpenAsset(asset);
+      // 覆盖层只依赖 id；findAssetById 覆盖分栏列链，避免仅查当前文件夹时静默失败
+      onOpenAsset(id);
     },
-    [assets, openFolder, props],
+    [onOpenAsset, openFolder],
   );
 
   // ------------------------------------------------------------------

@@ -1174,6 +1174,8 @@ export interface paths {
         /**
          * Copy Asset
          * @description 复制资产：默认同空间同文件夹；可指定目标空间（editor+）与目标文件夹。
+         *
+         *     源空间须为真实成员：公共空间虚拟 viewer 不可把运营内容复制到自己的空间。
          */
         post: operations["copy_asset_api_v1_assets__asset_id__copy_post"];
         delete?: never;
@@ -1271,6 +1273,8 @@ export interface paths {
         /**
          * Retry Asset
          * @description 单步重跑：默认从首个失败步骤起跑（退出标准：失败可见原因 + 单步重试）。
+         *
+         *     仅资产管理者（owner / 上传该资产的 editor；API Key 租户兜底同口径）。
          */
         post: operations["retry_asset_api_v1_assets__asset_id__retry_post"];
         delete?: never;
@@ -1813,7 +1817,7 @@ export interface paths {
         };
         /**
          * List Public Spaces
-         * @description 当前用户经分组可见的公共空间（含链接状态；不可进入，仅可开关）。
+         * @description 当前用户经分组可见的公共空间（含链接状态；可进入只读浏览）。
          */
         get: operations["list_public_spaces_api_v1_public_spaces_get"];
         put?: never;
@@ -2072,7 +2076,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Members */
+        /**
+         * List Members
+         * @description 成员列表：仅真实成员可见（公共空间虚拟 viewer 不可窥探运营方名单）。
+         */
         get: operations["list_members_api_v1_spaces__space_id__members_get"];
         put?: never;
         /**
@@ -2174,6 +2181,8 @@ export interface paths {
         /**
          * Space Usage
          * @description 空间用量与配额（配额进度展示）。
+         *
+         *     仅真实成员可读：公共空间虚拟 viewer 不暴露运营方配额/用量。
          */
         get: operations["space_usage_api_v1_spaces__space_id__usage_get"];
         put?: never;
@@ -3426,7 +3435,7 @@ export interface components {
              * Mode
              * @enum {string}
              */
-            mode: "pdf" | "markdown" | "image";
+            mode: "pdf" | "markdown" | "image" | "file";
             /** Original Url */
             original_url?: string | null;
             /** Page Count */

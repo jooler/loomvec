@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft } from 'lucide-react';
-import { useMySpaces } from '@/hooks';
+import { useSpace } from '@/hooks';
 import { ROLE_TONE } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
@@ -11,13 +11,14 @@ import { cn } from 'cn';
 /**
  * 空间详情布局：空间管理卡片进入后的容器。左侧页签组织资产 / 检索 / 图谱 / 审核，
  * 成员 / 设置作为独立页签放在页签栏右侧。viewer 只读：owner/editor 专属页签不渲染。
+ * 公共空间经分组可见时以虚拟 viewer 进入，同样只读。
  */
 export function SpaceLayout() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
-  const spaces = useMySpaces();
+  const spaceQuery = useSpace(spaceId);
   const { t } = useTranslation('layout');
-  const space = (spaces.data ?? []).find((s) => s.id === spaceId);
+  const space = spaceQuery.data;
   const role = space?.my_role ?? '';
 
   const mainTabs = [
@@ -55,7 +56,7 @@ export function SpaceLayout() {
         >
           <ArrowLeft />
         </Button>
-        {spaces.isLoading ? (
+        {spaceQuery.isLoading ? (
           <Spinner className="size-5 text-muted-foreground" />
         ) : (
           <h1 className="truncate text-lg font-semibold">{space?.name ?? t('spaceFallback')}</h1>
@@ -65,25 +66,39 @@ export function SpaceLayout() {
             {t(`role.${role}`, { defaultValue: role })}
           </StatusBadge>
         )}
+        {space?.space_type === 'public' && <StatusBadge tone="purple">{t('publicBadge')}</StatusBadge>}
         {space?.review_required && <StatusBadge tone="amber">{t('reviewRequired')}</StatusBadge>}
       </div>
-      <nav className="flex items-center gap-1 border-b">
-        {mainTabs.map((t) => (
-          <NavLink key={t.to} to={t.to} className={tabClass}>
-            {t.label}
-          </NavLink>
-        ))}
-        {adminTabs.length > 0 && (
-          <div className="ml-auto flex items-center gap-1">
-            {adminTabs.map((t) => (
-              <NavLink key={t.to} to={t.to} className={tabClass}>
-                {t.label}
+      {spaceQuery.isError ? (
+        <div className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-6">
+          <p className="text-sm text-destructive">
+            {(spaceQuery.error as Error).message || t('spaceAccessDenied')}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => navigate('/spaces')}>
+            {t('backToSpaces')}
+          </Button>
+        </div>
+      ) : (
+        <>
+          <nav className="flex items-center gap-1 border-b">
+            {mainTabs.map((tab) => (
+              <NavLink key={tab.to} to={tab.to} className={tabClass}>
+                {tab.label}
               </NavLink>
             ))}
-          </div>
-        )}
-      </nav>
-      <Outlet />
+            {adminTabs.length > 0 && (
+              <div className="ml-auto flex items-center gap-1">
+                {adminTabs.map((tab) => (
+                  <NavLink key={tab.to} to={tab.to} className={tabClass}>
+                    {tab.label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </nav>
+          <Outlet />
+        </>
+      )}
     </div>
   );
 }

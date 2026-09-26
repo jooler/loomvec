@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Plus, RefreshCw } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
+import { useNavigate, Link } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
@@ -45,7 +45,7 @@ import { Textarea } from '@loomvec/ui/components/ui/textarea';
 
 /**
  * P2-WEB-01 空间管理：我的空间卡片（角色/审核/成员数）+ 创建空间向导。
- * P5 增补「公共空间」区：仅可链接/断开（作为问答检索源），不可进入浏览内容。
+ * P5「公共空间」区：可点击进入只读浏览；链接开关仅控制问答检索源。
  */
 
 /** Radix Select 不允许空串 value：此哨兵表示「默认（不指定）」。 */
@@ -228,7 +228,6 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
 }
 
 export function SpacesPage() {
-  const navigate = useNavigate();
   const { t } = useTranslation('spaces');
   const spaces = useMySpaces();
   const publicSpaces = usePublicSpaces();
@@ -263,13 +262,16 @@ export function SpacesPage() {
               {(spaces.data ?? []).map((s) => {
                 const role = s.my_role ?? '';
                 return (
-                  <Card
-                    key={s.id}
-                    className="cursor-pointer gap-3 py-4 transition-shadow hover:shadow-md"
-                    onClick={() => navigate(`/s/${s.id}/assets`)}
-                  >
+                  <Card key={s.id} className="gap-3 py-4 transition-shadow hover:shadow-md">
                     <CardHeader>
-                      <CardTitle className="truncate">{s.name}</CardTitle>
+                      <CardTitle className="truncate">
+                        <Link
+                          to={`/s/${s.id}/assets`}
+                          className="text-inherit hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {s.name}
+                        </Link>
+                      </CardTitle>
                       <CardAction>
                         <StatusBadge tone={ROLE_TONE[role]}>
                           {t(`role.${role}`, { defaultValue: role })}
@@ -324,9 +326,16 @@ export function SpacesPage() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {(publicSpaces.data ?? []).map((s) => (
-                <Card key={s.id} className="gap-3 py-4">
+                <Card key={s.id} className="gap-3 py-4 transition-shadow hover:shadow-md">
                   <CardHeader>
-                    <CardTitle className="truncate">{s.name}</CardTitle>
+                    <CardTitle className="truncate">
+                      <Link
+                        to={`/s/${s.id}/assets`}
+                        className="text-inherit hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {s.name}
+                      </Link>
+                    </CardTitle>
                     <CardAction>
                       <StatusBadge tone="purple">{t('publicBadge')}</StatusBadge>
                     </CardAction>
@@ -335,6 +344,7 @@ export function SpacesPage() {
                     <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">
                       {s.description ?? t('noDescription')}
                     </p>
+                    <p className="text-xs text-muted-foreground">{t('browseHint')}</p>
                     <div className="flex items-center justify-between rounded-lg border p-2.5">
                       <div className="space-y-0.5">
                         <Label htmlFor={`link-${s.id}`} className="text-sm">

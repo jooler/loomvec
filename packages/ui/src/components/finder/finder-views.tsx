@@ -152,16 +152,35 @@ export function finderOrderedItems(
   ];
 }
 
-/** 条目外壳：右键菜单 + 拖拽源 + 拖拽目标（文件夹）+ 选中/打开交互。 */
+/** 条目外壳：右键菜单 + 拖拽源 + 拖拽目标（文件夹）+ 选中/打开交互。
+ *
+ * 双击第二下的 mousedown（detail>=2）会抑制紧随其后的 HTML5 dragstart，
+ * 避免拖拽吞掉双击打开；状态用模块级标志（单指针），不依赖 per-render 闭包。
+ */
+let suppressNextDrag = false;
+
 function itemHandlers(
   props: FinderViewProps,
   kind: 'folder' | 'asset',
   id: string,
   orderedItems?: FinderItemRef[],
 ) {
+  const renaming = props.renaming?.kind === kind && props.renaming.id === id;
+  const draggable = props.canWrite && !renaming;
   return {
-    draggable: !(props.renaming?.kind === kind && props.renaming.id === id),
-    onDragStart: (e: React.DragEvent) => props.onDragStartItem(e, kind, id),
+    draggable,
+    onMouseDown: (e: React.MouseEvent) => {
+      // detail>=2：双击序列的第二次按下；此时浏览器可能发起 drag，需取消
+      suppressNextDrag = e.detail >= 2;
+    },
+    onDragStart: (e: React.DragEvent) => {
+      if (!draggable || suppressNextDrag) {
+        e.preventDefault();
+        suppressNextDrag = false;
+        return;
+      }
+      props.onDragStartItem(e, kind, id);
+    },
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation();
       props.onSelect(

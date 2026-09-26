@@ -7,7 +7,8 @@
 - 分组可见性：PUT 全量替换勾选；未勾选分组用户不可链接（403）；
 - 用户端链接开关：可见用户可链接/断开；链接后该空间可入问答召回范围
   （scope_space_ids 合法），断开后即拒绝；
-- 内容边界：非成员用户不可进入公共空间浏览（GET /spaces/{id} → 403）；
+- 内容边界：分组可见用户可只读浏览公共空间（GET /spaces/{id} → 200, my_role=viewer）；
+  写操作仍 403；未可见用户仍 403；
 - 运营者成员兜底：非创建者的 operator 打开空间详情后自动成为 owner 成员。
 """
 
@@ -169,29 +170,51 @@ async def test_ops_guard_and_public_space_flow(env):
         checked = next(i for i in vis if i["group_id"] == group_id)
         assert checked["visible"] is True
 
-        # ---- 用户端：可见列表 + 链接开关 + 内容边界 ----
+        # ---- 用户端：可见列表 + 只读浏览 + 链接开关（问答）----
         resp = client.get("/api/v1/public-spaces", headers=alice)
         items = resp.json()["items"]
         assert len(items) == 1 and items[0]["id"] == space_id and items[0]["linked"] is False
+
+        # 可见即可只读浏览（无需先链接）；虚拟 viewer，无 space_member 行
+        resp = client.get(f"/api/v1/spaces/{space_id}", headers=alice)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["my_role"] == "viewer"
+        alice_uid = await _user_id(factory, "ops-it-alice")
+        assert await _member_role(factory, uuid.UUID(space_id), alice_uid) is None
+        # 写闸门仍拒绝（虚拟 viewer 不能改设置）
+        assert (
+            client.patch(
+                f"/api/v1/spaces/{space_id}", headers=alice, json={"description": "越权"}
+            ).status_code
+            == 403
+        )
+        # 虚拟 viewer 不可窥探成员名单 / 用量；不可创建文件夹（EDITOR 闸门）
+        assert client.get(f"/api/v1/spaces/{space_id}/members", headers=alice).status_code == 403
+        assert client.get(f"/api/v1/spaces/{space_id}/usage", headers=alice).status_code == 403
+        assert (
+            client.post(
+                f"/api/v1/spaces/{space_id}/folders",
+                headers=alice,
+                json={"name": "越权文件夹"},
+            ).status_code
+            == 403
+        )
 
         resp = client.put(
             f"/api/v1/public-spaces/{space_id}/link", headers=alice, json={"linked": True}
         )
         assert resp.status_code == 200 and resp.json()["linked"] is True
 
-        # 非成员不可进入公共空间浏览内容
-        assert client.get(f"/api/v1/spaces/{space_id}", headers=alice).status_code == 403
-
         # 链接后：该公共空间可入智能体会话召回范围（直接调 agent 服务域的
         # scope 校验语义；facade 转发 e2e 走真机验收，测试库与 agent 服务
         # 进程不共库，跨进程转发不在本测试范围）
         from loomvec.agent.routes import _assert_member_spaces as _agent_scope_check
 
-        alice_id = await _user_id(factory, "ops-it-alice")
+        alice_id = alice_uid
         async with factory() as session:
             await _agent_scope_check(session, alice_id, [uuid.UUID(space_id)])  # 不抛 = 可入范围
 
-        # 断开后：即时失效
+        # 断开后：问答 scope 即时失效；浏览仍可用（可见性未变）
         resp = client.put(
             f"/api/v1/public-spaces/{space_id}/link", headers=alice, json={"linked": False}
         )
@@ -199,12 +222,14 @@ async def test_ops_guard_and_public_space_flow(env):
         async with factory() as session:
             with pytest.raises(ValidationError):
                 await _agent_scope_check(session, alice_id, [uuid.UUID(space_id)])
+        assert client.get(f"/api/v1/spaces/{space_id}", headers=alice).status_code == 200
 
-        # ---- 未加入分组的用户不可见（carol 为对照组）----
+        # ---- 未加入分组的用户不可见、不可浏览（carol 为对照组）----
         carol = _auth(client, "ops-it-carol")
         assert client.get("/api/v1/me", headers=carol).status_code == 200
         resp = client.get("/api/v1/public-spaces", headers=carol)
         assert resp.status_code == 200 and resp.json()["items"] == []
+        assert client.get(f"/api/v1/spaces/{space_id}", headers=carol).status_code == 403
 
         # ---- 运营者成员兜底：第二运营者打开详情即成为 owner 成员 ----
         operator2 = _auth(client, "ops-it-op2", roles=["operator"])
@@ -226,7 +251,8 @@ async def test_ops_guard_and_public_space_flow(env):
         assert resp.status_code == 204
         resp = client.get("/api/v1/public-spaces", headers=alice)
         assert resp.status_code == 200 and resp.json()["items"] == []
-        # 分组移除 → 可见性丧失 → 链接失效（scope 校验不再通过）
+        # 分组移除 → 可见性丧失 → 链接失效（scope 校验不再通过）+ 浏览关闭
         async with factory() as session:
             with pytest.raises(ValidationError):
                 await _agent_scope_check(session, alice_id, [uuid.UUID(space_id)])
+        assert client.get(f"/api/v1/spaces/{space_id}", headers=alice).status_code == 403

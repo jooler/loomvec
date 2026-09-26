@@ -81,8 +81,22 @@ export function AssetsPage() {
   const thumbFor = useFinderThumbs(api, assets.data?.items ?? []);
   const m = useFinderMutations(api, spaceId);
 
-  // 覆盖层查看的上一/下一个（当前文件夹资产顺序）
-  const viewList = useMemo(() => assets.data?.items ?? [], [assets.data]);
+  // 覆盖层上一/下一个：分栏视图合并列链资产，避免深目录打开后 prev/next 失效
+  const viewList = useMemo(() => {
+    if (columnsAssetsOf) {
+      const seen = new Set<string>();
+      const out: FinderAsset[] = [];
+      for (const fid of [null, ...path]) {
+        for (const a of columnsAssetsOf(fid)) {
+          if (seen.has(a.id)) continue;
+          seen.add(a.id);
+          out.push(a);
+        }
+      }
+      return out;
+    }
+    return assets.data?.items ?? [];
+  }, [assets.data, columnsAssetsOf, path]);
   const viewIndex = viewList.findIndex((a) => a.id === viewingId);
 
   // 运营者对公共空间恒为 owner 语义（后端 can_manage_asset 兜底）
@@ -180,7 +194,7 @@ export function AssetsPage() {
           void assets.refetch();
         }}
         thumbFor={thumbFor}
-        onOpenAsset={(a: FinderAsset) => setViewingId(a.id)}
+        onOpenAsset={(id) => setViewingId(id)}
         toolbarExtra={
           <>
             <div className="flex flex-wrap items-center gap-2">

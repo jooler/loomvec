@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
-import { useMe, useSpaceCategories } from '@/hooks';
+import { useMe, useSpace, useSpaceCategories } from '@/hooks';
 import { extractApiError } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -17,7 +17,7 @@ import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/descrip
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { AssetChunksPanel } from '@loomvec/ui/components/asset-chunks-panel';
 import { MarkdownView } from '@loomvec/ui/components/markdown-view';
-import { OriginalFileViewer } from '@loomvec/ui/components/original-file-viewer';
+import { OriginalFileViewer, resolveAssetUrl } from '@loomvec/ui/components/original-file-viewer';
 import { MediaPlayer } from '@/components/media-player';
 import { ReviewStatusTag } from '@/components/review-status-tag';
 import { StepTimeline } from './StepTimeline';
@@ -57,19 +57,7 @@ export function AssetDetailPage() {
   const me = useMe();
 
   const spaceId = asset.data?.space_id ?? undefined;
-
-  const space = useQuery({
-    queryKey: ['space', spaceId],
-    enabled: !!spaceId,
-    queryFn: async () => {
-      const { data, error } = await api.GET('/api/v1/spaces/{space_id}', {
-        params: { path: { space_id: spaceId! } },
-      });
-      if (error) throw new Error(extractApiError(error, t('loadSpaceFailed')));
-      return data;
-    },
-  });
-
+  const space = useSpace(spaceId);
   const categories = useSpaceCategories(spaceId);
 
   const metadataFields = useQuery({
@@ -91,7 +79,7 @@ export function AssetDetailPage() {
     if (!p) return;
     let cancelled = false;
     const load = (u: string) =>
-      fetch(u)
+      fetch(resolveAssetUrl(u))
         .then((r) => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.text();
@@ -174,10 +162,10 @@ export function AssetDetailPage() {
 
   const isMedia = ['video/', 'audio/'].some((p) => (a.mime_type ?? '').startsWith(p));
   const myRole = space.data?.my_role;
-  const canEdit = myRole !== 'viewer'; // 未知（空间加载失败）时放开，由后端兜底
-  // chunk 管理边界与后端 can_manage_asset 一致：owner 全部；editor 仅本人上传
+  const canEdit = myRole === 'owner' || myRole === 'editor';
+  // 与后端 _require_asset_manager / can_manage_asset 一致：owner 全部；editor 仅本人上传
   // （created_by 为空 = API Key 摄取，人类 editor 无管理权，不放入口避免点击后 403）
-  const canManageChunks =
+  const canManageAsset =
     myRole === 'owner' ||
     (myRole === 'editor' &&
       a.created_by != null &&
@@ -189,6 +177,11 @@ export function AssetDetailPage() {
     (preview.data && (preview.data.mode === 'pdf' || preview.data.mode === 'image')
       ? preview.data.url
       : null);
+  const hasParsedPayload = !!(
+    preview.data?.parsed_url ||
+    preview.data?.content ||
+    (preview.data?.mode === 'markdown' && preview.data?.url)
+  );
 
   // 任务列表按 created_at 倒序：每种 job_type 的首个即最新一次
   const latestByStep = new Map<string, AssetJob>();
@@ -213,7 +206,7 @@ export function AssetDetailPage() {
           <CardTitle className="text-base break-all">{a.name}</CardTitle>
           <CardAction>
             <div className="flex flex-wrap items-center gap-2">
-              {a.status === 'failed' && (
+              {canManageAsset && a.status === 'failed' && (
                 <Button size="sm" onClick={() => retry.mutate(failedStep)}>
                   {t('rerunFromFailed')}
                   {failedStep ? `（${t(`jobType.${failedStep}`, { defaultValue: failedStep })}）` : ''}
@@ -229,18 +222,20 @@ export function AssetDetailPage() {
               >
                 <RefreshCw /> {t('action.refresh')}
               </Button>
-              <ConfirmAction
-                trigger={
-                  <Button variant="destructive" size="sm" disabled={remove.isPending}>
-                    <Trash2 /> {t('action.delete')}
-                  </Button>
-                }
-                title={t('deleteTitle')}
-                description={t('deleteDesc')}
-                confirmText={t('action.delete')}
-                danger
-                onConfirm={() => remove.mutate()}
-              />
+              {canManageAsset && (
+                <ConfirmAction
+                  trigger={
+                    <Button variant="destructive" size="sm" disabled={remove.isPending}>
+                      <Trash2 /> {t('action.delete')}
+                    </Button>
+                  }
+                  title={t('deleteTitle')}
+                  description={t('deleteDesc')}
+                  confirmText={t('action.delete')}
+                  danger
+                  onConfirm={() => remove.mutate()}
+                />
+              )}
             </div>
           </CardAction>
         </CardHeader>
@@ -315,7 +310,7 @@ export function AssetDetailPage() {
           ) : !preview.data ? (
             <p className="text-sm text-muted-foreground">{t('previewPending')}</p>
           ) : (
-            <Tabs defaultValue={preview.data.mode === 'markdown' ? 'parsed' : 'original'}>
+            <Tabs defaultValue={originalUrl ? 'original' : 'parsed'}>
               <TabsList>
                 <TabsTrigger value="original">{t('viewer.tabOriginal')}</TabsTrigger>
                 <TabsTrigger value="parsed">{t('viewer.tabParsed')}</TabsTrigger>
@@ -335,7 +330,7 @@ export function AssetDetailPage() {
                     content={markdown}
                     className="max-h-[640px] overflow-auto rounded-md border p-4"
                   />
-                ) : preview.data.parsed_url || preview.data.mode === 'markdown' ? (
+                ) : hasParsedPayload ? (
                   <div className="grid place-items-center py-10">
                     <Spinner className="size-5 text-muted-foreground" />
                   </div>
@@ -353,13 +348,14 @@ export function AssetDetailPage() {
         client={api}
         assetId={assetId!}
         spaceId={spaceId}
-        canManage={canManageChunks}
+        canManage={canManageAsset}
       />
 
       <JobsCard
         jobs={jobs.data ?? []}
         loading={jobs.isLoading}
         error={jobs.isError ? (jobs.error as Error) : null}
+        canRetry={canManageAsset}
         onRetry={(step) => retry.mutate(step)}
       />
     </div>

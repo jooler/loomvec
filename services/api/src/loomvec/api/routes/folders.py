@@ -150,10 +150,16 @@ async def copy_asset(
     settings: Settings = Depends(service_settings),
     celery=Depends(get_celery),
 ) -> AssetOut:
-    """复制资产：默认同空间同文件夹；可指定目标空间（editor+）与目标文件夹。"""
-    from loomvec.api.routes.assets import _load_asset_detail
+    """复制资产：默认同空间同文件夹；可指定目标空间（editor+）与目标文件夹。
 
-    _access, asset = await _load_asset_detail(session, asset_id, identity)
+    源空间须为真实成员：公共空间虚拟 viewer 不可把运营内容复制到自己的空间。
+    """
+    from loomvec.api.routes.assets import _load_asset_detail
+    from loomvec.core.errors import PermissionDeniedError
+
+    access, asset = await _load_asset_detail(session, asset_id, identity)
+    if access.member is None:
+        raise PermissionDeniedError(reason="无该资产的复制权限", space_id=str(asset.space_id))
     target_space_id = body.target_space_id or asset.space_id
     space = await body_space(session, identity, settings, target_space_id, SpaceRole.EDITOR)
     target_folder_id = body.target_folder_id

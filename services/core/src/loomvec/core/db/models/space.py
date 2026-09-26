@@ -91,8 +91,8 @@ class SpaceMember(UuidPkMixin, TenantMixin, TimestampMixin, Base):
 class SpaceGroupVisibility(UuidPkMixin, TimestampMixin, Base):
     """公共空间 × 用户分组可见性（P5 运营端）：行存在即该分组对此空间可见。
 
-    公共空间不向用户开放内容浏览；可见性仅决定"可链接"资格（用户端开关），
-    检索生效还要求链接行存在（authz.linked_public_space_ids 即时求交）。
+    可见 = 用户端可只读浏览（authz 虚拟 viewer）+ 可链接资格；
+    问答检索生效还要求链接行存在（authz.linked_public_space_ids 即时求交）。
     """
 
     __tablename__ = "space_group_visibility"

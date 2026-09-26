@@ -194,7 +194,8 @@ class RetryRequest(BaseModel):
 
 
 class PreviewOut(BaseModel):
-    mode: Literal["pdf", "markdown", "image"]
+    # file = 仅原文、无解析产物（docx/xlsx 等尚未产出 md_key）
+    mode: Literal["pdf", "markdown", "image", "file"]
     url: str | None = None
     content: str | None = None
     page_count: int | None = None

@@ -120,11 +120,10 @@ async def _load_asset_detail(
     if asset is None:
         raise NotFoundError(resource="asset", id=str(asset_id))
     access = await resolve_space_access(session, identity, asset.space_id, SpaceRole.VIEWER)
-    role = access.role if access.member else SpaceRole.EDITOR  # apikey → 租户兜底视为 editor
     if not decide_asset_visibility(
         review_required=access.space.review_required,
         review_status=asset.review_status,
-        role=role,
+        role=access.role,
     ):
         raise NotFoundError(resource="asset", id=str(asset_id))
     return access, asset
@@ -223,7 +222,8 @@ async def auto_rename_asset(
     """按论文元数据强制重命名（Crossref / PDF 信息 / LLM）；仅 PDF，需已完成解析。"""
     from loomvec.core.mineru_client import MineruClient
     from loomvec.core.pipeline import PipelineDeps
-    from loomvec.core.pipeline.paper_meta import PDF_MIME, auto_rename_asset as do_rename
+    from loomvec.core.pipeline.paper_meta import PDF_MIME
+    from loomvec.core.pipeline.paper_meta import auto_rename_asset as do_rename
 
     access, asset = await _load_asset_detail(session, asset_id, identity)
     _require_asset_manager(
@@ -244,7 +244,8 @@ async def auto_rename_asset(
         mineru=MineruClient(settings.mineru),
         milvus=milvus,
     )
-    new_name = await do_rename(deps, asset_id, force=True)  # API/右键路径始终 force；管线自动命名走默认 False
+    # API/右键路径始终 force；管线自动命名走默认 False
+    new_name = await do_rename(deps, asset_id, force=True)
     await session.refresh(asset)
     if new_name:
         return AutoRenameOut(name=new_name, renamed=True)
@@ -260,10 +261,10 @@ async def auto_rename_asset(
 def _require_asset_manager(access: SpaceAccess, asset, user_id: uuid.UUID | None) -> None:
     """editor 仅可管理自己上传的资产；owner 不限；viewer 拒绝（doc 05 能力矩阵）。
 
-    API Key 身份（member 为空）按租户级 editor 兜底，仅可管理 API Key 登记的资产。
+    API Key 身份（member 为空、effective_role 默认 EDITOR）按租户级 editor 兜底，
+    仅可管理 API Key 登记的资产；公共空间虚拟 viewer 走 access.role=VIEWER 拒绝写入。
     """
-    role = access.role if access.member else SpaceRole.EDITOR
-    if not can_manage_asset(role=role, asset_created_by=asset.created_by, user_id=user_id):
+    if not can_manage_asset(role=access.role, asset_created_by=asset.created_by, user_id=user_id):
         raise PermissionDeniedError(reason="无该资产的编辑/删除权限（editor 仅限本人上传）")
 
 
@@ -342,6 +343,18 @@ async def preview_asset(
         )
     if version.inline_text is not None:
         return PreviewOut(
-            mode="markdown", content=version.inline_text, page_count=1, original_url=None
+            mode="markdown",
+            content=version.inline_text,
+            page_count=1,
+            original_url=_original_url(),
         )
+    # 尚无解析产物时仍暴露原文（mode=file，避免前端把空 markdown 当成「解析中」）
+    if asset.storage_key:
+        url = _original_url()
+        if url:
+            return PreviewOut(
+                mode="file",
+                original_url=url,
+                page_count=parse_meta.get("page_count"),
+            )
     raise NotFoundError(resource="preview", id=str(asset_id))

@@ -12,9 +12,9 @@
 - 被移除成员即失权：一切判定即时查 space_member，不缓存。
 
 公共空间（P5 运营端）：`user_group_ids` / `visible_public_spaces` /
-`linked_public_space_ids` —— 可见性 = 空间分组勾选 × 用户所属分组，
-检索生效再叠加用户链接（space_link）；与成员关系（space_member）完全解耦，
-公共空间不向普通用户开放内容浏览，仅可作问答检索源。
+`linked_public_space_ids` —— 可见性 = 空间分组勾选 × 用户所属分组；
+可见即可只读浏览（虚拟 viewer，无 space_member 行）；检索生效再叠加
+用户链接（space_link）。写操作仍要求真实成员 editor/owner。
 """
 
 from __future__ import annotations
@@ -89,18 +89,20 @@ def decide_asset_visibility(
 class SpaceAccess:
     """通过校验后的空间访问上下文（space + 成员行）。
 
-    member 为 None 表示 API Key 身份的租户级兜底（deps.resolve_space_access）：
-    无成员行，权限上限 editor——role 据此返回 EDITOR，消费方无需各自判空
-    （检索 _resolve_scope / 资产列表 include_unreviewed 等此前直接取 .role）。
+    member 为 None 时须靠 effective_role 表达权限：
+    - API Key 租户兜底（deps.resolve_space_access）：省略 effective_role → EDITOR；
+    - 公共空间分组可见浏览：effective_role=VIEWER（无 space_member 行）。
     """
 
     space: Space
     member: SpaceMember | None
+    effective_role: SpaceRole | None = None
 
     @property
     def role(self) -> SpaceRole:
-        # API Key（租户兜底）无成员行：上限 editor，与 deps.py 的 key 权限约定一致
-        return self.member.role if self.member is not None else SpaceRole.EDITOR
+        if self.member is not None:
+            return self.member.role
+        return self.effective_role if self.effective_role is not None else SpaceRole.EDITOR
 
 
 async def get_membership(
@@ -120,9 +122,12 @@ async def require_space_role(
     user_id: uuid.UUID,
     min_role: SpaceRole | str = SpaceRole.VIEWER,
 ) -> SpaceAccess:
-    """空间访问闸门：空间必须存在，且请求者是具备最低角色的成员。
+    """空间访问闸门：成员角色满足最低要求，或公共空间分组可见的只读浏览。
 
-    非成员与无权限统一 403（不泄露空间存在性）；空间不存在 404。
+    - 真实成员：按 space_member.role 与 min_role 比较；
+    - 非成员：若空间对用户分组可见且 min_role=viewer，授予虚拟 viewer；
+    - 写/管理闸门（editor/owner）仍要求真实成员；
+    - 非成员与无权限统一 403（不泄露空间存在性）；空间不存在 404。
     """
     space = (
         await session.execute(select(Space).where(Space.id == space_id, Space.deleted_at.is_(None)))
@@ -130,9 +135,16 @@ async def require_space_role(
     if space is None:
         raise NotFoundError(resource="space", id=str(space_id))
     member = await get_membership(session, space_id=space_id, user_id=user_id)
-    if member is None or not at_least(member.role, min_role):
-        raise PermissionDeniedError(reason="无该空间访问权限", space_id=str(space_id))
-    return SpaceAccess(space=space, member=member)
+    if member is not None:
+        if not at_least(member.role, min_role):
+            raise PermissionDeniedError(reason="无该空间访问权限", space_id=str(space_id))
+        return SpaceAccess(space=space, member=member)
+    # 虚拟 viewer：仅满足只读闸门；写路径（editor+）仍 403
+    if SpaceRole(min_role) == SpaceRole.VIEWER and await is_public_space_visible(
+        session, space=space, user_id=user_id
+    ):
+        return SpaceAccess(space=space, member=None, effective_role=SpaceRole.VIEWER)
+    raise PermissionDeniedError(reason="无该空间访问权限", space_id=str(space_id))
 
 
 async def visible_space_ids(session: AsyncSession, *, user_id: uuid.UUID) -> list[uuid.UUID]:
@@ -172,7 +184,7 @@ def _public_space_filter():
 
 
 async def visible_public_spaces(session: AsyncSession, *, user_id: uuid.UUID) -> list[Space]:
-    """当前用户经分组可见的公共空间（用户端"可链接"列表的唯一取数）。"""
+    """当前用户经分组可见的公共空间（用户端列表与只读浏览资格的唯一取数）。"""
     group_ids = await user_group_ids(session, user_id=user_id)
     if not group_ids:
         return []
@@ -189,7 +201,7 @@ async def visible_public_spaces(session: AsyncSession, *, user_id: uuid.UUID) ->
 async def is_public_space_visible(
     session: AsyncSession, *, space: Space, user_id: uuid.UUID
 ) -> bool:
-    """单个公共空间对用户是否可见（链接资格判定，与列表同口径）。
+    """单个公共空间对用户是否可见（浏览/链接资格判定，与列表同口径）。
 
     有效行三条件与 _public_space_filter() 一致（已加载行无法复用列表达式，
     字段变更时两处需同步修改）。

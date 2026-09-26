@@ -7,6 +7,7 @@ import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
+import { useSpace } from '@/hooks';
 import {
   CHUNK_PRESETS,
   EMBEDDING_MODELS,
@@ -70,16 +71,7 @@ export function SpaceSettingsPage() {
     },
   });
 
-  const space = useQuery({
-    queryKey: ['space', spaceId],
-    queryFn: async () => {
-      const { data, error } = await api.GET('/api/v1/spaces/{space_id}', {
-        params: { path: { space_id: spaceId! } },
-      });
-      if (error) throw new Error(extractApiError(error, t('member.loadSpaceFailed')));
-      return data;
-    },
-  });
+  const space = useSpace(spaceId);
 
   const usage = useQuery({
     queryKey: ['space-usage', spaceId],

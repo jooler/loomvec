@@ -8,15 +8,18 @@ import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { JOB_PAGE_SIZE, JOB_STATUS_TONE } from './constants';
 import type { AssetJob } from './use-asset-queries';
 
-/** 任务记录卡：分页表 + 单步重跑。 */
+/** 任务记录卡：分页表 + 单步重跑（canRetry 时才露出重跑列）。 */
 export function JobsCard(props: {
   jobs: AssetJob[];
   loading: boolean;
   error?: Error | null;
+  /** 与后端 _require_asset_manager 对齐；虚拟 viewer / 无管理权时隐藏重跑。 */
+  canRetry?: boolean;
   onRetry: (step: string) => void;
 }) {
   const { t } = useTranslation('assetDetail');
   const [jobPage, setJobPage] = useState(1);
+  const canRetry = props.canRetry ?? false;
 
   const jobColumns: ColumnDef<AssetJob, unknown>[] = [
     {
@@ -64,15 +67,23 @@ export function JobsCard(props: {
           <span>-</span>
         ),
     },
-    {
-      id: 'actions',
-      header: t('field.actions'),
-      cell: ({ row }) => (
-        <Button variant="outline" size="xs" onClick={() => props.onRetry(row.original.job_type)}>
-          {t('jobs.retryStep')}
-        </Button>
-      ),
-    },
+    ...(canRetry
+      ? [
+          {
+            id: 'actions',
+            header: t('field.actions'),
+            cell: ({ row }: { row: { original: AssetJob } }) => (
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => props.onRetry(row.original.job_type)}
+              >
+                {t('jobs.retryStep')}
+              </Button>
+            ),
+          } satisfies ColumnDef<AssetJob, unknown>,
+        ]
+      : []),
   ];
 
   return (

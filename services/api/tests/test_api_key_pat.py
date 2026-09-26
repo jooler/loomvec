@@ -116,6 +116,43 @@ def test_space_access_role_defaults_to_editor_without_member():
     assert access.role == SpaceRole.EDITOR
 
 
+def test_space_access_virtual_viewer_effective_role():
+    access = SpaceAccess(space=_space(), member=None, effective_role=SpaceRole.VIEWER)
+    assert access.role == SpaceRole.VIEWER
+
+
+@pytest.mark.asyncio
+async def test_require_space_role_virtual_viewer_denied_for_editor(monkeypatch):
+    """分组可见的公共空间：viewer 闸门放行，editor/owner 仍 403。"""
+    from loomvec.core.authz import require_space_role
+    from loomvec.core.errors import PermissionDeniedError
+
+    space = _space()
+    session = _FakeSession(space, None)  # space row, then membership None
+
+    async def _visible(*_a, **_k):
+        return True
+
+    monkeypatch.setattr("loomvec.core.authz.is_public_space_visible", _visible)
+
+    access = await require_space_role(
+        session, space_id=SPACE_ID, user_id=USER_ID, min_role=SpaceRole.VIEWER
+    )
+    assert access.member is None and access.role == SpaceRole.VIEWER
+
+    session2 = _FakeSession(space, None)
+    with pytest.raises(PermissionDeniedError):
+        await require_space_role(
+            session2, space_id=SPACE_ID, user_id=USER_ID, min_role=SpaceRole.EDITOR
+        )
+
+    session3 = _FakeSession(space, None)
+    with pytest.raises(PermissionDeniedError):
+        await require_space_role(
+            session3, space_id=SPACE_ID, user_id=USER_ID, min_role=SpaceRole.OWNER
+        )
+
+
 def test_space_access_role_reads_member_role():
     from loomvec.core.db.models import SpaceMember
 

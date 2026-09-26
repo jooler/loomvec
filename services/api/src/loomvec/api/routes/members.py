@@ -15,7 +15,7 @@ from loomvec.api.deps import get_session, require_space
 from loomvec.api.services import spaces as space_service
 from loomvec.core.authz import SpaceAccess
 from loomvec.core.db.models import SpaceRole
-from loomvec.core.errors import NotFoundError
+from loomvec.core.errors import NotFoundError, PermissionDeniedError
 
 router = APIRouter(prefix="/api/v1", tags=["members"])
 
@@ -45,6 +45,9 @@ async def list_members(
     access: SpaceAccess = Depends(require_space()),
     session: AsyncSession = Depends(get_session),
 ) -> MemberListOut:
+    """成员列表：仅真实成员可见（公共空间虚拟 viewer 不可窥探运营方名单）。"""
+    if access.member is None:
+        raise PermissionDeniedError(reason="无该空间成员列表权限", space_id=str(access.space.id))
     from sqlalchemy import select
 
     from loomvec.core.db.models import User

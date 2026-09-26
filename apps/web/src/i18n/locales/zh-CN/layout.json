@@ -9,6 +9,8 @@
   "profileMenu": "个人中心",
   "logout": "退出登录",
   "spaceFallback": "空间",
+  "spaceAccessDenied": "无法打开该空间（无权限或不存在）",
+  "publicBadge": "公共",
   "reviewRequired": "需审核",
   "role": {
     "owner": "所有者",

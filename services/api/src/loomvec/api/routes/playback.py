@@ -78,7 +78,7 @@ async def _load_media_asset(
     if not decide_asset_visibility(
         review_required=access.space.review_required,
         review_status=asset.review_status,
-        role=access.role if access.member else SpaceRole.EDITOR,
+        role=access.role,
     ):
         raise NotFoundError(resource="asset", id=str(asset_id))
     version = await AssetVersionRepo(session).latest_for(asset.id)

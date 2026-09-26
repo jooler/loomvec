@@ -35,7 +35,22 @@ export function useMySpaces() {
   });
 }
 
-/** 公共空间条目（P5）：经分组可见；仅可链接/断开，不可进入浏览。 */
+/** 单个空间详情（含公共空间虚拟 viewer）；空间布局 / 资产页角色判定。 */
+export function useSpace(spaceId?: string | null) {
+  return useQuery({
+    queryKey: ['space', spaceId],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/spaces/{space_id}', {
+        params: { path: { space_id: spaceId! } },
+      });
+      if (error) throw new Error(extractApiError(error, t('spaces:loadSpaceFailed')));
+      return data;
+    },
+    enabled: !!spaceId,
+  });
+}
+
+/** 公共空间条目（P5）：经分组可见；可只读浏览；链接控制问答检索源。 */
 export interface PublicSpaceItem {
   id: string;
   slug: string;

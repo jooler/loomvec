@@ -5,7 +5,7 @@ import { GitMerge, RotateCcw, ShieldAlert, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
-import { useMySpaces } from '@/hooks';
+import { useSpace } from '@/hooks';
 import { extractApiError } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -60,8 +60,8 @@ export function GraphPage() {
   const { t } = useTranslation('graph');
   const [entityQuery, setEntityQuery] = useState('');
 
-  const spaces = useMySpaces();
-  const myRole = (spaces.data ?? []).find((s) => s.id === spaceId)?.my_role;
+  const spaceQuery = useSpace(spaceId);
+  const myRole = spaceQuery.data?.my_role;
   const isOwner = myRole === 'owner';
 
   const stats = useQuery({

@@ -214,7 +214,14 @@ async def space_usage(
     access: SpaceAccess = Depends(require_space()),
     session: AsyncSession = Depends(get_session),
 ) -> SpaceUsageOut:
-    """空间用量与配额（配额进度展示）。"""
+    """空间用量与配额（配额进度展示）。
+
+    仅真实成员可读：公共空间虚拟 viewer 不暴露运营方配额/用量。
+    """
+    if access.member is None:
+        from loomvec.core.errors import PermissionDeniedError
+
+        raise PermissionDeniedError(reason="无该空间用量权限", space_id=str(access.space.id))
     return SpaceUsageOut(**await space_service.space_usage_out(session, access.space))
 
 

@@ -1,11 +1,10 @@
-"""P5 用户端公共空间接口：可链接列表与链接开关。
+"""P5 用户端公共空间接口：可浏览列表与问答链接开关。
 
 公共空间对用户的语义边界（12 文档）：
 - 可见 = 运营端勾选的分组覆盖当前用户（visible_public_spaces 唯一取数）；
-- 用户只能"链接/断开"（space_link 开关），不能进入空间浏览内容——
-  资产/检索/图谱等用户域接口仍走 require_space 成员闸门，非成员一律 403；
-- 链接后该空间可作为问答检索源（chat scope_space_ids 合法值，
-  authz.linked_public_space_ids 即时校验分组可见性与封禁状态）。
+- 可见即可只读浏览内容（资产/检索/图谱走 require_space 虚拟 viewer）；
+- 链接/断开（space_link）仅控制是否作为问答检索源
+  （chat scope_space_ids 合法值，authz.linked_public_space_ids 即时校验）。
 """
 
 from __future__ import annotations
@@ -54,7 +53,7 @@ async def list_public_spaces(
     identity: Identity = Depends(require_scope("read")),
     session: AsyncSession = Depends(get_session),
 ) -> PublicSpaceListOut:
-    """当前用户经分组可见的公共空间（含链接状态；不可进入，仅可开关）。"""
+    """当前用户经分组可见的公共空间（含链接状态；可进入只读浏览）。"""
     spaces = await visible_public_spaces(session, user_id=user_uuid(identity))
     linked_ids = set(
         (

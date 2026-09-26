@@ -5,7 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
-import { useMySpaces, useSpaceCategories, useSpaceTags } from '@/hooks';
+import { useMySpaces, useSpace, useSpaceCategories, useSpaceTags } from '@/hooks';
 import { extractApiError, formatClock } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -115,14 +115,16 @@ export function SearchPage() {
   const [categoryId, setCategoryId] = useState<string | undefined>();
 
   const spaces = useMySpaces();
+  const currentSpace = useSpace(spaceId);
   const tags = useSpaceTags(spaceId);
   const categories = useSpaceCategories(spaceId);
 
   const spaceNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const s of spaces.data ?? []) map.set(s.id, s.name);
+    if (currentSpace.data) map.set(currentSpace.data.id, currentSpace.data.name);
     return map;
-  }, [spaces.data]);
+  }, [spaces.data, currentSpace.data]);
 
   const search = useMutation({
     mutationFn: async (q: string) => {

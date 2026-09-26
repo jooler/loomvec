@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
 import { t } from '@/i18n';
+import { useSpace } from '@/hooks';
 import { extractApiError, ROLE_TONE } from '@/utils';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
@@ -58,16 +59,7 @@ export function SpaceMembersPage() {
     defaultValues: { username: '', role: 'viewer' },
   });
 
-  const space = useQuery({
-    queryKey: ['space', spaceId],
-    queryFn: async () => {
-      const { data, error } = await api.GET('/api/v1/spaces/{space_id}', {
-        params: { path: { space_id: spaceId! } },
-      });
-      if (error) throw new Error(extractApiError(error, t('member.loadSpaceFailed')));
-      return data;
-    },
-  });
+  const space = useSpace(spaceId);
 
   const members = useQuery({
     queryKey: ['space-members', spaceId],
@@ -82,6 +74,7 @@ export function SpaceMembersPage() {
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['space-members', spaceId] });
+    void queryClient.invalidateQueries({ queryKey: ['space', spaceId] });
     void queryClient.invalidateQueries({ queryKey: ['spaces'] });
   };
 
