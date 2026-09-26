@@ -18,6 +18,7 @@ export { STATUS_TONE } from './finder-views';
 export type {
   FinderFolder,
   FinderAsset,
+  FinderPaperMeta,
   FinderViewMode,
   FinderClipboard,
   FinderActions,

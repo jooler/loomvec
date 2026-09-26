@@ -14,7 +14,7 @@ from __future__ import annotations
 import io
 import re
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import httpx
@@ -50,6 +50,7 @@ class PaperMeta:
     journal: str | None = None
     title: str | None = None
     first_author: str | None = None
+    authors: list[str] = field(default_factory=list)
     doi: str | None = None
     source: str = ""
 
@@ -87,6 +88,15 @@ def _first(values: Any) -> str | None:
     return None
 
 
+def _crossref_author_label(entry: dict[str, Any]) -> str | None:
+    """展示用：Family, Given；无 given 则 family / name。"""
+    family = str(entry.get("family") or "").strip()
+    given = str(entry.get("given") or "").strip()
+    if family and given:
+        return f"{family}, {given}"
+    return family or given or (str(entry.get("name") or "").strip() or None)
+
+
 def parse_crossref(message: dict[str, Any], doi: str) -> PaperMeta:
     year = None
     for key in ("published-print", "published-online", "issued", "created"):
@@ -99,15 +109,24 @@ def parse_crossref(message: dict[str, Any], doi: str) -> PaperMeta:
         full = _first(message.get("container-title"))
         acronym = _ACRONYM_RE.search(full or "")
         journal = acronym.group(1) if acronym else full
-    authors = message.get("author") or []
+    raw_authors = message.get("author") or []
+    authors: list[str] = []
     first_author = None
-    if authors and isinstance(authors[0], dict):
-        first_author = authors[0].get("family") or authors[0].get("name")
+    for i, entry in enumerate(raw_authors):
+        if not isinstance(entry, dict):
+            continue
+        label = _crossref_author_label(entry)
+        if label:
+            authors.append(label)
+        if i == 0:
+            # first_author 保留「姓」供文件名；authors 用展示标签 Family, Given
+            first_author = entry.get("family") or entry.get("name") or label
     return PaperMeta(
         year=year,
         journal=journal,
         title=_first(message.get("title")),
         first_author=first_author,
+        authors=authors,
         doi=doi,
         source="crossref",
     )
@@ -151,8 +170,13 @@ def meta_from_pdf_info(info: dict[str, str]) -> PaperMeta:
     title = info.get("title")
     if title and (len(title) < 10 or _JUNK_PDF_TITLE_RE.search(title)):
         title = None
-    author = (info.get("author") or "").split(";")[0].split(",")[0].strip() or None
-    return PaperMeta(title=title, first_author=author, source="pdf_info")
+    raw = (info.get("author") or "").strip()
+    authors = [a.strip() for a in re.split(r"[;|]", raw) if a.strip()] if raw else []
+    first_author = None
+    if authors:
+        # 文件名仍用「姓」：取第一作者逗号前段
+        first_author = authors[0].split(",")[0].strip() or authors[0]
+    return PaperMeta(title=title, first_author=first_author, authors=authors, source="pdf_info")
 
 
 # ---------- 来源 3：LLM 读开头 ----------
@@ -162,8 +186,10 @@ def build_paper_meta_messages(head: str) -> list[dict[str, str]]:
     system = (
         "你是学术文献元数据抽取器。根据论文开头文本输出 JSON（仅输出 JSON）：\n"
         '{"is_paper": true, "year": 2021, "journal": "期刊或会议名（有通用缩写用缩写）", '
-        '"title": "论文标题", "first_author": "第一作者姓（中文用全名）"}\n'
+        '"title": "论文标题", "first_author": "第一作者姓（中文用全名）", '
+        '"authors": ["Family, Given", "…"]}\n'
         '规则：非学术论文（合同、报告、手册等）返回 {"is_paper": false}；'
+        "authors 按文中出现顺序列出（最多 8 人，超出省略）；"
         "文中找不到的字段填 null，不要猜测。"
     )
     user = f"[LOOMVEC_TASK={_TASK_TAG}]\n{head}"
@@ -187,11 +213,22 @@ def parse_llm_meta(data: dict[str, Any]) -> PaperMeta | None:
             return None
         return str(value).strip() or None
 
+    authors: list[str] = []
+    raw_authors = data.get("authors")
+    if isinstance(raw_authors, list):
+        for item in raw_authors[:8]:
+            if item and str(item).strip():
+                authors.append(str(item).strip())
+    first_author = text("first_author")
+    if not first_author and authors:
+        first_author = authors[0].split(",")[0].strip() or authors[0]
+
     return PaperMeta(
         year=year,
         journal=text("journal"),
         title=text("title"),
-        first_author=text("first_author"),
+        first_author=first_author,
+        authors=authors,
         source="llm",
     )
 
@@ -217,9 +254,13 @@ def build_paper_filename(meta: PaperMeta, ext: str = ".pdf") -> str:
 
 
 def _fill_missing(meta: PaperMeta, fallback: PaperMeta) -> PaperMeta:
-    for key in ("year", "journal", "title", "first_author"):
+    for key in ("year", "journal", "title", "first_author", "doi"):
         if not getattr(meta, key) and getattr(fallback, key):
             setattr(meta, key, getattr(fallback, key))
+    if not meta.authors and fallback.authors:
+        meta.authors = list(fallback.authors)
+    if not meta.first_author and meta.authors:
+        meta.first_author = meta.authors[0].split(",")[0].strip() or meta.authors[0]
     return meta
 
 
@@ -243,7 +284,7 @@ async def extract_paper_meta(
         data = await deps.ai.complete_json(
             build_paper_meta_messages(markdown_head[:HEAD_CHARS_LLM]),
             temperature=0,
-            max_tokens=200,
+            max_tokens=400,
         )
     except Exception as e:
         logger.warning("paper_llm_failed", error=str(e))
@@ -293,8 +334,13 @@ def _renamable(asset: Asset, version: AssetVersion) -> bool:
     return asset.name in {_uploaded_name(version), paper.get("auto_name")}
 
 
-async def auto_rename_asset(deps: PipelineDeps, asset_id: uuid.UUID) -> str | None:
-    """返回新名称；不适用 / 失败返回 None（从不抛异常）。"""
+async def auto_rename_asset(
+    deps: PipelineDeps, asset_id: uuid.UUID, *, force: bool = False
+) -> str | None:
+    """返回新名称；不适用 / 失败返回 None（从不抛异常）。
+
+    force=True：忽略 checksum 幂等与「用户手动改名则跳过」——供右键「重新自动命名」。
+    """
     if not deps.settings.pipeline.auto_rename_papers:
         return None
     try:
@@ -303,7 +349,9 @@ async def auto_rename_asset(deps: PipelineDeps, asset_id: uuid.UUID) -> str | No
             if asset is None or version is None or asset.mime_type != PDF_MIME:
                 return None
             paper = asset.asset_meta.get("paper") or {}
-            if paper.get("checksum") == version.checksum or not _renamable(asset, version):
+            if not force and (
+                paper.get("checksum") == version.checksum or not _renamable(asset, version)
+            ):
                 return None
             pdf_info = asset.asset_meta.get("pdf_info") or {}
             head = await _load_markdown_head(deps, version)
@@ -313,9 +361,11 @@ async def auto_rename_asset(deps: PipelineDeps, asset_id: uuid.UUID) -> str | No
 
         async with deps.session_factory() as session:
             asset, version = await _load(session, asset_id)
-            if asset is None or version is None or not _renamable(asset, version):
+            if asset is None or version is None:
                 return None
-            original = paper.get("original_name") or asset.name
+            if not force and not _renamable(asset, version):
+                return None
+            original = paper.get("original_name") or _uploaded_name(version) or asset.name
             record: dict[str, Any] = {"checksum": version.checksum, "original_name": original}
             new_name = None
             if meta is not None and meta.usable:
@@ -327,7 +377,7 @@ async def auto_rename_asset(deps: PipelineDeps, asset_id: uuid.UUID) -> str | No
             asset.asset_meta = {**asset.asset_meta, "paper": record}
             await session.commit()
         if new_name:
-            logger.info("paper_auto_renamed", asset_id=str(asset_id), name=new_name)
+            logger.info("paper_auto_renamed", asset_id=str(asset_id), name=new_name, force=force)
         return new_name
     except Exception as e:
         logger.warning("paper_auto_rename_failed", asset_id=str(asset_id), error=str(e))

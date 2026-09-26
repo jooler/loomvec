@@ -355,6 +355,46 @@ async def retry_asset(
     return asset
 
 
+def paper_meta_out(asset_meta: dict | None) -> dict | None:
+    """asset_meta.paper → 列表投影；非论文 / 无可用字段返回 None。"""
+    paper = (asset_meta or {}).get("paper") or {}
+    # 仅显式 is_paper=False 隐藏；缺省/True 只要有字段仍投影（兼容旧 meta）
+    if not isinstance(paper, dict) or paper.get("is_paper") is False:
+        return None
+    authors = paper.get("authors")
+    if not isinstance(authors, list):
+        authors = []
+    authors = [str(a).strip() for a in authors if a and str(a).strip()]
+    first_author = paper.get("first_author")
+    if isinstance(first_author, str):
+        first_author = first_author.strip() or None
+    else:
+        first_author = None
+    # 旧记录只有 first_author 时垫进 authors，供列表列展示
+    if not authors and first_author:
+        authors = [first_author]
+    year = paper.get("year")
+    try:
+        year = int(year) if year is not None else None
+    except (TypeError, ValueError):
+        year = None
+    journal = paper.get("journal")
+    title = paper.get("title")
+    doi = paper.get("doi")
+    source = paper.get("source")
+    if not any((year, journal, title, first_author, authors, doi)):
+        return None
+    return {
+        "year": year,
+        "journal": str(journal).strip() if journal else None,
+        "title": str(title).strip() if title else None,
+        "first_author": first_author,
+        "authors": authors,
+        "doi": str(doi).strip() if doi else None,
+        "source": str(source).strip() if source else None,
+    }
+
+
 def asset_out(asset: Asset, *, my_role: SpaceRole | str | None = None) -> dict:
     """资产 → 响应 dict（AssetOut 模型字段）。"""
     return {
@@ -371,6 +411,7 @@ def asset_out(asset: Asset, *, my_role: SpaceRole | str | None = None) -> dict:
         "page_count": asset.asset_meta.get("page_count"),
         "checksum": asset.checksum,
         "folder_id": asset.folder_id,
+        "paper": paper_meta_out(asset.asset_meta),
         "created_at": asset.created_at,
         "created_by": asset.created_by,
     }

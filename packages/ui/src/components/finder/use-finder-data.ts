@@ -287,6 +287,30 @@ export function useColumnsFolderAssets(
     onError: (e) => fail(e, t('ui:finderData.retryFailed')),
   });
 
+  const autoRenameAssets = useMutation({
+    mutationFn: async (assetIds: string[]) => {
+      const results: { name: string; renamed: boolean; reason?: string | null }[] = [];
+      for (const assetId of assetIds) {
+        const { data, error } = await client.POST('/api/v1/assets/{asset_id}/auto-rename', {
+          params: { path: { asset_id: assetId } },
+        });
+        if (error) throw new Error(extractApiError(error, t('ui:finderData.autoRenameFailed')));
+        if (data) results.push(data);
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      const renamed = results.filter((r) => r.renamed).length;
+      if (renamed > 0) {
+        toast.success(t('ui:finderData.autoRenamedCount', { count: renamed }));
+      } else {
+        toast.info(results[0]?.reason || t('ui:finderData.autoRenameUnchanged'));
+      }
+      invalidateAll();
+    },
+    onError: (e) => fail(e, t('ui:finderData.autoRenameFailed')),
+  });
+
   return {
     createFolder,
     renameFolder,
@@ -298,6 +322,7 @@ export function useColumnsFolderAssets(
     deleteFolder,
     deleteAsset,
     retryAsset,
+    autoRenameAssets,
     invalidateAll,
   };
 }

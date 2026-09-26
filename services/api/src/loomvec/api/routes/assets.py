@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.api.context import Identity
 from loomvec.api.deps import (
+    get_ai,
     get_milvus,
     get_session,
     get_storage,
@@ -24,6 +25,7 @@ from loomvec.api.schemas.assets import (
     AssetListOut,
     AssetOut,
     AssetPatchRequest,
+    AutoRenameOut,
     PreviewOut,
     RenditionOut,
     TagOut,
@@ -38,7 +40,7 @@ from loomvec.core.authz import (
 from loomvec.core.config import Settings
 from loomvec.core.db.models import SpaceRole
 from loomvec.core.db.repos import AssetRenditionRepo, AssetRepo, AssetVersionRepo, TagRepo
-from loomvec.core.errors import NotFoundError, PermissionDeniedError
+from loomvec.core.errors import NotFoundError, PermissionDeniedError, ValidationError
 from loomvec.core.storage import ObjectStorage
 
 router = APIRouter(prefix="/api/v1", tags=["assets"])
@@ -205,6 +207,54 @@ async def patch_asset(
         unset_folder=body.unset_folder,
     )
     return await _build_detail(session, asset, settings, storage)
+
+
+@router.post("/assets/{asset_id}/auto-rename", response_model=AutoRenameOut)
+async def auto_rename_asset(
+    asset_id: uuid.UUID,
+    request: Request,
+    identity: Identity = Depends(require_scope("write")),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(service_settings),
+    storage: ObjectStorage = Depends(get_storage),
+    ai=Depends(get_ai),
+    milvus=Depends(get_milvus),
+) -> AutoRenameOut:
+    """按论文元数据强制重命名（Crossref / PDF 信息 / LLM）；仅 PDF，需已完成解析。"""
+    from loomvec.core.mineru_client import MineruClient
+    from loomvec.core.pipeline import PipelineDeps
+    from loomvec.core.pipeline.paper_meta import PDF_MIME, auto_rename_asset as do_rename
+
+    access, asset = await _load_asset_detail(session, asset_id, identity)
+    _require_asset_manager(
+        access, asset, user_uuid(identity) if not identity.user_id.startswith("apikey:") else None
+    )
+    if asset.mime_type != PDF_MIME:
+        raise ValidationError("仅支持 PDF 论文自动命名")
+    version = await AssetVersionRepo(session).latest_for(asset_id)
+    parse_meta = ((version.version_meta if version else None) or {}).get("parse") or {}
+    if not parse_meta.get("md_key"):
+        raise ValidationError("尚未解析完成，无法自动命名；请先完成处理或重试管线")
+
+    deps = PipelineDeps(
+        settings=settings,
+        session_factory=request.app.state.session_factory,
+        storage=storage,
+        ai=ai,
+        mineru=MineruClient(settings.mineru),
+        milvus=milvus,
+    )
+    new_name = await do_rename(deps, asset_id, force=True)  # API/右键路径始终 force；管线自动命名走默认 False
+    await session.refresh(asset)
+    if new_name:
+        return AutoRenameOut(name=new_name, renamed=True)
+    # 可能未改名但 paper 元数据已写：重新加载名称
+    await session.refresh(asset)
+    return AutoRenameOut(
+        name=asset.name,
+        renamed=False,
+        reason="未能识别为论文或元数据不足，名称未改动",
+    )
 
 
 def _require_asset_manager(access: SpaceAccess, asset, user_id: uuid.UUID | None) -> None:

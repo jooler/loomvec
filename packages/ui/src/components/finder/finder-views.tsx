@@ -42,7 +42,18 @@ export interface FinderViewProps {
   thumbFor: (asset: FinderAsset) => string | null;
   /** 条目右键菜单内容（ContextMenu Content 片段）。 */
   menuFor: (kind: 'folder' | 'asset', id: string) => React.ReactNode;
-  onSelect: (kind: 'folder' | 'asset', id: string, additive: boolean) => void;
+  /**
+   * 选中条目。
+   * - 普通点击：单选
+   * - Ctrl/⌘：加减选
+   * - Shift：从锚点到当前项的连续选（orderedItems 决定顺序）
+   */
+  onSelect: (
+    kind: 'folder' | 'asset',
+    id: string,
+    mods: { additive: boolean; range: boolean },
+    orderedItems?: Array<{ kind: 'folder' | 'asset'; id: string }>,
+  ) => void;
   onOpen: (kind: 'folder' | 'asset', id: string) => void;
   onRenameSubmit: (name: string) => void;
   onRenameCancel: () => void;
@@ -81,6 +92,21 @@ function StatusBits({ asset, compact }: { asset: FinderAsset; compact?: boolean 
   );
 }
 
+/** 作者列展示：≤2 全列；更多则首两位 + et al.；兼容仅有 first_author 的旧数据。 */
+function formatAuthors(asset: FinderAsset): string {
+  const paper = asset.paper;
+  if (!paper) return '';
+  const authors =
+    paper.authors && paper.authors.length > 0
+      ? paper.authors
+      : paper.first_author
+        ? [paper.first_author]
+        : [];
+  if (authors.length === 0) return '';
+  if (authors.length <= 2) return authors.join('; ');
+  return `${authors[0]}; ${authors[1]} et al.`;
+}
+
 /** 行内重命名输入框（回车提交 / Esc 取消 / 失焦提交）。 */
 function RenameInput({
   defaultName,
@@ -113,14 +139,37 @@ function RenameInput({
   );
 }
 
+type FinderItemRef = { kind: 'folder' | 'asset'; id: string };
+
+/** 当前视图/列的可见顺序（文件夹在前，资产在后）。 */
+export function finderOrderedItems(
+  folders: FinderFolder[],
+  assets: FinderAsset[],
+): FinderItemRef[] {
+  return [
+    ...folders.map((f) => ({ kind: 'folder' as const, id: f.id })),
+    ...assets.map((a) => ({ kind: 'asset' as const, id: a.id })),
+  ];
+}
+
 /** 条目外壳：右键菜单 + 拖拽源 + 拖拽目标（文件夹）+ 选中/打开交互。 */
-function itemHandlers(props: FinderViewProps, kind: 'folder' | 'asset', id: string) {
+function itemHandlers(
+  props: FinderViewProps,
+  kind: 'folder' | 'asset',
+  id: string,
+  orderedItems?: FinderItemRef[],
+) {
   return {
     draggable: !(props.renaming?.kind === kind && props.renaming.id === id),
     onDragStart: (e: React.DragEvent) => props.onDragStartItem(e, kind, id),
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation();
-      props.onSelect(kind, id, e.metaKey || e.ctrlKey);
+      props.onSelect(
+        kind,
+        id,
+        { additive: e.metaKey || e.ctrlKey, range: e.shiftKey },
+        orderedItems,
+      );
     },
     onDoubleClick: (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -175,6 +224,7 @@ function WithMenu({
 
 export function FinderListView(props: FinderViewProps) {
   const { t } = useTranslation();
+  const ordered = finderOrderedItems(props.folders, props.assets);
   const rows: React.ReactNode[] = [];
   for (const f of props.folders) {
     const selected = props.selectedFolders.has(f.id);
@@ -186,7 +236,7 @@ export function FinderListView(props: FinderViewProps) {
             'cursor-default border-b border-border/40 select-none',
             selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
           )}
-          {...itemHandlers(props, 'folder', f.id)}
+          {...itemHandlers(props, 'folder', f.id, ordered)}
         >
           <td className="max-w-0 px-3 py-1.5">
             <span className="flex items-center gap-2">
@@ -203,6 +253,9 @@ export function FinderListView(props: FinderViewProps) {
             </span>
           </td>
           <td className="px-3 py-1.5 text-muted-foreground">--</td>
+          <td className="px-3 py-1.5 text-muted-foreground">--</td>
+          <td className="px-3 py-1.5 text-muted-foreground">--</td>
+          <td className="px-3 py-1.5 text-muted-foreground">--</td>
           <td className="px-3 py-1.5 text-muted-foreground">{t('finder.folderKind')}</td>
           <td className="px-3 py-1.5 text-muted-foreground">
             {new Date(f.created_at).toLocaleDateString()}
@@ -214,6 +267,7 @@ export function FinderListView(props: FinderViewProps) {
   for (const a of props.assets) {
     const selected = props.selectedAssets.has(a.id);
     const isRenaming = props.renaming?.kind === 'asset' && props.renaming.id === a.id;
+    const authors = formatAuthors(a);
     rows.push(
       <WithMenu key={a.id} menu={props.menuFor('asset', a.id)}>
         <tr
@@ -221,7 +275,7 @@ export function FinderListView(props: FinderViewProps) {
             'cursor-default border-b border-border/40 select-none',
             selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
           )}
-          {...itemHandlers(props, 'asset', a.id)}
+          {...itemHandlers(props, 'asset', a.id, ordered)}
         >
           <td className="max-w-0 px-3 py-1.5">
             <span className="flex items-center gap-2">
@@ -235,6 +289,19 @@ export function FinderListView(props: FinderViewProps) {
               ) : (
                 <span className="truncate">{a.name}</span>
               )}
+            </span>
+          </td>
+          <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums">
+            {a.paper?.year ?? ''}
+          </td>
+          <td className="max-w-[12rem] px-3 py-1.5 text-muted-foreground">
+            <span className="block truncate" title={authors || undefined}>
+              {authors}
+            </span>
+          </td>
+          <td className="max-w-[10rem] px-3 py-1.5 text-muted-foreground">
+            <span className="block truncate" title={a.paper?.journal || undefined}>
+              {a.paper?.journal ?? ''}
             </span>
           </td>
           <td className="px-3 py-1.5 text-muted-foreground">{formatBytes(a.size_bytes)}</td>
@@ -254,6 +321,9 @@ export function FinderListView(props: FinderViewProps) {
         <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
           <tr className="text-left text-xs text-muted-foreground">
             <th className="px-3 py-2 font-medium">{t('finder.colName')}</th>
+            <th className="w-16 px-3 py-2 font-medium">{t('finder.colYear')}</th>
+            <th className="w-44 px-3 py-2 font-medium">{t('finder.colAuthors')}</th>
+            <th className="w-36 px-3 py-2 font-medium">{t('finder.colJournal')}</th>
             <th className="w-24 px-3 py-2 font-medium">{t('finder.colSize')}</th>
             <th className="w-28 px-3 py-2 font-medium">{t('finder.colStatus')}</th>
             <th className="w-40 px-3 py-2 font-medium">{t('finder.colModified')}</th>
@@ -270,6 +340,7 @@ export function FinderListView(props: FinderViewProps) {
 // ---------------------------------------------------------------------------
 
 export function FinderGalleryView(props: FinderViewProps) {
+  const ordered = finderOrderedItems(props.folders, props.assets);
   return (
     <div
       className="min-h-64 flex-1 overflow-auto rounded-md border p-3"
@@ -286,7 +357,7 @@ export function FinderGalleryView(props: FinderViewProps) {
                   'flex cursor-default flex-col items-center gap-1.5 rounded-lg p-2 select-none',
                   selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
                 )}
-                {...itemHandlers(props, 'folder', f.id)}
+                {...itemHandlers(props, 'folder', f.id, ordered)}
               >
                 <Folder className="size-12 shrink-0 text-muted-foreground" strokeWidth={1.25} />
                 {isRenaming ? (
@@ -315,7 +386,7 @@ export function FinderGalleryView(props: FinderViewProps) {
                   'flex cursor-default flex-col items-center gap-1.5 rounded-lg p-2 select-none',
                   selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
                 )}
-                {...itemHandlers(props, 'asset', a.id)}
+                {...itemHandlers(props, 'asset', a.id, ordered)}
               >
                 {a.is_image ? (
                   thumb ? (
@@ -413,6 +484,7 @@ function Column({
 }) {
   const folders = props.foldersOf(folderId);
   const assets = props.assetsOf(folderId);
+  const ordered = finderOrderedItems(folders, assets);
   const onPath = (id: string) => props.path.includes(id);
   const { t } = useTranslation();
   return (
@@ -433,11 +505,14 @@ function Column({
                 'flex cursor-default items-center gap-2 px-2 py-1.5 text-[13px] select-none',
                 selected || onPath(f.id) ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
               )}
-              {...itemHandlers(props, 'folder', f.id)}
+              {...itemHandlers(props, 'folder', f.id, ordered)}
               onClick={(e) => {
                 e.stopPropagation();
-                props.onSelect('folder', f.id, e.metaKey || e.ctrlKey);
-                props.onDescend(depth, f.id);
+                const additive = e.metaKey || e.ctrlKey;
+                const range = e.shiftKey;
+                props.onSelect('folder', f.id, { additive, range }, ordered);
+                // 加减选 / 连续选时不下钻，避免 path 变更清空选中
+                if (!additive && !range) props.onDescend(depth, f.id);
               }}
             >
               <Folder className="size-4 shrink-0 text-muted-foreground" />
@@ -465,7 +540,7 @@ function Column({
                 'flex cursor-default items-center gap-2 px-2 py-1.5 text-[13px] select-none',
                 selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
               )}
-              {...itemHandlers(props, 'asset', a.id)}
+              {...itemHandlers(props, 'asset', a.id, ordered)}
             >
               <FileGlyph asset={a} className="size-4 shrink-0 text-muted-foreground" />
               {isRenaming ? (

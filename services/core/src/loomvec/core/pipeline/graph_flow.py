@@ -170,24 +170,62 @@ class EntityGraphService:
         return clusters, {(c.norm, c.type): c for c in clusters}
 
     async def _link_exact(self, clusters: list[_Cluster], asset: Asset) -> None:
+        """精确链接：先匹配存活实体；未命中再查软删/已合并行，跟合并链或复活。
+
+        唯一约束 uq_entity_space_norm_type 覆盖软删行——忽略 tombstone 会误 INSERT 撞车。
+        """
         rows = (
             await self._session.execute(
                 select(Entity).where(
                     Entity.space_id == asset.space_id,
-                    Entity.deleted_at.is_(None),
-                    Entity.merged_into.is_(None),
                     Entity.name_norm.in_([c.norm for c in clusters]),
                 )
             )
         ).scalars()
+        # 同 (norm, type) 优先存活未合并行；否则保留任意一行供后续解析
         by_norm_type: dict[tuple[str, str], Entity] = {}
         for e in rows:
-            by_norm_type.setdefault((e.name_norm, e.type), e)
+            key = (e.name_norm, e.type)
+            prev = by_norm_type.get(key)
+            if prev is None or (
+                (prev.deleted_at is not None or prev.merged_into is not None)
+                and e.deleted_at is None
+                and e.merged_into is None
+            ):
+                by_norm_type[key] = e
         for c in clusters:
             existing = by_norm_type.get((c.norm, c.type))
-            if existing is not None:
-                c.key = existing.entity_key
-                c.resolved_id = existing.id
+            if existing is None:
+                continue
+            revive = existing.deleted_at is not None and existing.merged_into is None
+            target = await self._resolve_live_entity(existing)
+            if target is None:
+                continue
+            c.key = target.entity_key
+            c.resolved_id = target.id
+            if revive and target.id == existing.id:
+                c.is_new = True  # 软删复活后补写 Milvus 向量
+
+    async def _resolve_live_entity(self, entity: Entity) -> Entity | None:
+        """沿 merged_into 找到存活目标；无合并的软删行则复活后返回。"""
+        session = self._session
+        current = entity
+        seen: set[UUID] = set()
+        while current.merged_into is not None:
+            if current.id in seen:
+                return None
+            seen.add(current.id)
+            nxt = (
+                await session.execute(select(Entity).where(Entity.id == current.merged_into))
+            ).scalar_one_or_none()
+            if nxt is None:
+                break
+            current = nxt
+        if current.deleted_at is not None and current.merged_into is None:
+            current.deleted_at = None
+        if current.deleted_at is not None:
+            return None
+        return current
 
     async def _link_vector(self, clusters: list[_Cluster], asset: Asset) -> None:
         """未精确命中的簇 → Milvus entities top-1 ≥ 阈值判同（跨写法链接）。"""
@@ -302,38 +340,56 @@ class EntityGraphService:
     # ---------- 主表与向量 ----------
 
     async def _upsert_master_rows(self, clusters: list[_Cluster], asset: Asset) -> None:
+        """写 PG 主表：按 entity_key / (space,norm,type) 复用含软删行，避免唯一约束冲突。"""
         session = self._session
         keys = [c.key for c in clusters]
         existing_rows = (
-            await session.execute(
-                select(Entity).where(Entity.entity_key.in_(keys), Entity.deleted_at.is_(None))
-            )
+            await session.execute(select(Entity).where(Entity.entity_key.in_(keys)))
         ).scalars()
         existing = {e.entity_key: e for e in existing_rows}
         for c in clusters:
             row = existing.get(c.key)
             if row is None:
-                row = Entity(
-                    tenant_id=asset.tenant_id,
-                    space_id=asset.space_id,
-                    entity_key=c.key,
-                    name=c.name,
-                    name_norm=c.norm,
-                    type=c.type,
-                    description=c.description,
-                    aliases=c.aliases,
-                )
-                session.add(row)
-                c.is_new = True
-                await session.flush()
+                # 链接未命中时仍可能撞上软删 tombstone 的唯一键
+                row = (
+                    await session.execute(
+                        select(Entity).where(
+                            Entity.space_id == asset.space_id,
+                            Entity.name_norm == c.norm,
+                            Entity.type == c.type,
+                        )
+                    )
+                ).scalar_one_or_none()
+            if row is not None:
+                live = await self._resolve_live_entity(row)
+                if live is None:
+                    # 合并环 / 目标仍删除：跳过，避免 INSERT 撞 uq 后污染事务
+                    continue
+                row = live
+                c.key = row.entity_key
                 c.resolved_id = row.id
-            else:
-                c.resolved_id = row.id
+                existing[row.entity_key] = row
                 if not row.description and c.description:
                     row.description = c.description
                 for alias in c.aliases:
                     if alias not in (row.aliases or []) and alias != row.name:
                         row.aliases = [*row.aliases, alias]
+                continue
+            row = Entity(
+                tenant_id=asset.tenant_id,
+                space_id=asset.space_id,
+                entity_key=c.key,
+                name=c.name,
+                name_norm=c.norm,
+                type=c.type,
+                description=c.description,
+                aliases=c.aliases,
+            )
+            session.add(row)
+            c.is_new = True
+            await session.flush()
+            c.resolved_id = row.id
+            existing[c.key] = row
         await session.flush()
 
     async def _index_new_entities(self, clusters: list[_Cluster], asset: Asset) -> None:
@@ -417,14 +473,16 @@ class GraphStep:
             await session.flush()
             return {"skipped": True, "reason": "no_extraction"}
 
+        # 回滚后 ORM 可能 expire，先钉住 id，避免降级日志再触发 MissingGreenlet
+        asset_id = asset.id
         try:
             service = EntityGraphService(session, deps)
             return await service.write_asset_graph(asset, version, list(units), extraction)
         except Exception as e:
             # 事务可能已被语句失败污染：回滚后独立会话降级标记
             await session.rollback()
-            logger.warning("graph_write_degraded", asset_id=str(asset.id), error=str(e))
-            await self._mark_pending_retry(asset.id)
+            logger.warning("graph_write_degraded", asset_id=str(asset_id), error=str(e))
+            await self._mark_pending_retry(asset_id)
             return {"degraded": True, "reason": str(e)[:200]}
 
     async def _media_extraction(

@@ -23,6 +23,7 @@
     "refresh": "刷新",
     "delete": "删除",
     "retry": "重试",
+    "autoRename": "按论文元数据重命名",
     "moveTo": "移到…",
     "copyTo": "复制到…",
     "newFolder": "新建文件夹",
@@ -55,6 +56,9 @@
     "cannotMoveIntoSelf": "不能移动到自身或其子目录内",
     "deletedAssets": "已删除 {{count}} 个资产（含向量清理）",
     "colName": "名称",
+    "colYear": "年份",
+    "colAuthors": "作者",
+    "colJournal": "期刊",
     "colSize": "大小",
     "colStatus": "状态",
     "colModified": "修改日期"
@@ -76,6 +80,10 @@
     "deleteFailed": "删除失败",
     "retryFailed": "重试失败",
     "requeued": "已重新入队",
+    "autoRenamed": "已按论文元数据重命名",
+    "autoRenamedCount": "已按论文元数据重命名 {{count}} 篇",
+    "autoRenameUnchanged": "未能识别论文元数据，名称未改动",
+    "autoRenameFailed": "自动命名失败",
     "loadThumbFailed": "加载缩略图失败",
     "uploadFailed": "上传失败",
     "skippedDuplicate": "已跳过重复文件：{{name}}"

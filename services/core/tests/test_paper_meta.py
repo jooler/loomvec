@@ -48,6 +48,7 @@ def test_find_doi_strips_trailing_punctuation():
 def test_parse_crossref_prefers_conference_acronym():
     meta = parse_crossref(CROSSREF_MESSAGE, "10.1109/CVPR.2016.90")
     assert (meta.year, meta.journal, meta.first_author) == (2016, "CVPR", "He")
+    assert meta.authors == ["He, Kaiming", "Zhang, Xiangyu"]
     assert meta.source == "crossref"
 
 
@@ -109,6 +110,7 @@ def test_pdf_info_roundtrip_and_junk_title_filter():
     info = read_pdf_info(buf.getvalue())
     meta = meta_from_pdf_info(info)
     assert meta.title is None and meta.first_author == "Smith"
+    assert meta.authors == ["Smith, J.", "Doe, A."]
     assert read_pdf_info(b"not a pdf") == {}
 
 

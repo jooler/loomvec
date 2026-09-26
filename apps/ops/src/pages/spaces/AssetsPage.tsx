@@ -123,6 +123,9 @@ export function AssetsPage() {
       retryAssets: async (assetIds) => {
         for (const aid of assetIds) await m.retryAsset.mutateAsync(aid);
       },
+      autoRenameAssets: async (assetIds) => {
+        await m.autoRenameAssets.mutateAsync(assetIds);
+      },
     }),
     [m, t],
   );

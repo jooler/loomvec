@@ -1142,6 +1142,26 @@ export interface paths {
         patch: operations["patch_asset_api_v1_assets__asset_id__patch"];
         trace?: never;
     };
+    "/api/v1/assets/{asset_id}/auto-rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auto Rename Asset
+         * @description 按论文元数据强制重命名（Crossref / PDF 信息 / LLM）；仅 PDF，需已完成解析。
+         */
+        post: operations["auto_rename_asset_api_v1_assets__asset_id__auto_rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assets/{asset_id}/copy": {
         parameters: {
             query?: never;
@@ -2569,6 +2589,7 @@ export interface components {
             name: string;
             /** Page Count */
             page_count?: number | null;
+            paper?: components["schemas"]["PaperMetaOut"] | null;
             /**
              * Renditions
              * @default []
@@ -2651,6 +2672,7 @@ export interface components {
             name: string;
             /** Page Count */
             page_count?: number | null;
+            paper?: components["schemas"]["PaperMetaOut"] | null;
             /** Review Status */
             review_status?: string | null;
             /** Size Bytes */
@@ -2727,6 +2749,18 @@ export interface components {
             scopes?: string[];
             /** State */
             state?: string | null;
+        };
+        /**
+         * AutoRenameOut
+         * @description 论文 PDF 自动命名结果（按元数据重写「年份-期刊-标题-作者」）。
+         */
+        AutoRenameOut: {
+            /** Name */
+            name: string;
+            /** Reason */
+            reason?: string | null;
+            /** Renamed */
+            renamed: boolean;
         };
         /** BatchRerunRequest */
         BatchRerunRequest: {
@@ -3330,6 +3364,29 @@ export interface components {
             new_owner_id: string;
             /** Reason */
             reason: string;
+        };
+        /**
+         * PaperMetaOut
+         * @description 列表用论文元数据投影（来自 asset_meta.paper；非论文为 null）。
+         */
+        PaperMetaOut: {
+            /**
+             * Authors
+             * @default []
+             */
+            authors: string[];
+            /** Doi */
+            doi?: string | null;
+            /** First Author */
+            first_author?: string | null;
+            /** Journal */
+            journal?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Year */
+            year?: number | null;
         };
         /** PlatformRoleRequest */
         PlatformRoleRequest: {
@@ -6954,6 +7011,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssetDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auto_rename_asset_api_v1_assets__asset_id__auto_rename_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoRenameOut"];
                 };
             };
             /** @description Validation Error */

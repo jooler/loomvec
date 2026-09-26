@@ -23,6 +23,19 @@ export interface FinderAsset {
   is_image: boolean;
   folder_id: string | null;
   created_at: string;
+  /** 论文元数据投影（非论文 / 未抽取为 null）。 */
+  paper?: FinderPaperMeta | null;
+}
+
+/** 列表用论文字段（与 API PaperMetaOut 对齐）。 */
+export interface FinderPaperMeta {
+  year?: number | null;
+  journal?: string | null;
+  title?: string | null;
+  first_author?: string | null;
+  authors?: string[];
+  doi?: string | null;
+  source?: string | null;
 }
 
 /** 视图模式：list（列表）/ gallery（图标预览）/ columns（分栏）。 */
@@ -49,4 +62,6 @@ export interface FinderActions {
   deleteFolders(folderIds: string[]): Promise<void>;
   deleteAssets(assetIds: string[]): Promise<void>;
   retryAssets(assetIds: string[]): Promise<void>;
+  /** 按论文元数据强制重命名（仅 PDF；支持多选）。 */
+  autoRenameAssets(assetIds: string[]): Promise<void>;
 }

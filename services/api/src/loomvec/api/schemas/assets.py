@@ -40,6 +40,18 @@ class AssetTextRequest(BaseModel):
     folder_id: uuid.UUID | None = Field(default=None, description="目标文件夹（空 = 空间根目录）")
 
 
+class PaperMetaOut(BaseModel):
+    """列表用论文元数据投影（来自 asset_meta.paper；非论文为 null）。"""
+
+    year: int | None = None
+    journal: str | None = None
+    title: str | None = None
+    first_author: str | None = None
+    authors: list[str] = []
+    doi: str | None = None
+    source: str | None = None
+
+
 class AssetOut(BaseModel):
     id: uuid.UUID
     space_id: uuid.UUID | None = None
@@ -54,6 +66,7 @@ class AssetOut(BaseModel):
     page_count: int | None = None
     checksum: str | None = None
     folder_id: uuid.UUID | None = None
+    paper: PaperMetaOut | None = None
     created_at: datetime
     created_by: uuid.UUID | None = None
 
@@ -100,6 +113,14 @@ class AssetPatchRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     folder_id: uuid.UUID | None = None
     unset_folder: bool = Field(default=False, description="移动回空间根目录")
+
+
+class AutoRenameOut(BaseModel):
+    """论文 PDF 自动命名结果（按元数据重写「年份-期刊-标题-作者」）。"""
+
+    name: str
+    renamed: bool
+    reason: str | None = None
 
 
 class FolderOut(BaseModel):

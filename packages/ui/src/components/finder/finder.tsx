@@ -2,7 +2,7 @@
  * Finder 主容器：macOS Finder 式空间资产管理（web/ops 共用）。
  *
  * - 三视图（列表/图标预览/分栏）+ 面包屑导航；
- * - 右键菜单（打开/重命名/拷贝/剪切/粘贴/移到/复制到/删除/重试）；
+ * - 右键菜单（打开/重命名/按论文元数据重命名/拷贝/剪切/粘贴/移到/复制到/删除/重试）；
  * - 拖拽移动（条目 → 文件夹/列/面包屑）与拖拽上传（文件 → 当前文件夹）；
  * - 键盘：⌘C/⌘X/⌘V 剪贴板、Delete 删除、Enter 打开；
  * - 查看覆盖层（viewer 插槽）占满本容器上层。
@@ -24,6 +24,7 @@ import {
   Upload,
   Eye,
   RotateCcw,
+  WandSparkles,
 } from 'lucide-react';
 import { cn } from 'cn';
 import { toast } from 'sonner';
@@ -127,6 +128,8 @@ export function Finder(props: FinderProps) {
     assetIds: string[];
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Shift 连续选的锚点（普通/⌘ 点击更新；连续选本身不移动锚点）。 */
+  const selectionAnchorRef = useRef<{ kind: 'folder' | 'asset'; id: string } | null>(null);
 
   const foldersById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
   const path = props.path;
@@ -154,6 +157,7 @@ export function Finder(props: FinderProps) {
       setSelectedFolders(new Set());
       setSelectedAssets(new Set());
       setRenaming(null);
+      selectionAnchorRef.current = null;
       onPathChange(next);
     },
     [onPathChange],
@@ -224,28 +228,70 @@ export function Finder(props: FinderProps) {
   // 选择 / 打开
   // ------------------------------------------------------------------
 
-  const onSelect = useCallback((kind: 'folder' | 'asset', id: string, additive: boolean) => {
-    if (additive) {
-      if (kind === 'folder') {
-        setSelectedFolders((s) => {
-          const next = new Set(s);
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        });
-      } else {
-        setSelectedAssets((s) => {
-          const next = new Set(s);
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        });
+  /** 选中：普通=单选；⌘/Ctrl=加减；Shift=锚点到当前项的连续选（不移动锚点）。 */
+  const onSelect = useCallback(
+    (
+      kind: 'folder' | 'asset',
+      id: string,
+      mods: { additive: boolean; range: boolean },
+      orderedItems?: Array<{ kind: 'folder' | 'asset'; id: string }>,
+    ) => {
+      const order =
+        orderedItems ??
+        [
+          ...currentChildren.folders.map((f) => ({ kind: 'folder' as const, id: f.id })),
+          ...currentChildren.assets.map((a) => ({ kind: 'asset' as const, id: a.id })),
+        ];
+
+      if (mods.range && selectionAnchorRef.current) {
+        const anchor = selectionAnchorRef.current;
+        const i0 = order.findIndex((x) => x.kind === anchor.kind && x.id === anchor.id);
+        const i1 = order.findIndex((x) => x.kind === kind && x.id === id);
+        if (i0 >= 0 && i1 >= 0) {
+          const [lo, hi] = i0 < i1 ? [i0, i1] : [i1, i0];
+          const slice = order.slice(lo, hi + 1);
+          const rangeFolders = new Set(
+            slice.filter((x) => x.kind === 'folder').map((x) => x.id),
+          );
+          const rangeAssets = new Set(
+            slice.filter((x) => x.kind === 'asset').map((x) => x.id),
+          );
+          if (mods.additive) {
+            setSelectedFolders((s) => new Set([...s, ...rangeFolders]));
+            setSelectedAssets((s) => new Set([...s, ...rangeAssets]));
+          } else {
+            setSelectedFolders(rangeFolders);
+            setSelectedAssets(rangeAssets);
+          }
+          // 连续选保留锚点，便于再次 Shift 扩展
+          return;
+        }
       }
-    } else {
-      setSelectedFolders(kind === 'folder' ? new Set([id]) : new Set());
-      setSelectedAssets(kind === 'asset' ? new Set([id]) : new Set());
-    }
-  }, []);
+
+      if (mods.additive) {
+        if (kind === 'folder') {
+          setSelectedFolders((s) => {
+            const next = new Set(s);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          });
+        } else {
+          setSelectedAssets((s) => {
+            const next = new Set(s);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          });
+        }
+      } else {
+        setSelectedFolders(kind === 'folder' ? new Set([id]) : new Set());
+        setSelectedAssets(kind === 'asset' ? new Set([id]) : new Set());
+      }
+      selectionAnchorRef.current = { kind, id };
+    },
+    [currentChildren],
+  );
 
   const openFolder = useCallback(
     (id: string) => navigateTo(id),
@@ -270,10 +316,11 @@ export function Finder(props: FinderProps) {
 
   const selectionSnapshot = useCallback(
     (kind: 'folder' | 'asset', id: string) => {
+      // 仅在 onClick 等事件里调用；渲染期禁止（内部会 onSelect→setState，menuFor 渲染会死循环）
       // 菜单作用于整个选中集；右键未选中条目时先单选
       const inFolder = kind === 'folder' && selectedFolders.has(id);
       const inAsset = kind === 'asset' && selectedAssets.has(id);
-      if (!inFolder && !inAsset) onSelect(kind, id, false);
+      if (!inFolder && !inAsset) onSelect(kind, id, { additive: false, range: false });
       return {
         folderIds: inFolder ? [...selectedFolders] : kind === 'folder' ? [id] : [],
         assetIds: inAsset ? [...selectedAssets] : kind === 'asset' ? [id] : [],
@@ -487,12 +534,51 @@ export function Finder(props: FinderProps) {
             </ContextMenuItem>
             {kind === 'asset' &&
               (() => {
-                const a = assets.find((x) => x.id === id);
-                return a?.status === 'failed' ? (
-                  <ContextMenuItem onClick={() => runQuietly(actions.retryAssets([id]))}>
-                    <RotateCcw /> {t('finder.retry')}
-                  </ContextMenuItem>
-                ) : null;
+                // 仅决定菜单项是否显示；禁止在此调用 selectionSnapshot（其会 setState，渲染期会死循环）
+                const previewIds = selectedAssets.has(id) ? [...selectedAssets] : [id];
+                const selected = previewIds
+                  .map((aid) => assets.find((x) => x.id === aid))
+                  .filter((a): a is NonNullable<typeof a> => !!a);
+                const showAutoRename = selected.some(
+                  (a) => a.mime_type === 'application/pdf' || a.ext.toLowerCase() === 'pdf',
+                );
+                const showRetry = selected.some((a) => a.status === 'failed');
+                return (
+                  <>
+                    {showAutoRename && (
+                      <ContextMenuItem
+                        onClick={() => {
+                          const ids = selectionSnapshot(kind, id)
+                            .assetIds.map((aid) => assets.find((x) => x.id === aid))
+                            .filter((a): a is NonNullable<typeof a> => !!a)
+                            .filter(
+                              (a) =>
+                                a.mime_type === 'application/pdf' ||
+                                a.ext.toLowerCase() === 'pdf',
+                            )
+                            .map((a) => a.id);
+                          if (ids.length > 0) runQuietly(actions.autoRenameAssets(ids));
+                        }}
+                      >
+                        <WandSparkles /> {t('finder.autoRename')}
+                      </ContextMenuItem>
+                    )}
+                    {showRetry ? (
+                      <ContextMenuItem
+                        onClick={() => {
+                          const ids = selectionSnapshot(kind, id)
+                            .assetIds.map((aid) => assets.find((x) => x.id === aid))
+                            .filter((a): a is NonNullable<typeof a> => !!a)
+                            .filter((a) => a.status === 'failed')
+                            .map((a) => a.id);
+                          if (ids.length > 0) runQuietly(actions.retryAssets(ids));
+                        }}
+                      >
+                        <RotateCcw /> {t('finder.retry')}
+                      </ContextMenuItem>
+                    ) : null}
+                  </>
+                );
               })()}
             <ContextMenuSeparator />
             <ContextMenuItem
@@ -505,7 +591,7 @@ export function Finder(props: FinderProps) {
         )}
       </ContextMenuContent>
     ),
-    [actions, assets, canWrite, foldersById, onOpen, selectionSnapshot, t],
+    [actions, assets, canWrite, foldersById, onOpen, selectedAssets, selectionSnapshot, t],
   );
 
   const blankMenu = (
