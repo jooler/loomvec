@@ -82,6 +82,7 @@
     "requeued": "已重新入队",
     "autoRenamed": "已按论文元数据重命名",
     "autoRenamedCount": "已按论文元数据重命名 {{count}} 篇",
+    "autoRenameRunning": "正在按论文元数据重命名 {{count}} 篇…",
     "autoRenameUnchanged": "未能识别论文元数据，名称未改动",
     "autoRenameFailed": "自动命名失败",
     "autoRenamePartialFailed": "{{count}} 篇自动命名失败：{{detail}}",

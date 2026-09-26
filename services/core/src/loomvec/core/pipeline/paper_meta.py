@@ -1,9 +1,11 @@
 """论文 PDF 自动命名：{年份}-{期刊}-{标题}-{第一作者}.pdf（缺失字段省略该段）。
 
 元数据来源按成本递增逐级尝试：
-1. 正文开头 / PDF 元数据中的 DOI → Crossref（零 token，最准）；
-2. PDF 文档信息字典（Title/Author/Subject，仅作缺字段兜底；Subject 常含出版社写入的 DOI）；
-3. LLM 读 Markdown 开头 ~1500 字（单次小调用）。
+1. 正文开头 / PDF 元数据中的 DOI → Crossref（零 token，最准；
+   PDF Title 或出版社 Subject/doi 可印证，避免 MinerU 丢标题时误杀）；
+2. LLM 读 Markdown 开头 ~1500 字（单次小调用）；
+3. PDF 文档信息字典兜底（Title/Author/Subject；Subject 常含 DOI，并可抽年份/期刊；
+   无 LLM 门禁时须有 DOI 或年+刊，避免手册/合同误改名）。
 
 由 PipelineRunner 在 chunk 步骤后调用（资产仍为 processing，前端轮询可见新名）；
 任何失败只记日志，不影响资产管线。幂等：asset_meta['paper'].checksum 命中即跳过。
@@ -40,6 +42,8 @@ _SPACES_RE = re.compile(r"\s+")
 _NORM_RE = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
 _ACRONYM_RE = re.compile(r"\(([A-Z][A-Za-z\-]{1,15})\)\s*$")
 _JUNK_PDF_TITLE_RE = re.compile(r"(microsoft word|untitled|\.docx?$|\.pdf$|\.tex$)", re.IGNORECASE)
+_SUBJECT_YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
+_SUBJECT_DOI_LABEL_RE = re.compile(r"(?i)\bdoi\s*:\s*")
 
 HEAD_CHARS_DOI = 3000
 HEAD_CHARS_LLM = 1500
@@ -59,7 +63,10 @@ class PaperMeta:
 
     @property
     def usable(self) -> bool:
-        return bool(self.title) and bool(self.year or self.journal)
+        # 文件名可省略缺段；有标题 + 任一辅助字段即可改名（不发明字段）
+        return bool(self.title) and bool(
+            self.year or self.journal or self.first_author or self.doi
+        )
 
 
 # ---------- 来源 1：DOI → Crossref ----------
@@ -83,6 +90,11 @@ def title_in_text(title: str, text: str) -> bool:
     """DOI 可能属于参考文献：要求 Crossref 标题开头确实出现在正文开头。"""
     probe = _norm(title)[:30]
     return bool(probe) and probe in _norm(text)
+
+
+def title_corroborated(title: str, *texts: str | None) -> bool:
+    """标题出现在 Markdown 或 PDF Info Title 任一处即视为同一篇。"""
+    return any(bool(text) and title_in_text(title, text) for text in texts)
 
 
 def _first(values: Any) -> str | None:
@@ -151,7 +163,7 @@ async def fetch_crossref(
             await client.aclose()
 
 
-# ---------- 来源 2：PDF 文档信息字典（ParseStep 已持有原始字节时调用） ----------
+# ---------- 来源：PDF 文档信息字典（ParseStep 已持有原始字节时写入；亦作最终兜底） ----------
 
 
 def read_pdf_info(data: bytes) -> dict[str, str]:
@@ -169,6 +181,31 @@ def read_pdf_info(data: bytes) -> dict[str, str]:
     return out
 
 
+def _year_journal_from_subject(subject: str) -> tuple[int | None, str | None]:
+    """从 Subject 抽年份/期刊（出版社常写 ``DOI: …, Journal, 2026.``）；抽不到则空。
+
+    仅当 Subject 含 DOI（或 ``DOI:`` 标签）才抽，避免关键词/版权行被当成期刊。
+    先剥 DOI 再取年，避免 DOI 路径里的四位数（如 ``CVPR.2016``）干扰出版年。
+    """
+    if not subject.strip():
+        return None, None
+    if not find_doi(subject) and not _SUBJECT_DOI_LABEL_RE.search(subject):
+        return None, None
+    rest = _DOI_RE.sub(" ", subject)
+    rest = _SUBJECT_DOI_LABEL_RE.sub(" ", rest)
+    year = None
+    years = _SUBJECT_YEAR_RE.findall(rest)
+    if years:
+        year = int(years[-1])
+    rest = _SUBJECT_YEAR_RE.sub(" ", rest)
+    rest = re.split(r"(?i)\babstract\b", rest, maxsplit=1)[0]
+    rest = _SPACES_RE.sub(" ", rest.replace(",", " ")).strip(" .-;")
+    journal = rest if len(rest) >= 3 else None
+    if journal and len(journal) > MAX_JOURNAL_CHARS:
+        journal = _clean(journal, MAX_JOURNAL_CHARS) or None
+    return year, journal
+
+
 def meta_from_pdf_info(info: dict[str, str]) -> PaperMeta:
     title = info.get("title")
     if title and (len(title) < 10 or _JUNK_PDF_TITLE_RE.search(title)):
@@ -179,10 +216,20 @@ def meta_from_pdf_info(info: dict[str, str]) -> PaperMeta:
     if authors:
         # 文件名仍用「姓」：取第一作者逗号前段
         first_author = authors[0].split(",")[0].strip() or authors[0]
-    return PaperMeta(title=title, first_author=first_author, authors=authors, source="pdf_info")
+    year, journal = _year_journal_from_subject(info.get("subject") or "")
+    doi = find_doi(info.get("doi"), info.get("subject"))
+    return PaperMeta(
+        year=year,
+        journal=journal,
+        title=title,
+        first_author=first_author,
+        authors=authors,
+        doi=doi,
+        source="pdf_info",
+    )
 
 
-# ---------- 来源 3：LLM 读开头 ----------
+# ---------- 来源 2：LLM 读开头 ----------
 
 
 def build_paper_meta_messages(head: str) -> list[dict[str, str]]:
@@ -267,36 +314,70 @@ def _fill_missing(meta: PaperMeta, fallback: PaperMeta) -> PaperMeta:
     return meta
 
 
+def _pick_usable(*candidates: PaperMeta | None) -> PaperMeta | None:
+    for meta in candidates:
+        if meta is not None and meta.usable:
+            return meta
+    return None
+
+
+def _pdf_info_alone_ok(meta: PaperMeta) -> bool:
+    """无 LLM ``is_paper`` 门禁时，仅凭 pdf_info 改名须有出版社级信号（DOI 或年+刊）。
+
+    避免空 Markdown / LLM 宕机时把 Title+Author 的手册、合同改成论文式文件名。
+    """
+    return bool(meta.title) and bool(meta.doi or (meta.year and meta.journal))
+
+
 async def extract_paper_meta(
     deps: PipelineDeps, markdown_head: str, pdf_info: dict[str, str]
 ) -> PaperMeta | None:
+    """Crossref → LLM → PDF Info。
+
+    仅 Markdown 内 DOI（可能来自参考文献）须标题印证；PDF Subject/doi 字段视为出版社写入，可直接采信 Crossref。
+    空 head 或 LLM 失败时，pdf_info 兜底须 ``_pdf_info_alone_ok``（有 DOI 或年+刊）。
+    """
     cfg = deps.settings.pipeline
     pdf_meta = meta_from_pdf_info(pdf_info)
+    head = markdown_head or ""
 
-    doi = find_doi(pdf_info.get("doi"), pdf_info.get("subject"), markdown_head[:HEAD_CHARS_DOI])
+    doi_from_pdf = find_doi(pdf_info.get("doi"), pdf_info.get("subject"))
+    doi = doi_from_pdf or find_doi(head[:HEAD_CHARS_DOI])
+
     if doi and cfg.crossref_enabled:
         try:
-            meta = await fetch_crossref(doi, mailto=cfg.crossref_mailto)
+            fetched = await fetch_crossref(doi, mailto=cfg.crossref_mailto)
         except Exception as e:
             logger.warning("paper_crossref_failed", doi=doi, error=str(e))
-            meta = None
-        if meta and meta.title and title_in_text(meta.title, markdown_head):
-            return _fill_missing(meta, pdf_meta)
+            fetched = None
+        if fetched and fetched.title:
+            filled = _fill_missing(fetched, pdf_meta)
+            if title_corroborated(fetched.title, head, pdf_meta.title) or bool(doi_from_pdf):
+                # 已印证：跳过 LLM，省 token
+                return filled
 
-    try:
-        data = await deps.ai.complete_json(
-            build_paper_meta_messages(markdown_head[:HEAD_CHARS_LLM]),
-            temperature=0,
-            max_tokens=400,
-        )
-    except Exception as e:
-        logger.warning("paper_llm_failed", error=str(e))
-        return None
-    meta = parse_llm_meta(data)
-    if meta is None:
-        return None
-    meta.doi = doi
-    return _fill_missing(meta, pdf_meta)
+    llm_filled: PaperMeta | None = None
+    if head.strip():
+        try:
+            data = await deps.ai.complete_json(
+                build_paper_meta_messages(head[:HEAD_CHARS_LLM]),
+                temperature=0,
+                max_tokens=400,
+            )
+        except Exception as e:
+            logger.warning("paper_llm_failed", error=str(e))
+        else:
+            # 模型明确判定非论文：不拿 PDF Info 硬改名（避免合同/手册误伤）
+            if data.get("is_paper") is False:
+                return None
+            llm_meta = parse_llm_meta(data)
+            if llm_meta is not None:
+                if doi and not llm_meta.doi:
+                    llm_meta.doi = doi
+                llm_filled = _fill_missing(llm_meta, pdf_meta)
+
+    pdf_fallback = pdf_meta if _pdf_info_alone_ok(pdf_meta) else None
+    return _pick_usable(llm_filled, pdf_fallback)
 
 
 # ---------- 管线入口 ----------
@@ -394,7 +475,10 @@ async def auto_rename_asset(
                     keys=sorted(fresh.keys()),
                 )
 
-        meta = await extract_paper_meta(deps, head, pdf_info) if head else None
+        # Markdown 为空时仍可用 Subject DOI 走 Crossref，或带 DOI/年+刊的 pdf_info 兜底
+        meta = (
+            await extract_paper_meta(deps, head, pdf_info) if (head or pdf_info) else None
+        )
 
         async with deps.session_factory() as session:
             asset, version = await _load(session, asset_id)

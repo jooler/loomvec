@@ -289,23 +289,53 @@ export function useColumnsFolderAssets(
 
   const autoRenameAssets = useMutation({
     mutationFn: async (assetIds: string[]) => {
-      // 逐个继续：单篇未解析/非论文不应让整批中断，否则已成功的也不 invalidate，界面像没改名
+      // 限并发 + 单篇失败不中断：未解析/非论文不应拖死整批，否则界面像没改名
       if (assetIds.length === 0) return { results: [], errors: [] as string[] };
+      const CONCURRENCY = 3;
       const results: { name: string; renamed: boolean; reason?: string | null }[] = [];
       const errors: string[] = [];
-      for (const assetId of assetIds) {
-        const { data, error } = await client.POST('/api/v1/assets/{asset_id}/auto-rename', {
-          params: { path: { asset_id: assetId } },
-        });
-        if (error) {
-          errors.push(extractApiError(error, t('ui:finderData.autoRenameFailed')));
-          continue;
+      for (let i = 0; i < assetIds.length; i += CONCURRENCY) {
+        const chunk = assetIds.slice(i, i + CONCURRENCY);
+        const settled = await Promise.all(
+          chunk.map(async (assetId) => {
+            try {
+              const { data, error } = await client.POST('/api/v1/assets/{asset_id}/auto-rename', {
+                params: { path: { asset_id: assetId } },
+              });
+              if (error) {
+                return {
+                  ok: false as const,
+                  message: extractApiError(error, t('ui:finderData.autoRenameFailed')),
+                };
+              }
+              return { ok: true as const, data };
+            } catch (e) {
+              return {
+                ok: false as const,
+                message: e instanceof Error ? e.message : t('ui:finderData.autoRenameFailed'),
+              };
+            }
+          }),
+        );
+        for (const item of settled) {
+          if (item.ok) {
+            if (item.data) results.push(item.data);
+          } else {
+            errors.push(item.message);
+          }
         }
-        if (data) results.push(data);
       }
       return { results, errors };
     },
-    onSuccess: ({ results, errors }) => {
+    onMutate: (assetIds) => {
+      if (assetIds.length <= 1) return {};
+      const toastId = toast.loading(
+        t('ui:finderData.autoRenameRunning', { count: assetIds.length }),
+      );
+      return { toastId };
+    },
+    onSuccess: ({ results, errors }, _vars, ctx) => {
+      if (ctx?.toastId !== undefined) toast.dismiss(ctx.toastId);
       if (results.length === 0 && errors.length === 0) return;
       const renamed = results.filter((r) => r.renamed).length;
       const failed = errors.length;
@@ -326,7 +356,10 @@ export function useColumnsFolderAssets(
       // 仅有 HTTP 成功响应时才有可能改名/状态变化；全失败不刷列表
       if (results.length > 0) invalidateAll();
     },
-    onError: (e) => fail(e, t('ui:finderData.autoRenameFailed')),
+    onError: (e, _vars, ctx) => {
+      if (ctx?.toastId !== undefined) toast.dismiss(ctx.toastId);
+      fail(e, t('ui:finderData.autoRenameFailed'));
+    },
   });
 
   return {

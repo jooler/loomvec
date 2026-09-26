@@ -70,6 +70,18 @@ function runQuietly(p: Promise<unknown>) {
   p.catch(() => {});
 }
 
+/** 资产列表 API 的 ext 带点（`.pdf`）；mime 偶发 octet-stream 时靠 ext/文件名兜底。 */
+function isPdfAsset(a: FinderAsset): boolean {
+  const ext = (a.ext || '').toLowerCase();
+  const name = (a.name || '').toLowerCase();
+  return (
+    a.mime_type === 'application/pdf' ||
+    ext === '.pdf' ||
+    ext === 'pdf' ||
+    name.endsWith('.pdf')
+  );
+}
+
 export interface FinderProps {
   /** 空间名（面包屑根节点显示）。 */
   spaceName?: string;
@@ -549,20 +561,19 @@ export function Finder(props: FinderProps) {
                 const selected = previewIds
                   .map((aid) => findAssetById(aid))
                   .filter((a): a is FinderAsset => !!a);
-                const isPdf = (a: FinderAsset) =>
-                  a.mime_type === 'application/pdf' || a.ext.toLowerCase() === 'pdf';
-                const showAutoRename = selected.some(isPdf);
+                const showAutoRename = selected.some(isPdfAsset);
                 const showRetry = selected.some((a) => a.status === 'failed');
                 return (
                   <>
                     {showAutoRename && (
                       <ContextMenuItem
                         onClick={() => {
-                          const ids = selectionSnapshot(kind, id)
-                            .assetIds.map((aid) => findAssetById(aid))
-                            .filter((a): a is FinderAsset => !!a)
-                            .filter(isPdf)
-                            .map((a) => a.id);
+                          // 选区 id 为准；能查到的必须是 PDF。查不到的仍保留（分栏跨列缓存缺口），
+                          // 后端会拒非 PDF；混选时已知非 PDF 已在此剔除。
+                          const ids = selectionSnapshot(kind, id).assetIds.filter((aid) => {
+                            const a = findAssetById(aid);
+                            return a ? isPdfAsset(a) : true;
+                          });
                           if (ids.length > 0) runQuietly(actions.autoRenameAssets(ids));
                         }}
                       >
@@ -572,11 +583,10 @@ export function Finder(props: FinderProps) {
                     {showRetry ? (
                       <ContextMenuItem
                         onClick={() => {
-                          const ids = selectionSnapshot(kind, id)
-                            .assetIds.map((aid) => findAssetById(aid))
-                            .filter((a): a is FinderAsset => !!a)
-                            .filter((a) => a.status === 'failed')
-                            .map((a) => a.id);
+                          const ids = selectionSnapshot(kind, id).assetIds.filter((aid) => {
+                            const a = findAssetById(aid);
+                            return a ? a.status === 'failed' : true;
+                          });
                           if (ids.length > 0) runQuietly(actions.retryAssets(ids));
                         }}
                       >

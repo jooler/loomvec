@@ -115,6 +115,175 @@ def test_pdf_info_roundtrip_and_junk_title_filter():
     assert read_pdf_info(b"not a pdf") == {}
 
 
+def test_pdf_info_parses_year_journal_doi_from_subject():
+    meta = meta_from_pdf_info(
+        {
+            "title": "CAREPath: semantic context-aware reasoning paths",
+            "subject": "DOI: 10.1093/bib/bbag472, Briefings in Bioinformatics, 2026.",
+            "author": "Song, Haerin",
+        }
+    )
+    assert meta.usable
+    assert (meta.year, meta.journal, meta.doi) == (
+        2026,
+        "Briefings in Bioinformatics",
+        "10.1093/bib/bbag472",
+    )
+    assert meta.first_author == "Song"
+
+
+def test_subject_keywords_without_doi_are_not_journal():
+    meta = meta_from_pdf_info(
+        {
+            "title": "A Long Enough Handbook Title Here",
+            "subject": "machine learning, neural networks, 2019",
+            "author": "HR Department",
+        }
+    )
+    assert meta.year is None and meta.journal is None and meta.doi is None
+    assert meta.first_author == "HR Department"
+
+
+def test_usable_accepts_title_with_author_or_doi():
+    assert PaperMeta(title="Deep Residual Learning", first_author="He").usable
+    assert PaperMeta(title="Deep Residual Learning", doi="10.1109/CVPR.2016.90").usable
+    assert not PaperMeta(title="Deep Residual Learning").usable
+    assert not PaperMeta(year=2016, journal="CVPR").usable
+
+
+async def test_extract_rejects_empty_head_handbook_pdf_info():
+    """空 Markdown + 仅 Title/Author：无 is_paper 门禁时不得硬改名。"""
+    ai = _FakeAi({"is_paper": True})
+    meta = await extract_paper_meta(
+        _deps(ai, crossref_enabled=False),
+        "",
+        {"title": "Employee Handbook 2024 Edition", "author": "HR Department"},
+    )
+    assert meta is None and ai.calls == 0
+
+
+async def test_extract_rejects_non_paper_even_with_rich_pdf_info():
+    ai = _FakeAi({"is_paper": False})
+    meta = await extract_paper_meta(
+        _deps(ai, crossref_enabled=False),
+        "This is an employee handbook covering benefits.",
+        {
+            "title": "Employee Handbook 2024 Edition Long",
+            "author": "HR, Corp",
+            "subject": "DOI: 10.1000/fake, Fake Journal, 2024.",
+        },
+    )
+    assert meta is None and ai.calls == 1
+
+
+async def test_extract_rejects_uncorroborated_markdown_doi(monkeypatch):
+    """正文 DOI 可能来自参考文献：标题未印证则不采信 Crossref。"""
+
+    async def fake_fetch(doi, **kwargs):
+        return parse_crossref(CROSSREF_MESSAGE, doi)
+
+    monkeypatch.setattr(paper_meta, "fetch_crossref", fake_fetch)
+    ai = _FakeAi({"is_paper": False})
+    head = (
+        "Related work cites DOI: 10.1109/CVPR.2016.90 for residual nets.\n"
+        "Our contribution is unrelated."
+    )
+    meta = await extract_paper_meta(_deps(ai), head, {})
+    assert meta is None and ai.calls == 1
+
+
+async def test_extract_accepts_crossref_when_pdf_title_matches_markdown_missing(
+    monkeypatch,
+):
+    """MinerU 只出摘要时，PDF Title 印证 Crossref，零 LLM。"""
+    title = "Deep Residual Learning for Image Recognition"
+    head = "Abstract: Deeper neural networks are more difficult to train."
+
+    async def fake_fetch(doi, **kwargs):
+        return parse_crossref(CROSSREF_MESSAGE, doi)
+
+    monkeypatch.setattr(paper_meta, "fetch_crossref", fake_fetch)
+    ai = _FakeAi({"is_paper": False})
+    meta = await extract_paper_meta(
+        _deps(ai), head, {"title": title, "subject": "DOI: 10.1109/CVPR.2016.90"}
+    )
+    assert meta is not None and meta.source == "crossref" and ai.calls == 0
+    assert meta.usable and meta.year == 2016
+
+
+async def test_extract_accepts_crossref_from_pdf_doi_without_title_in_markdown(
+    monkeypatch,
+):
+    """Subject DOI 来自出版社：即使正文/PDF Title 对不上 Crossref 长标题也采信。"""
+    head = "## Abstract\nBiomedical knowledge graphs for drug repurposing."
+    title = "CAREPath short pdf title"
+    full = (
+        "CAREPath: semantic context-aware reasoning paths with mechanism-augmented "
+        "embeddings for drug repurposing"
+    )
+
+    async def fake_fetch(doi, **kwargs):
+        assert doi == "10.1093/bib/bbag472"
+        return parse_crossref(
+            {
+                "title": [full],
+                "container-title": ["Briefings in Bioinformatics"],
+                "short-container-title": ["Brief Bioinform"],
+                "published-print": {"date-parts": [[2026, 9]]},
+                "author": [{"given": "Haerin", "family": "Song"}],
+            },
+            doi,
+        )
+
+    monkeypatch.setattr(paper_meta, "fetch_crossref", fake_fetch)
+    ai = _FakeAi({"is_paper": False})
+    meta = await extract_paper_meta(
+        _deps(ai),
+        head,
+        {"title": title, "subject": "DOI: 10.1093/bib/bbag472, Briefings in Bioinformatics, 2026."},
+    )
+    assert meta is not None and meta.source == "crossref" and ai.calls == 0
+    assert meta.title == full and meta.usable
+
+
+async def test_extract_falls_back_to_pdf_info_when_llm_fails():
+    ai = _FakeAi({"is_paper": False})
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("llm down")
+
+    ai.complete_json = boom  # type: ignore[method-assign]
+    meta = await extract_paper_meta(
+        _deps(ai, crossref_enabled=False),
+        "# Some Paper Title Here\nAuthors\nAbstract",
+        {
+            "title": "Some Paper Title Here About Graphs",
+            "author": "Zhang, San",
+            "subject": "DOI: 10.1000/example, Journal of Graphs, 2021.",
+        },
+    )
+    assert meta is not None and meta.source == "pdf_info"
+    assert meta.usable and meta.year == 2021 and meta.first_author == "Zhang"
+
+
+async def test_extract_works_with_empty_markdown_head(monkeypatch):
+    async def fake_fetch(doi, **kwargs):
+        return parse_crossref(CROSSREF_MESSAGE, doi)
+
+    monkeypatch.setattr(paper_meta, "fetch_crossref", fake_fetch)
+    ai = _FakeAi({"is_paper": False})
+    meta = await extract_paper_meta(
+        _deps(ai),
+        "",
+        {
+            "title": "Deep Residual Learning for Image Recognition",
+            "subject": "DOI: 10.1109/CVPR.2016.90",
+        },
+    )
+    assert meta is not None and meta.source == "crossref" and ai.calls == 0
+    assert meta.usable
+
+
 async def test_fetch_crossref_via_mock_transport():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/works/10.1109/CVPR.2016.90")
