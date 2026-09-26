@@ -2,11 +2,14 @@
 
 元数据来源按成本递增逐级尝试：
 1. 正文开头 / PDF 元数据中的 DOI → Crossref（零 token，最准）；
-2. PDF 文档信息字典（Title/Author，仅作缺字段兜底）；
+2. PDF 文档信息字典（Title/Author/Subject，仅作缺字段兜底；Subject 常含出版社写入的 DOI）；
 3. LLM 读 Markdown 开头 ~1500 字（单次小调用）。
 
 由 PipelineRunner 在 chunk 步骤后调用（资产仍为 processing，前端轮询可见新名）；
 任何失败只记日志，不影响资产管线。幂等：asset_meta['paper'].checksum 命中即跳过。
+
+force=True（右键重新自动命名）：先回源刷新 PDF Info 字典（与 parse 写入路径一致，Subject 常含 DOI），
+再与 Markdown 一起抽取；有更新则回写 pdf_info。避免缓存缺 Subject 时先烧掉 LLM。
 """
 
 from __future__ import annotations
@@ -334,12 +337,32 @@ def _renamable(asset: Asset, version: AssetVersion) -> bool:
     return asset.name in {_uploaded_name(version), paper.get("auto_name")}
 
 
+def _meta_usable(meta: PaperMeta | None) -> bool:
+    return meta is not None and meta.usable
+
+
+async def _load_pdf_info_from_raw(
+    deps: PipelineDeps, storage_key: str | None
+) -> dict[str, str] | None:
+    """回源读原始 PDF 的 Info 字典（与 ParseStep 写入路径一致）；失败返回 None。"""
+    if not storage_key:
+        return None
+    try:
+        data = await deps.storage.get_object(deps.settings.storage.bucket_raw, storage_key)
+        info = read_pdf_info(data)
+        return info or None
+    except Exception as e:
+        logger.warning("paper_pdf_info_reload_failed", storage_key=storage_key, error=str(e))
+        return None
+
+
 async def auto_rename_asset(
     deps: PipelineDeps, asset_id: uuid.UUID, *, force: bool = False
 ) -> str | None:
     """返回新名称；不适用 / 失败返回 None（从不抛异常）。
 
-    force=True：忽略 checksum 幂等与「用户手动改名则跳过」——供右键「重新自动命名」。
+    force=True：忽略 checksum 幂等与「用户手动改名则跳过」——供右键「重新自动命名」；
+    先回源刷新 PDF Info，再抽取（避免缓存缺 Subject/DOI 时先走 LLM）。
     """
     if not deps.settings.pipeline.auto_rename_papers:
         return None
@@ -353,28 +376,53 @@ async def auto_rename_asset(
                 paper.get("checksum") == version.checksum or not _renamable(asset, version)
             ):
                 return None
-            pdf_info = asset.asset_meta.get("pdf_info") or {}
+            pdf_info = dict(asset.asset_meta.get("pdf_info") or {})
+            storage_key = version.storage_key
+            checksum = version.checksum
             head = await _load_markdown_head(deps, version)
 
-        # 网络调用期间不持有会话；写回前重新校验（期间用户可能手动改名）
+        # 网络 / 对象存储调用期间不持有会话；写回前重新校验版本与改名资格
+        refreshed_pdf_info: dict[str, str] | None = None
+        if force:
+            fresh = await _load_pdf_info_from_raw(deps, storage_key)
+            if fresh and fresh != pdf_info:
+                refreshed_pdf_info = fresh
+                pdf_info = fresh
+                logger.info(
+                    "paper_pdf_info_reloaded",
+                    asset_id=str(asset_id),
+                    keys=sorted(fresh.keys()),
+                )
+
         meta = await extract_paper_meta(deps, head, pdf_info) if head else None
 
         async with deps.session_factory() as session:
             asset, version = await _load(session, asset_id)
             if asset is None or version is None:
                 return None
+            # 期间若已换新版本，丢弃基于旧 storage_key 的抽取结果，避免写错 pdf_info
+            if version.checksum != checksum or version.storage_key != storage_key:
+                logger.info(
+                    "paper_auto_rename_aborted_version_changed",
+                    asset_id=str(asset_id),
+                )
+                return None
             if not force and not _renamable(asset, version):
                 return None
             original = paper.get("original_name") or _uploaded_name(version) or asset.name
             record: dict[str, Any] = {"checksum": version.checksum, "original_name": original}
             new_name = None
-            if meta is not None and meta.usable:
+            if _meta_usable(meta):
+                assert meta is not None
                 new_name = build_paper_filename(meta, asset.ext or ".pdf")
                 record.update(asdict(meta), auto_name=new_name)
                 asset.name = new_name
             else:
                 record["is_paper"] = False
-            asset.asset_meta = {**asset.asset_meta, "paper": record}
+            merged = {**asset.asset_meta, "paper": record}
+            if refreshed_pdf_info is not None:
+                merged["pdf_info"] = refreshed_pdf_info
+            asset.asset_meta = merged
             await session.commit()
         if new_name:
             logger.info("paper_auto_renamed", asset_id=str(asset_id), name=new_name, force=force)

@@ -219,7 +219,10 @@ async def auto_rename_asset(
     ai=Depends(get_ai),
     milvus=Depends(get_milvus),
 ) -> AutoRenameOut:
-    """按论文元数据强制重命名（Crossref / PDF 信息 / LLM）；仅 PDF，需已完成解析。"""
+    """按论文元数据强制重命名（Crossref / PDF 信息 / LLM）；仅 PDF，需已完成解析。
+
+    先回源刷新 PDF Info（含 Subject 中的 DOI），再与解析 Markdown 抽取；与新上传 parse 路径一致。
+    """
     from loomvec.core.mineru_client import MineruClient
     from loomvec.core.pipeline import PipelineDeps
     from loomvec.core.pipeline.paper_meta import PDF_MIME
