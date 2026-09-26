@@ -504,7 +504,8 @@ export function Finder(props: FinderProps) {
             <ContextMenuSeparator />
             <ContextMenuItem
               onClick={() => {
-                const f = kind === 'folder' ? foldersById.get(id) : assets.find((a) => a.id === id);
+                const f =
+                  kind === 'folder' ? foldersById.get(id) : findAssetById(id);
                 if (f) setRenaming({ kind, id, name: f.name });
               }}
             >
@@ -543,13 +544,14 @@ export function Finder(props: FinderProps) {
             {kind === 'asset' &&
               (() => {
                 // 仅决定菜单项是否显示；禁止在此调用 selectionSnapshot（其会 setState，渲染期会死循环）
+                // 用 findAssetById：分栏多选可能跨列，props.assets 只有当前文件夹
                 const previewIds = selectedAssets.has(id) ? [...selectedAssets] : [id];
                 const selected = previewIds
-                  .map((aid) => assets.find((x) => x.id === aid))
-                  .filter((a): a is NonNullable<typeof a> => !!a);
-                const showAutoRename = selected.some(
-                  (a) => a.mime_type === 'application/pdf' || a.ext.toLowerCase() === 'pdf',
-                );
+                  .map((aid) => findAssetById(aid))
+                  .filter((a): a is FinderAsset => !!a);
+                const isPdf = (a: FinderAsset) =>
+                  a.mime_type === 'application/pdf' || a.ext.toLowerCase() === 'pdf';
+                const showAutoRename = selected.some(isPdf);
                 const showRetry = selected.some((a) => a.status === 'failed');
                 return (
                   <>
@@ -557,13 +559,9 @@ export function Finder(props: FinderProps) {
                       <ContextMenuItem
                         onClick={() => {
                           const ids = selectionSnapshot(kind, id)
-                            .assetIds.map((aid) => assets.find((x) => x.id === aid))
-                            .filter((a): a is NonNullable<typeof a> => !!a)
-                            .filter(
-                              (a) =>
-                                a.mime_type === 'application/pdf' ||
-                                a.ext.toLowerCase() === 'pdf',
-                            )
+                            .assetIds.map((aid) => findAssetById(aid))
+                            .filter((a): a is FinderAsset => !!a)
+                            .filter(isPdf)
                             .map((a) => a.id);
                           if (ids.length > 0) runQuietly(actions.autoRenameAssets(ids));
                         }}
@@ -575,8 +573,8 @@ export function Finder(props: FinderProps) {
                       <ContextMenuItem
                         onClick={() => {
                           const ids = selectionSnapshot(kind, id)
-                            .assetIds.map((aid) => assets.find((x) => x.id === aid))
-                            .filter((a): a is NonNullable<typeof a> => !!a)
+                            .assetIds.map((aid) => findAssetById(aid))
+                            .filter((a): a is FinderAsset => !!a)
                             .filter((a) => a.status === 'failed')
                             .map((a) => a.id);
                           if (ids.length > 0) runQuietly(actions.retryAssets(ids));
@@ -599,7 +597,16 @@ export function Finder(props: FinderProps) {
         )}
       </ContextMenuContent>
     ),
-    [actions, assets, canWrite, foldersById, onOpen, selectedAssets, selectionSnapshot, t],
+    [
+      actions,
+      canWrite,
+      findAssetById,
+      foldersById,
+      onOpen,
+      selectedAssets,
+      selectionSnapshot,
+      t,
+    ],
   );
 
   const blankMenu = (

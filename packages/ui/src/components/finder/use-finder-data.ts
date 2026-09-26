@@ -289,24 +289,42 @@ export function useColumnsFolderAssets(
 
   const autoRenameAssets = useMutation({
     mutationFn: async (assetIds: string[]) => {
+      // 逐个继续：单篇未解析/非论文不应让整批中断，否则已成功的也不 invalidate，界面像没改名
+      if (assetIds.length === 0) return { results: [], errors: [] as string[] };
       const results: { name: string; renamed: boolean; reason?: string | null }[] = [];
+      const errors: string[] = [];
       for (const assetId of assetIds) {
         const { data, error } = await client.POST('/api/v1/assets/{asset_id}/auto-rename', {
           params: { path: { asset_id: assetId } },
         });
-        if (error) throw new Error(extractApiError(error, t('ui:finderData.autoRenameFailed')));
+        if (error) {
+          errors.push(extractApiError(error, t('ui:finderData.autoRenameFailed')));
+          continue;
+        }
         if (data) results.push(data);
       }
-      return results;
+      return { results, errors };
     },
-    onSuccess: (results) => {
+    onSuccess: ({ results, errors }) => {
+      if (results.length === 0 && errors.length === 0) return;
       const renamed = results.filter((r) => r.renamed).length;
+      const failed = errors.length;
       if (renamed > 0) {
         toast.success(t('ui:finderData.autoRenamedCount', { count: renamed }));
-      } else {
+      } else if (results.length > 0) {
+        // 含「未改名 + 部分 HTTP 失败」：仍提示未改动原因，避免只看见失败 toast
         toast.info(results[0]?.reason || t('ui:finderData.autoRenameUnchanged'));
       }
-      invalidateAll();
+      if (failed > 0) {
+        const detail = [...new Set(errors)].join('；');
+        toast.error(
+          renamed > 0 || results.length > 0
+            ? t('ui:finderData.autoRenamePartialFailed', { count: failed, detail })
+            : detail || t('ui:finderData.autoRenameFailed'),
+        );
+      }
+      // 仅有 HTTP 成功响应时才有可能改名/状态变化；全失败不刷列表
+      if (results.length > 0) invalidateAll();
     },
     onError: (e) => fail(e, t('ui:finderData.autoRenameFailed')),
   });
