@@ -87,6 +87,9 @@ class MockBackend:
                 {"summary": "（mock 社区摘要）该社区实体围绕共同主题聚簇，关系密度中等。"},
                 ensure_ascii=False,
             )
+        if task == "paper_meta":
+            # 自动改名只在真实 LLM 下生效，mock 模式一律视为非论文
+            return json.dumps({"is_paper": False})
         if task == "image_caption":
             # 回显文件名/提示词中的关键词，使 mock 模式下"以文搜图"可命中
             subject = self._parse_tag(prompt, "LOOMVEC_IMAGE_NAME") or "未命名图片"

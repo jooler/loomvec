@@ -34,6 +34,7 @@ from loomvec.core.db.models import (
 from loomvec.core.errors import NotFoundError, ValidationError
 from loomvec.core.events import publish_event
 from loomvec.core.pipeline.base import LAST_STEP, PIPELINE_STEPS, PipelineDeps
+from loomvec.core.pipeline.paper_meta import auto_rename_asset
 
 logger = structlog.get_logger("loomvec.pipeline")
 
@@ -52,6 +53,9 @@ class PipelineRunner:
         results: list[dict] = []
         for name in PIPELINE_STEPS[PIPELINE_STEPS.index(from_step) :]:
             results.append(await self._run_step(asset_id, name, attempt=attempt))
+            if name == "chunk":
+                # 须在 LAST_STEP 置 ready 之前：前端列表只在 processing 期间轮询
+                await auto_rename_asset(self.deps, asset_id)
         return results
 
     async def _run_step(self, asset_id: uuid.UUID, step_name: str, attempt: int = 1) -> dict:

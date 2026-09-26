@@ -218,6 +218,11 @@ class PipelineSettings(BaseModel):
     embed_text_max_chars: int = 6000  # 嵌入输入截断（云端模型 token 上限内保守值）
     index_text_max_chars: int = 30000  # Milvus 索引正文截断（VARCHAR 上限 65535）
     summary_enabled: bool = False  # 资产摘要生成（可选，默认关）
+    # 论文 PDF 在 chunk 后自动改名为「年份-期刊-标题-作者.pdf」（pipeline/paper_meta.py）
+    auto_rename_papers: bool = True
+    # DOI → api.crossref.org 元数据查询；内网部署关闭后仅用 PDF 元数据 + LLM
+    crossref_enabled: bool = True
+    crossref_mailto: str = ""  # Crossref polite pool 联系邮箱（可选）
 
 
 class WorkerSettings(BaseModel):

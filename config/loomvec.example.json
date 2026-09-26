@@ -72,7 +72,10 @@
     "embed_batch_size": 16,
     "embed_text_max_chars": 6000,
     "index_text_max_chars": 30000,
-    "summary_enabled": false
+    "summary_enabled": false,
+    "auto_rename_papers": true,
+    "crossref_enabled": true,
+    "crossref_mailto": ""
   },
   "upload": {
     "max_size_bytes": 209715200,

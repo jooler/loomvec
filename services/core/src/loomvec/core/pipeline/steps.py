@@ -58,6 +58,7 @@ from loomvec.core.pipeline.mime import (
     sniff_mime,
 )
 from loomvec.core.pipeline.pages import build_line_page_map, draft_text, sanitize_text, unit_locator
+from loomvec.core.pipeline.paper_meta import PDF_MIME, read_pdf_info
 from loomvec.core.pipeline.parsers import parse_document
 from loomvec.core.storage_keys import embed_vectors_key, parse_layout_key, parse_md_key
 
@@ -106,6 +107,8 @@ class ParseStep:
                 return await parse_image(session, deps, asset, version, data, mime)
             if is_media_mime(mime):
                 return await parse_media(session, deps, asset, version, data, mime)
+            if mime == PDF_MIME:
+                asset.asset_meta = {**asset.asset_meta, "pdf_info": read_pdf_info(data)}
             # 解析器链（03 文档 §一）：MIME → 第一个支持的解析器（MinerU → 纯文本兜底）
             doc = await parse_document(deps.mineru, asset.name, data, mime)
             markdown = sanitize_text(doc.markdown)

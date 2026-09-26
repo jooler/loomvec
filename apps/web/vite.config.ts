@@ -14,6 +14,8 @@ export default defineConfig({
   server: {
     // 端口单源 LOOMVEC_WEB_PORT（.env，默认 35173）；API 代理目标单源 LOOMVEC_API_PORT
     port: loomvecPort('LOOMVEC_WEB_PORT', 35173),
+    host: '127.0.0.1',
+    allowedHosts: true, // Cloudflare Tunnel Host: loomvec.omnecells.com
     proxy: {
       '/api': { target: apiTarget, changeOrigin: true },
       '/metrics': { target: apiTarget, changeOrigin: true },

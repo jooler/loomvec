@@ -101,8 +101,10 @@ async def _seed(engine: AsyncEngine) -> None:
         # ---- 默认空间（P1 单空间运行；P3 起归属种子租户）----
         await conn.execute(
             sa.text(
-                "INSERT INTO space (id, slug, name, description) "
-                "VALUES (:id, 'default', '默认空间', 'P1 摄取与检索闭环使用的种子默认空间') "
+                "INSERT INTO space (id, slug, name, description, space_type, "
+                "review_required, quota_storage_bytes, quota_file_count) "
+                "VALUES (:id, 'default', '默认空间', "
+                "'P1 摄取与检索闭环使用的种子默认空间', 'shared', false, 0, 0) "
                 "ON CONFLICT (slug) DO NOTHING"
             ),
             {"id": uuid.UUID(DEFAULT_SPACE_ID)},
@@ -110,16 +112,20 @@ async def _seed(engine: AsyncEngine) -> None:
         # ---- 演示租户 + 演示用户 ----
         await conn.execute(
             sa.text(
-                "INSERT INTO tenant (id, name, plan) "
-                "VALUES (:id, 'LoomVec 演示租户', 'free') ON CONFLICT (id) DO NOTHING"
+                "INSERT INTO tenant (id, name, plan, status, "
+                "quota_storage_bytes, quota_file_count) "
+                "VALUES (:id, 'LoomVec 演示租户', 'free', 'active', 0, 0) "
+                "ON CONFLICT (id) DO NOTHING"
             ),
             {"id": uuid.UUID(SEED_TENANT_ID)},
         )
         for username, uid in SEED_USERS.items():
             await conn.execute(
                 sa.text(
-                    'INSERT INTO "user" (id, tenant_id, username, display_name, auth_source) '
-                    "VALUES (:id, :tenant_id, :username, :display_name, 'local') "
+                    'INSERT INTO "user" (id, tenant_id, username, display_name, '
+                    "status, auth_source) "
+                    "VALUES (:id, :tenant_id, :username, :display_name, "
+                    "'active', 'local') "
                     "ON CONFLICT (username) DO NOTHING"
                 ),
                 {

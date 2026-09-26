@@ -73,11 +73,9 @@ function StatusBits({ asset, compact }: { asset: FinderAsset; compact?: boolean 
   const meta = STATUS_TONE[asset.status];
   return (
     <span className={cn('flex items-center gap-1', compact && 'flex-wrap')}>
-      {asset.status !== 'ready' && (
-        <StatusBadge tone={meta?.tone}>
-          {t(`assetStatus.${asset.status}`, { defaultValue: asset.status })}
-        </StatusBadge>
-      )}
+      <StatusBadge tone={meta?.tone}>
+        {t(`assetStatus.${asset.status}`, { defaultValue: asset.status })}
+      </StatusBadge>
       {!compact && asset.review_status && <ReviewStatusTag status={asset.review_status} />}
     </span>
   );
