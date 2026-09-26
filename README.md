@@ -46,7 +46,7 @@ Open API: contract-first OpenAPI → generated TypeScript SDK (`packages/sdk-ts`
 
 ## Documentation
 
-Design documents and task tracking live in [docs/](./docs) (written in Chinese). `docs/00-项目核心文档.md` is the single source of truth for architecture and decisions; `docs/06-开发计划总览.md` drives the development plan.
+Current-system docs live in [docs/](./docs) (Chinese): `docs/00-项目核心文档.md` is the architecture SSOT. Research, plans, TODOs, and decision rationale live in [planning/](./planning). Agent delivery workflow: [AGENTS.md](./AGENTS.md).
 
 ## Quick start (local development)
 
