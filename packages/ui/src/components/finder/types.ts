@@ -35,6 +35,8 @@ export interface FinderPaperMeta {
   first_author?: string | null;
   authors?: string[];
   doi?: string | null;
+  /** Crossref published-online（YYYY / YYYY-MM / YYYY-MM-DD）。 */
+  published_online?: string | null;
   source?: string | null;
 }
 

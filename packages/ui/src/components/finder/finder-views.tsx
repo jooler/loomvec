@@ -107,6 +107,14 @@ function formatAuthors(asset: FinderAsset): string {
   return `${authors[0]}; ${authors[1]} et al.`;
 }
 
+/** 上线列：优先 Crossref published-online，否则回退年份。 */
+function formatPublishedOnline(asset: FinderAsset): string {
+  const online = asset.paper?.published_online?.trim();
+  if (online) return online;
+  const year = asset.paper?.year;
+  return year != null ? String(year) : '';
+}
+
 /** 行内重命名输入框（回车提交 / Esc 取消 / 失焦提交）。 */
 function RenameInput({
   defaultName,
@@ -287,6 +295,7 @@ export function FinderListView(props: FinderViewProps) {
     const selected = props.selectedAssets.has(a.id);
     const isRenaming = props.renaming?.kind === 'asset' && props.renaming.id === a.id;
     const authors = formatAuthors(a);
+    const online = formatPublishedOnline(a);
     rows.push(
       <WithMenu key={a.id} menu={props.menuFor('asset', a.id)}>
         <tr
@@ -310,8 +319,11 @@ export function FinderListView(props: FinderViewProps) {
               )}
             </span>
           </td>
-          <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums">
-            {a.paper?.year ?? ''}
+          <td
+            className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums"
+            title={online || undefined}
+          >
+            {online}
           </td>
           <td className="max-w-[12rem] px-3 py-1.5 text-muted-foreground">
             <span className="block truncate" title={authors || undefined}>
@@ -340,7 +352,7 @@ export function FinderListView(props: FinderViewProps) {
         <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
           <tr className="text-left text-xs text-muted-foreground">
             <th className="px-3 py-2 font-medium">{t('finder.colName')}</th>
-            <th className="w-16 px-3 py-2 font-medium">{t('finder.colYear')}</th>
+            <th className="w-28 px-3 py-2 font-medium">{t('finder.colOnline')}</th>
             <th className="w-44 px-3 py-2 font-medium">{t('finder.colAuthors')}</th>
             <th className="w-36 px-3 py-2 font-medium">{t('finder.colJournal')}</th>
             <th className="w-24 px-3 py-2 font-medium">{t('finder.colSize')}</th>

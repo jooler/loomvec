@@ -36,6 +36,7 @@ CROSSREF_MESSAGE = {
     "container-title": ["2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)"],
     "short-container-title": [],
     "published-print": {"date-parts": [[2016, 6]]},
+    "published-online": {"date-parts": [[2016, 6, 27]]},
     "author": [{"given": "Kaiming", "family": "He"}, {"given": "Xiangyu", "family": "Zhang"}],
 }
 
@@ -50,7 +51,46 @@ def test_parse_crossref_prefers_conference_acronym():
     meta = parse_crossref(CROSSREF_MESSAGE, "10.1109/CVPR.2016.90")
     assert (meta.year, meta.journal, meta.first_author) == (2016, "CVPR", "He")
     assert meta.authors == ["He, Kaiming", "Zhang, Xiangyu"]
+    assert meta.published_online == "2016-06-27"
     assert meta.source == "crossref"
+
+
+def test_parse_crossref_published_online_partial_date():
+    meta = parse_crossref(
+        {
+            **CROSSREF_MESSAGE,
+            "published-online": {"date-parts": [[2026, 9]]},
+            "published-print": {},
+        },
+        "10.example/x",
+    )
+    assert meta.published_online == "2026-09"
+    assert meta.year == 2026
+
+
+def test_parse_crossref_no_published_online():
+    msg = {k: v for k, v in CROSSREF_MESSAGE.items() if k != "published-online"}
+    assert parse_crossref(msg, "x").published_online is None
+
+
+def test_parse_crossref_invalid_day_stops_at_month():
+    meta = parse_crossref(
+        {**CROSSREF_MESSAGE, "published-online": {"date-parts": [[2016, 2, 31]]}},
+        "x",
+    )
+    assert meta.published_online == "2016-02"
+
+
+def test_normalize_published_online():
+    from loomvec.core.pipeline.paper_meta import normalize_published_online
+
+    assert normalize_published_online(" 2016-06-27 ") == "2016-06-27"
+    assert normalize_published_online("2016-02") == "2016-02"
+    assert normalize_published_online("2016") == "2016"
+    assert normalize_published_online("2016-02-31") is None
+    assert normalize_published_online("not-a-date") is None
+    assert normalize_published_online(2016) is None
+    assert normalize_published_online("") is None
 
 
 def test_parse_crossref_prefers_short_container_title():
@@ -473,6 +513,7 @@ async def test_auto_rename_force_reloads_pdf_info_before_extract(monkeypatch):
                 "container-title": ["Briefings in Bioinformatics"],
                 "short-container-title": ["Brief Bioinform"],
                 "published-print": {"date-parts": [[2026, 9]]},
+                "published-online": {"date-parts": [[2026, 9, 15]]},
                 "author": [{"given": "Haerin", "family": "Song"}],
             },
             doi,
@@ -488,6 +529,48 @@ async def test_auto_rename_force_reloads_pdf_info_before_extract(monkeypatch):
     assert "subject" in asset.asset_meta["pdf_info"]
     assert find_doi(asset.asset_meta["pdf_info"].get("subject")) == "10.1093/bib/bbag472"
     assert asset.asset_meta["paper"]["source"] == "crossref"
+    assert asset.asset_meta["paper"]["published_online"] == "2026-09-15"
+
+
+async def test_auto_rename_force_preserves_published_online_when_llm_fallback(monkeypatch):
+    """force 走 LLM 时不应冲掉先前 Crossref 写入的 published_online。"""
+    title = "Deep Residual Learning for Image Recognition"
+    asset_id, asset, version, deps, ai, _ = _force_rename_fixture(title, "no-doi-here")
+    asset.asset_meta["paper"] = {
+        "checksum": "other",
+        "original_name": "upload.pdf",
+        "published_online": "2016-06-27",
+        "year": 2016,
+        "journal": "CVPR",
+        "title": title,
+        "first_author": "He",
+        "source": "crossref",
+    }
+
+    async def fake_load(session, aid):
+        return asset, version
+
+    async def fake_extract(deps, head, pdf_info):
+        return PaperMeta(
+            year=2016,
+            journal="CVPR",
+            title=title,
+            first_author="He",
+            source="llm",
+        )
+
+    async def no_reload(deps, storage_key):
+        return None
+
+    monkeypatch.setattr(paper_meta, "_load", fake_load)
+    monkeypatch.setattr(paper_meta, "extract_paper_meta", fake_extract)
+    monkeypatch.setattr(paper_meta, "_load_pdf_info_from_raw", no_reload)
+
+    new_name = await paper_meta.auto_rename_asset(deps, asset_id, force=True)
+    assert new_name == "2016-CVPR-Deep Residual Learning for Image Recognition-He.pdf"
+    assert asset.asset_meta["paper"]["source"] == "llm"
+    assert asset.asset_meta["paper"]["published_online"] == "2016-06-27"
+    assert "is_paper" not in asset.asset_meta["paper"]
 
 
 async def test_auto_rename_force_skips_reload_when_cached_pdf_info_unchanged(monkeypatch):

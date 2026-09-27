@@ -2,6 +2,7 @@
 
 元数据来源按成本递增逐级尝试：
 1. 正文开头 / PDF 元数据中的 DOI → Crossref（零 token，最准；
+   含 published-online → ``published_online``；
    PDF Title 或出版社 Subject/doi 可印证，避免 MinerU 丢标题时误杀）；
 2. LLM 读 Markdown 开头 ~1500 字（单次小调用）；
 3. PDF 文档信息字典兜底（Title/Author/Subject；Subject 常含 DOI，并可抽年份/期刊；
@@ -20,6 +21,7 @@ import io
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from typing import Any
 
 import httpx
@@ -44,6 +46,9 @@ _ACRONYM_RE = re.compile(r"\(([A-Z][A-Za-z\-]{1,15})\)\s*$")
 _JUNK_PDF_TITLE_RE = re.compile(r"(microsoft word|untitled|\.docx?$|\.pdf$|\.tex$)", re.IGNORECASE)
 _SUBJECT_YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
 _SUBJECT_DOI_LABEL_RE = re.compile(r"(?i)\bdoi\s*:\s*")
+# Crossref published-online / API 投影共用：YYYY / YYYY-MM / YYYY-MM-DD
+_PUBLISHED_ONLINE_RE = re.compile(r"^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$")
+_PAPER_BOOKKEEPING_KEYS = frozenset({"checksum", "original_name", "auto_name", "is_paper"})
 
 HEAD_CHARS_DOI = 3000
 HEAD_CHARS_LLM = 1500
@@ -59,6 +64,8 @@ class PaperMeta:
     first_author: str | None = None
     authors: list[str] = field(default_factory=list)
     doi: str | None = None
+    # Crossref published-online 的 date-parts，ISO 片段：YYYY / YYYY-MM / YYYY-MM-DD
+    published_online: str | None = None
     source: str = ""
 
     @property
@@ -112,6 +119,95 @@ def _crossref_author_label(entry: dict[str, Any]) -> str | None:
     return family or given or (str(entry.get("name") or "").strip() or None)
 
 
+def normalize_published_online(value: object) -> str | None:
+    """校验并规范化 ``published_online``（YYYY / YYYY-MM / YYYY-MM-DD）；非法则 None。"""
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    m = _PUBLISHED_ONLINE_RE.fullmatch(raw)
+    if not m:
+        return None
+    year = int(m.group(1))
+    if not 1000 <= year <= 9999:
+        return None
+    month_s, day_s = m.group(2), m.group(3)
+    if month_s is None:
+        return f"{year:04d}"
+    month = int(month_s)
+    if not 1 <= month <= 12:
+        return None
+    if day_s is None:
+        return f"{year:04d}-{month:02d}"
+    day = int(day_s)
+    try:
+        date(year, month, day)
+    except ValueError:
+        return None
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _crossref_date_parts_iso(message: dict[str, Any], key: str) -> str | None:
+    """Crossref ``date-parts`` → ISO 日期片段；缺月/日或非法日则只到有的合法粒度。"""
+    parts = (message.get(key) or {}).get("date-parts") or []
+    if not parts or not isinstance(parts[0], list) or not parts[0]:
+        return None
+    raw = parts[0]
+    try:
+        year = int(raw[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not 1000 <= year <= 9999:
+        return None
+    out = f"{year:04d}"
+    if len(raw) >= 2 and raw[1] is not None:
+        try:
+            month = int(raw[1])
+        except (TypeError, ValueError):
+            return out
+        if not 1 <= month <= 12:
+            return out
+        out = f"{out}-{month:02d}"
+        if len(raw) >= 3 and raw[2] is not None:
+            try:
+                day = int(raw[2])
+            except (TypeError, ValueError):
+                return out
+            try:
+                date(year, month, day)
+            except ValueError:
+                return out
+            out = f"{out}-{day:02d}"
+    return out
+
+
+def _filled_meta_fields(meta: PaperMeta) -> dict[str, Any]:
+    """asdict 后丢掉空值，避免 LLM/PDF 兜底用 None/[] 冲掉先前 Crossref 专有字段。"""
+    return {k: v for k, v in asdict(meta).items() if v not in (None, "", [])}
+
+
+def _merge_paper_record(
+    meta: PaperMeta,
+    *,
+    prev: dict[str, Any],
+    checksum: str,
+    original_name: str,
+    auto_name: str,
+) -> dict[str, Any]:
+    """新抽取覆盖旧 paper；新侧为空的键保留旧非空值（如 published_online）。"""
+    keep = {
+        k: v
+        for k, v in prev.items()
+        if k not in _PAPER_BOOKKEEPING_KEYS and v not in (None, "", [])
+    }
+    return {
+        **keep,
+        **_filled_meta_fields(meta),
+        "checksum": checksum,
+        "original_name": original_name,
+        "auto_name": auto_name,
+    }
+
+
 def parse_crossref(message: dict[str, Any], doi: str) -> PaperMeta:
     year = None
     for key in ("published-print", "published-online", "issued", "created"):
@@ -143,6 +239,7 @@ def parse_crossref(message: dict[str, Any], doi: str) -> PaperMeta:
         first_author=first_author,
         authors=authors,
         doi=doi,
+        published_online=_crossref_date_parts_iso(message, "published-online"),
         source="crossref",
     )
 
@@ -304,7 +401,7 @@ def build_paper_filename(meta: PaperMeta, ext: str = ".pdf") -> str:
 
 
 def _fill_missing(meta: PaperMeta, fallback: PaperMeta) -> PaperMeta:
-    for key in ("year", "journal", "title", "first_author", "doi"):
+    for key in ("year", "journal", "title", "first_author", "doi", "published_online"):
         if not getattr(meta, key) and getattr(fallback, key):
             setattr(meta, key, getattr(fallback, key))
     if not meta.authors and fallback.authors:
@@ -494,15 +591,24 @@ async def auto_rename_asset(
             if not force and not _renamable(asset, version):
                 return None
             original = paper.get("original_name") or _uploaded_name(version) or asset.name
-            record: dict[str, Any] = {"checksum": version.checksum, "original_name": original}
             new_name = None
             if _meta_usable(meta):
                 assert meta is not None
                 new_name = build_paper_filename(meta, asset.ext or ".pdf")
-                record.update(asdict(meta), auto_name=new_name)
+                record = _merge_paper_record(
+                    meta,
+                    prev=paper,
+                    checksum=version.checksum,
+                    original_name=original,
+                    auto_name=new_name,
+                )
                 asset.name = new_name
             else:
-                record["is_paper"] = False
+                record = {
+                    "checksum": version.checksum,
+                    "original_name": original,
+                    "is_paper": False,
+                }
             merged = {**asset.asset_meta, "paper": record}
             if refreshed_pdf_info is not None:
                 merged["pdf_info"] = refreshed_pdf_info

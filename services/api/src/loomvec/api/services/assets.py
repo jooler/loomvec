@@ -33,6 +33,7 @@ from loomvec.core.db.repos import (
 )
 from loomvec.core.errors import NotFoundError, ValidationError
 from loomvec.core.pipeline.mime import EXT_TO_MIME, file_ext, is_image_mime
+from loomvec.core.pipeline.paper_meta import normalize_published_online
 from loomvec.core.pipeline.steps import PIPELINE_STEPS
 from loomvec.core.quota import apply_asset_added, apply_asset_removed, check_upload_quota
 from loomvec.core.storage import ObjectStorage
@@ -379,7 +380,8 @@ def paper_meta_out(asset_meta: dict | None) -> dict | None:
     title = paper.get("title")
     doi = paper.get("doi")
     source = paper.get("source")
-    if not any((year, journal, title, first_author, authors, doi)):
+    published_online = normalize_published_online(paper.get("published_online"))
+    if not any((year, journal, title, first_author, authors, doi, published_online)):
         return None
     return {
         "year": year,
@@ -388,6 +390,7 @@ def paper_meta_out(asset_meta: dict | None) -> dict | None:
         "first_author": first_author,
         "authors": authors,
         "doi": str(doi).strip() if doi else None,
+        "published_online": published_online,
         "source": str(source).strip() if source else None,
     }
 

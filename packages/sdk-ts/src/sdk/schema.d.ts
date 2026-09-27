@@ -3415,6 +3415,11 @@ export interface components {
             first_author?: string | null;
             /** Journal */
             journal?: string | null;
+            /**
+             * Published Online
+             * @description Crossref published-online（YYYY / YYYY-MM / YYYY-MM-DD）
+             */
+            published_online?: string | null;
             /** Source */
             source?: string | null;
             /** Title */

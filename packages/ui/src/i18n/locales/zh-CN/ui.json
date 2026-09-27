@@ -56,7 +56,7 @@
     "cannotMoveIntoSelf": "不能移动到自身或其子目录内",
     "deletedAssets": "已删除 {{count}} 个资产（含向量清理）",
     "colName": "名称",
-    "colYear": "年份",
+    "colOnline": "上线",
     "colAuthors": "作者",
     "colJournal": "期刊",
     "colSize": "大小",

@@ -49,6 +49,10 @@ class PaperMetaOut(BaseModel):
     first_author: str | None = None
     authors: list[str] = []
     doi: str | None = None
+    published_online: str | None = Field(
+        default=None,
+        description="Crossref published-online（YYYY / YYYY-MM / YYYY-MM-DD）",
+    )
     source: str | None = None
 
 
