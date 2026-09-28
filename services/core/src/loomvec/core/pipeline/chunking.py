@@ -198,17 +198,23 @@ def validate_markers(
     """marker → 合法 ChunkDraft 列表：校验/并间隙/扣表格/钳制尺寸。"""
     table_spans = [(t.start_line, t.end_line) for t in tables]
 
-    # 1) 行号合法化：夹取到批次内、单调、去重叠（允许间隙，间隙并入前一 chunk）
+    # 1) 行号合法化：夹取到批次内、单调、去重叠（允许间隙，间隙并入前一 chunk）。
+    #    夹取后 start>end 的 marker（LLM 幻觉出批次外区间，如 16..20 被夹成 16..15）
+    #    必须丢弃：否则后续间隙并入会把倒挂区间撑回批次外，越界读 lines
     valid = sorted(
         (
-            {
-                "start_line": max(batch_start, m["start_line"]),
-                "end_line": min(batch_end, m["end_line"]),
-                "title": m["title"],
-                "keywords": m["keywords"],
-            }
-            for m in markers
-            if m["end_line"] >= m["start_line"]
+            clamped
+            for clamped in (
+                {
+                    "start_line": max(batch_start, m["start_line"]),
+                    "end_line": min(batch_end, m["end_line"]),
+                    "title": m["title"],
+                    "keywords": m["keywords"],
+                }
+                for m in markers
+                if m["end_line"] >= m["start_line"]
+            )
+            if clamped["start_line"] <= clamped["end_line"]
         ),
         key=lambda m: m["start_line"],
     )

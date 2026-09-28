@@ -46,6 +46,22 @@ def test_validate_markers_merges_gaps_and_covers_batch():
     assert all(d.method == ChunkMethod.LLM_MARKERS for d in drafts)
 
 
+def test_validate_markers_drops_out_of_batch_hallucinations():
+    """LLM 幻觉出批次外区间（如 16..20，批次只有 15 行）：夹取成倒挂后必须丢弃，
+    且间隙并入不得把倒挂区间撑回批次外（否则越界读 lines → IndexError）。"""
+    lines = _lines(15)
+    markers = [
+        {"start_line": 1, "end_line": 15, "title": "A", "keywords": []},
+        {"start_line": 16, "end_line": 20, "title": "B", "keywords": []},
+    ]
+    drafts = validate_markers(
+        markers, lines, batch_start=1, batch_end=15, tables=[], min_chars=10, max_chars=10_000
+    )
+    assert drafts, "合法 marker 不应被整批丢弃"
+    assert drafts[-1].end_line <= len(lines)
+    assert all(d.start_line >= 1 for d in drafts)
+
+
 def test_validate_markers_table_excluded_and_independent():
     lines = _lines(10)
     lines[4] = "<table><tr><td>Q3 营收</td></tr></table>"
