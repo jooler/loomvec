@@ -89,11 +89,15 @@ async def load_llm_overrides(session: AsyncSession) -> tuple[str | None, str | N
     from loomvec.core.db.models import SystemConfig
 
     rows = (
-        await session.execute(
-            select(SystemConfig).where(
-                SystemConfig.key.in_(("ai.llm.base_url", "ai.llm.api_key"))
+        (
+            await session.execute(
+                select(SystemConfig).where(
+                    SystemConfig.key.in_(("ai.llm.base_url", "ai.llm.api_key"))
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     vals = {r.key: (r.value.strip() if isinstance(r.value, str) else "") for r in rows}
     return vals.get("ai.llm.base_url") or None, vals.get("ai.llm.api_key") or None

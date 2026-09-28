@@ -44,9 +44,7 @@ def sandbox_container_name(env_id: str) -> str:
     return f"loomvec-agent-env-{env_id}"
 
 
-async def _docker(
-    *args: str, docker_host: str = "", timeout: float = 30.0
-) -> tuple[int, str]:
+async def _docker(*args: str, docker_host: str = "", timeout: float = 30.0) -> tuple[int, str]:
     """运行 docker CLI（网关进程身份，无 socket 挂载）；返回 (rc, 合并输出)。
 
     docker_host 非空时经 DOCKER_HOST 指向 rootless/remote context（§4-E 部署变体）。
@@ -204,9 +202,7 @@ class DockerSandboxProvider:
     # 孤儿容器 reconcile（§6.3-3）
     # ------------------------------------------------------------------
 
-    async def reconcile(
-        self, live_env_ids: set[str], *, docker_host: str = ""
-    ) -> int:
+    async def reconcile(self, live_env_ids: set[str], *, docker_host: str = "") -> int:
         """对账：销毁注册表之外的沙箱容器（网关重启/驱逐竞态残留）。
 
         会话历史在宿主持久目录且路径恒等（F14），resume 天然恢复，容器可安全清。

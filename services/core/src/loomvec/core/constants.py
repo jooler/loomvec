@@ -112,10 +112,12 @@ CHUNK_PRESETS: dict[str, dict[str, int]] = {
 }
 DEFAULT_CHUNK_PRESET = "balanced"
 
-# 空间可选嵌入模型白名单（创建/设置空间时校验；P2 仅记录选择，实际路由随网关配置）
+# 空间可选嵌入模型白名单（创建/设置空间时校验；P2 仅记录选择，实际路由随网关配置）。
+# bge-m3 为本地 Infinity 端点别名（scripts/start-models-gpu.sh，1024 维）
 EMBEDDING_MODELS: tuple[str, ...] = (
     "text-embedding-v4",
     "multimodal-embedding-v1",
+    "bge-m3",
     "mock",
 )
 

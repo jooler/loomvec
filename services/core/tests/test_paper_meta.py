@@ -168,10 +168,14 @@ async def test_extract_returns_none_for_non_paper():
 
 
 async def test_extract_uses_doi_from_pdf_subject_when_markdown_lacks_doi(monkeypatch):
-    """MinerU 丢失页眉 DOI 时，Subject 中的 DOI 仍可走 Crossref（右键回源 pdf_info 兜底依赖此路径）。"""
-    title = "CAREPath: semantic context-aware reasoning paths with mechanism-augmented embeddings for drug repurposing"
+    """MinerU 丢失页眉 DOI 时，Subject 中的 DOI 仍可走 Crossref
+    （右键回源 pdf_info 兜底依赖此路径）。"""
+    title = (
+        "CAREPath: semantic context-aware reasoning paths with "
+        "mechanism-augmented embeddings for drug repurposing"
+    )
     head = f"# {title}\nHaerin Song\n## Abstract\nBiomedical knowledge graphs."
-    subject = f"DOI: 10.1093/bib/bbag472, Briefings in Bioinformatics, 2026. Abstract: …"
+    subject = "DOI: 10.1093/bib/bbag472, Briefings in Bioinformatics, 2026. Abstract: …"
 
     async def fake_fetch(doi, **kwargs):
         assert doi == "10.1093/bib/bbag472"
@@ -188,9 +192,7 @@ async def test_extract_uses_doi_from_pdf_subject_when_markdown_lacks_doi(monkeyp
 
     monkeypatch.setattr(paper_meta, "fetch_crossref", fake_fetch)
     ai = _FakeAi({"is_paper": False})
-    meta = await extract_paper_meta(
-        _deps(ai), head, {"title": title, "subject": subject}
-    )
+    meta = await extract_paper_meta(_deps(ai), head, {"title": title, "subject": subject})
     assert meta is not None and meta.source == "crossref" and ai.calls == 0
     assert meta.usable and meta.doi == "10.1093/bib/bbag472"
 
@@ -331,7 +333,7 @@ async def test_auto_rename_force_skips_reload_when_cached_pdf_info_unchanged(mon
     writer.write(buf)
     cached = read_pdf_info(buf.getvalue())
 
-    asset_id, asset, version, deps, ai, raw_gets = _force_rename_fixture(
+    asset_id, asset, version, deps, _ai, raw_gets = _force_rename_fixture(
         title, subject, cached_pdf_info=cached
     )
     # fixture 又写了一份 PDF；用同一 cached 覆盖 raw 读出的期望键集合
@@ -344,7 +346,9 @@ async def test_auto_rename_force_skips_reload_when_cached_pdf_info_unchanged(mon
 
     async def fake_extract(deps, head, pdf_info):
         extract_calls.append(dict(pdf_info))
-        return PaperMeta(year=2016, journal="CVPR", title=title, first_author="He", source="crossref")
+        return PaperMeta(
+            year=2016, journal="CVPR", title=title, first_author="He", source="crossref"
+        )
 
     async def fake_reload(deps, storage_key):
         raw_gets.append(storage_key or "")
@@ -364,7 +368,9 @@ async def test_auto_rename_force_skips_reload_when_cached_pdf_info_unchanged(mon
 
 async def test_auto_rename_aborts_when_version_changes_mid_flight(monkeypatch):
     title = "Deep Residual Learning for Image Recognition"
-    asset_id, asset, version, deps, ai, _ = _force_rename_fixture(title, "DOI: 10.1109/CVPR.2016.90")
+    asset_id, asset, version, deps, _ai, _ = _force_rename_fixture(
+        title, "DOI: 10.1109/CVPR.2016.90"
+    )
     v2 = SimpleNamespace(
         checksum="sha-v2",
         storage_key="papers/replaced.pdf",
@@ -377,7 +383,9 @@ async def test_auto_rename_aborts_when_version_changes_mid_flight(monkeypatch):
         return asset, version if loads["n"] == 1 else v2
 
     async def ok_extract(deps, head, pdf_info):
-        return PaperMeta(year=2016, journal="CVPR", title=title, first_author="He", source="crossref")
+        return PaperMeta(
+            year=2016, journal="CVPR", title=title, first_author="He", source="crossref"
+        )
 
     async def no_reload(*args, **kwargs):
         return None

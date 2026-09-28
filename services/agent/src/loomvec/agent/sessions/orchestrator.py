@@ -103,8 +103,17 @@ class PromptOrchestrator:
                 "error",
                 {"message": f"沙箱不可用：{e}", "code": "sandbox_unavailable"},
             )
-            yield sse_event("done", {"message_id": "", "answer": "", "citations": [],
-                                     "graph_evidence": [], "usage": {}, "finish_reason": "error"})
+            yield sse_event(
+                "done",
+                {
+                    "message_id": "",
+                    "answer": "",
+                    "citations": [],
+                    "graph_evidence": [],
+                    "usage": {},
+                    "finish_reason": "error",
+                },
+            )
             return
         except Exception as e:
             # 环境目录不可写 / runtime 拉起失败等：必须以 error+done 收尾，
@@ -112,11 +121,22 @@ class PromptOrchestrator:
             logger.exception("runtime_spawn_failed", env_id=ctx.env_id)
             yield sse_event(
                 "error",
-                {"message": f"智能体运行环境启动失败：{type(e).__name__}: {str(e)[:200]}",
-                 "code": "runtime_spawn_failed"},
+                {
+                    "message": f"智能体运行环境启动失败：{type(e).__name__}: {str(e)[:200]}",
+                    "code": "runtime_spawn_failed",
+                },
             )
-            yield sse_event("done", {"message_id": "", "answer": "", "citations": [],
-                                     "graph_evidence": [], "usage": {}, "finish_reason": "error"})
+            yield sse_event(
+                "done",
+                {
+                    "message_id": "",
+                    "answer": "",
+                    "citations": [],
+                    "graph_evidence": [],
+                    "usage": {},
+                    "finish_reason": "error",
+                },
+            )
             return
         message_id = uuid.uuid4().hex
         model = self._cfg.agent.model.name

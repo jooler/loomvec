@@ -289,9 +289,7 @@ async def create_session(
     if scope:
         await _assert_member_spaces(session, user_id, scope)
     cfg: AgentRuntimeConfig = request.app.state.agent_config
-    project_path = normalize_project_path(
-        cfg, str(env.id), body.project_path if body else None
-    )
+    project_path = normalize_project_path(cfg, str(env.id), body.project_path if body else None)
     row = await AgentSessionRepo(session).create(
         id=uuid.UUID(new_logical_session_id()),
         env_id=env.id,

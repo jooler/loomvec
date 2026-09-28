@@ -113,9 +113,7 @@ def ensure_env_layout(
     # patch 的 sessions root 渲染零改动：路径恒等原则使其在容器内同样有效（F13）。
     mcp = cfg.agent.mcp
     mcp_url = (
-        mcp.url_sandbox
-        if cfg.agent.runtime.provider == "docker" and mcp.url_sandbox
-        else mcp.url
+        mcp.url_sandbox if cfg.agent.runtime.provider == "docker" and mcp.url_sandbox else mcp.url
     )
     (dsh_home / "cordis.patch.yml").write_text(
         CORDIS_PATCH.format(sessions_root=str(dsh_home / "sessions"), mcp_url=mcp_url),

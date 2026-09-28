@@ -366,10 +366,7 @@ def paper_meta_out(asset_meta: dict | None) -> dict | None:
         authors = []
     authors = [str(a).strip() for a in authors if a and str(a).strip()]
     first_author = paper.get("first_author")
-    if isinstance(first_author, str):
-        first_author = first_author.strip() or None
-    else:
-        first_author = None
+    first_author = first_author.strip() or None if isinstance(first_author, str) else None
     # 旧记录只有 first_author 时垫进 authors，供列表列展示
     if not authors and first_author:
         authors = [first_author]

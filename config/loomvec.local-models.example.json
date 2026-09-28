@@ -1,0 +1,39 @@
+{
+  "$comment": "本地模型推理模板（scripts/start-models-gpu.sh：vLLM :38010 对话 + Infinity :38011 嵌入/重排/CLIP）。支持部分覆盖：把本文件的 ai 段合并进 config/loomvec.json 即可，其余键取内置默认。vlm 未本地化，保持原配置（图片/视频 caption 走云端，或关闭 image.caption_enabled）。切换后需重启 api/worker/agent（AiGateway 启动时快照配置）；存量空间的向量是旧模型产物，请经 admin 重嵌入或重建空间。见 docs/16-本地模型推理.md。",
+  "ai": {
+    "mock": false,
+    "llm": {
+      "base_url": "http://127.0.0.1:38010/v1",
+      "api_key": "local",
+      "model": "qwen2.5-1.5b",
+      "temperature": 0.2,
+      "json_retries": 2,
+      "timeout_seconds": 120.0,
+      "api_style": "openai"
+    },
+    "embedding": {
+      "base_url": "http://127.0.0.1:38011",
+      "api_key": "local",
+      "model": "bge-m3",
+      "dim": 1024,
+      "dimensions": null,
+      "batch_size": 16,
+      "api_style": "openai",
+      "timeout_seconds": 120.0
+    },
+    "rerank": {
+      "base_url": "http://127.0.0.1:38011",
+      "api_key": "local",
+      "model": "bge-reranker-v2-m3",
+      "api_style": "openai",
+      "timeout_seconds": 120.0
+    },
+    "clip": {
+      "base_url": "http://127.0.0.1:38011",
+      "api_key": "local",
+      "model": "jina-clip-v2",
+      "dim": 1024,
+      "api_style": "infinity"
+    }
+  }
+}

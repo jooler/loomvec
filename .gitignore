@@ -22,12 +22,14 @@ coverage/
 deploy/compose/.env
 
 # OpenAPI 导出产物（由脚本生成，不入库；契约快照在 services/api/tests/__snapshots__/）
-openapi.json
+/openapi.json
 
 # OS / IDE
 .DS_Store
 .idea/
 .vscode/
+# ZCode 会话本地数据（会话记录/草稿等，仅本机有效）
+.zcode/
 
 # MinerU 本地解析输出
 third_party/mineru/output/

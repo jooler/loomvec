@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import pytest
 
-from loomvec.core.config import Settings
+from loomvec.core.config import Settings, get_app_config
 from loomvec.core.errors import NotFoundError, UpstreamUnavailableError, ValidationError
 from loomvec.core.storage import ObjectStorage
 
 
-def test_settings_env_parsing(monkeypatch):
+def test_settings_env_parsing(monkeypatch, tmp_path):
     monkeypatch.setenv("LOOMVEC_POSTGRES__URL", "postgresql+asyncpg://u:p@h:1/db")
-    monkeypatch.setenv("LOOMVEC_AI__EMBEDDING__MODEL", "text-embedding-v4")
     monkeypatch.setenv("LOOMVEC_LOG_JSON", "false")
-    s = Settings(_env_file=None)
-    assert s.postgres.url.endswith("/db")
-    assert s.ai.embedding.model == "text-embedding-v4"
-    assert s.log_json is False
+    # ai 段不读环境变量（Settings.ai 为 property，来源是应用参数文件）——
+    # 指向临时文件验证「LOOMVEC_APP_CONFIG + 部分覆盖」这条真实链路，
+    # 避免依赖本机 config/loomvec.json
+    cfg = tmp_path / "loomvec-test.json"
+    cfg.write_text('{"ai": {"embedding": {"model": "test-embedding"}}}', encoding="utf-8")
+    monkeypatch.setenv("LOOMVEC_APP_CONFIG", str(cfg))
+    get_app_config.cache_clear()
+    try:
+        s = Settings(_env_file=None)
+        assert s.postgres.url.endswith("/db")
+        assert s.ai.embedding.model == "test-embedding"
+        assert s.log_json is False
+    finally:
+        get_app_config.cache_clear()
 
 
 def test_error_payload_contract():

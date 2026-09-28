@@ -27,9 +27,12 @@ from loomvec.core.errors import ValidationError
 def _cfg(tmp_path: Path, provider: str = "docker") -> AgentRuntimeConfig:
     return AgentRuntimeConfig(
         settings=Settings(),
-        agent=AgentSettings(storage_root=str(tmp_path / "storage"), **{
-            "runtime": {"provider": provider},
-        }),
+        agent=AgentSettings(
+            storage_root=str(tmp_path / "storage"),
+            **{
+                "runtime": {"provider": provider},
+            },
+        ),
     )
 
 
@@ -72,9 +75,7 @@ def _fake_harness(monkeypatch):
             pass
 
     monkeypatch.setattr(docker_mod, "_harness_cls", lambda: (FakeHarness, FakeConfig))
-    monkeypatch.setattr(
-        docker_mod, "_docker", lambda *a, **k: asyncio.sleep(0, result=(0, ""))
-    )
+    monkeypatch.setattr(docker_mod, "_docker", lambda *a, **k: asyncio.sleep(0, result=(0, "")))
     return captured
 
 

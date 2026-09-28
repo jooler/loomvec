@@ -124,20 +124,25 @@ class MineruSettings(BaseModel):
 
 
 class AiProviderConfig(BaseModel):
-    """单个 AI 供方端点（OpenAI 兼容）。密钥只经环境变量注入。
+    """单个 AI 供方端点。密钥只经环境变量注入。
 
     api_style="dashscope" 时走阿里云百炼 DashScope 原生协议：
     - rerank → POST {base_url}/services/rerank/text-rerank/text-rerank
       （base_url 填 https://dashscope.aliyuncs.com/api/v1；
         rerank 无 OpenAI 兼容端点）；
     - clip → POST {base_url}/services/embeddings/multimodal-embedding/multimodal-embedding
+
+    api_style="infinity" 时 clip 走 Infinity（michaelfeil/infinity）协议：
+    文本与图片分次请求——文本 {"input": ["..."]}（默认 modality=text），
+    图片 {"input": ["data:image/jpeg;base64,..."], "modality": "image"}；
+    嵌入/重排通道不受影响（OpenAI 兼容）。
     """
 
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
     timeout_seconds: float = 120.0
-    api_style: Literal["openai", "dashscope"] = "openai"
+    api_style: Literal["openai", "dashscope", "infinity"] = "openai"
 
 
 class EmbeddingSettings(AiProviderConfig):

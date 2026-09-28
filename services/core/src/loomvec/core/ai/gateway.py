@@ -410,6 +410,8 @@ class AiGateway:
         cfg = self._provider("clip")
         if cfg.api_style == "dashscope":
             return await self._clip_request_dashscope(items)
+        if cfg.api_style == "infinity":
+            return await self._clip_request_infinity(items)
         started = time.monotonic()
         resp = await self._post("clip", "/embeddings", {"model": cfg.model, "input": items})
         self._usage("clip", cfg, started, resp)
@@ -417,6 +419,41 @@ class AiGateway:
         if len(data) != len(items):
             raise UpstreamUnavailableError(
                 upstream="ai:clip", reason=f"返回向量数 {len(data)} != 输入 {len(items)}"
+            )
+        return [d["embedding"] for d in data]
+
+    async def _clip_request_infinity(self, items: list[dict[str, str]]) -> list[list[float]]:
+        """Infinity 多模态 embeddings：文本/图片分次请求（字符串数组 + modality 字段）。
+
+        以文搜图查询侧传 [{"text"}]，图片侧传 [{"image": base64}]（可带 caption，忽略），
+        两类不混用于同一次调用（gateway 的调用方本就分开传）。
+        """
+        cfg = self._provider("clip")
+        # 图片 item 可带 caption（infinity 协议不支持，忽略）；text-only 与
+        # image-only 混在同一次调用仍拒绝（调用方本就分开传）
+        texts = [it["text"] for it in items if "text" in it and "image" not in it]
+        images = [it["image"] for it in items if "image" in it]
+        if texts and not images:
+            payload: dict[str, Any] = {"model": cfg.model, "input": texts}
+        elif images and not texts:
+            # Infinity 图片侧要 data URI（纯 base64 会 422）
+            payload = {
+                "model": cfg.model,
+                "input": [
+                    img if img.startswith("data:") else f"data:image/jpeg;base64,{img}"
+                    for img in images
+                ],
+                "modality": "image",
+            }
+        else:
+            raise ValidationError("clip 通道 api_style=infinity 不支持同次混传 text 与 image")
+        started = time.monotonic()
+        resp = await self._post("clip", "/embeddings", payload)
+        self._usage("clip", cfg, started, resp)
+        data = sorted(resp.get("data", []), key=lambda d: d.get("index", 0))
+        if len(data) != len(payload["input"]):
+            raise UpstreamUnavailableError(
+                upstream="ai:clip", reason=f"返回向量数 {len(data)} != 输入 {len(payload['input'])}"
             )
         return [d["embedding"] for d in data]
 

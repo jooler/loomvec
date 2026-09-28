@@ -1154,6 +1154,8 @@ export interface paths {
         /**
          * Auto Rename Asset
          * @description 按论文元数据强制重命名（Crossref / PDF 信息 / LLM）；仅 PDF，需已完成解析。
+         *
+         *     先回源刷新 PDF Info（含 Subject 中的 DOI），再与解析 Markdown 抽取；与新上传 parse 路径一致。
          */
         post: operations["auto_rename_asset_api_v1_assets__asset_id__auto_rename_post"];
         delete?: never;
@@ -3283,7 +3285,7 @@ export interface components {
             description?: string | null;
             /**
              * Embedding Model
-             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'mock']
+             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'mock']
              */
             embedding_model?: string | null;
             /** Name */
@@ -3677,7 +3679,7 @@ export interface components {
             description?: string | null;
             /**
              * Embedding Model
-             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'mock']
+             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'mock']
              */
             embedding_model?: string | null;
             /** Name */

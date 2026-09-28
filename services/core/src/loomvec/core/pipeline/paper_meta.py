@@ -8,8 +8,8 @@
 由 PipelineRunner 在 chunk 步骤后调用（资产仍为 processing，前端轮询可见新名）；
 任何失败只记日志，不影响资产管线。幂等：asset_meta['paper'].checksum 命中即跳过。
 
-force=True（右键重新自动命名）：先回源刷新 PDF Info 字典（与 parse 写入路径一致，Subject 常含 DOI），
-再与 Markdown 一起抽取；有更新则回写 pdf_info。避免缓存缺 Subject 时先烧掉 LLM。
+force=True（右键重新自动命名）：先回源刷新 PDF Info 字典（与 parse 写入路径一致，
+Subject 常含 DOI），再与 Markdown 一起抽取；有更新则回写 pdf_info。避免缓存缺 Subject 时先烧掉 LLM。
 """
 
 from __future__ import annotations
