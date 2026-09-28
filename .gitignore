@@ -33,6 +33,8 @@ openapi.json
 third_party/mineru/output/
 # AGE 扩展源码（构建 postgres-age 镜像前经 `make age-src` 克隆，见 Makefile）
 deploy/compose/postgres-age/age-src/
+# compose 本机开发定制（如用 profile 关掉容器版 MinerU 改走宿主机 GPU；仅本机有效，不入库）
+deploy/compose/compose.override.yaml
 tmp/
 
 # Celery beat 本地调度状态（运行时产物）

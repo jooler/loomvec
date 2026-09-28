@@ -5,8 +5,8 @@
 #   ./dev.sh start             # 一键启动全部：部署门禁 → 镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈
 #                              #   → 迁移 → api/agent/worker + 三个前端（web/admin/ops）；交互终端下
 #                              #   完成后实时跟随 FastAPI 日志（Ctrl-C 退出跟踪，服务继续运行；--no-follow 关闭）
-#   ./dev.sh logs [名称]       # 跟踪服务日志：api（默认）/agent/worker/web/admin/ops/all
-#   ./dev.sh stop              # 关闭三个前端、api/agent/worker 应用进程，并停止基础设施+监控容器（数据卷保留）
+#   ./dev.sh logs [名称]       # 跟踪服务日志：api（默认）/agent/worker/web/admin/ops/mineru/all
+#   ./dev.sh stop              # 关闭应用进程（api/agent/worker/三个前端/本地 MinerU），并停止基础设施+监控容器（数据卷保留）
 #   ./dev.sh status            # 查看各组件运行状态
 #
 # 新环境首次部署：先运行 ./deploy.sh（交互式配置 AI 供方 + 安装全部依赖，写入 config/loomvec.json），再 ./dev.sh start；
@@ -15,9 +15,11 @@
 # 行为约定：
 # - 幂等：已在运行的组件自动跳过，不会重复拉起；
 # - 监控栈（Grafana/Prometheus/Alertmanager/Loki/Promtail）随一键启动一起拉起；
-# - 日志：应用进程输出到 tmp/dev-{api,agent,worker,web,admin,ops}.log；
+# - 日志：应用进程输出到 tmp/dev-{api,agent,worker,web,admin,ops,mineru}.log（MinerU 容器版时在 docker）；
 #   应用进程以 PYTHONUNBUFFERED=1 运行，日志实时落盘可即时 tail；
 # - 应用参数 config/loomvec.json（不入库）缺失时从模板自动生成（ai.mock=true，离线可跑）；
+# - MinerU 双路线：compose 默认服务集含 mineru（容器版）→ 随 compose 自动拉起；被 override
+#   以 profile（如 cpu-mineru）隔离时 → 拉起宿主机 GPU 版（scripts/start-mineru-gpu.sh）；
 # - MinerU 首次构建/启动较慢（模型下载 1~2GB），未就绪只告警不阻塞（解析功能暂不可用）。
 set -uo pipefail
 
@@ -25,7 +27,17 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 LOG_DIR="$ROOT/tmp"; PID_FILE="$LOG_DIR/dev.pids"; mkdir -p "$LOG_DIR"
 DEPLOY_STAMP="$LOG_DIR/loomvec-deployed.stamp"  # ./deploy.sh 成功完成时写入；缺失则 dev.sh 先拉起部署
-COMPOSE="docker compose -f deploy/compose/compose.yaml --profile observability"
+# compose.override.yaml 不入库（本机开发定制，如用 profile 关掉容器版 MinerU 改走宿主机 GPU）：
+# 存在才并入；缺失时新环境按纯 compose.yaml 跑（MinerU 随容器启动）
+COMPOSE_FILES=(-f deploy/compose/compose.yaml)
+if [ -f deploy/compose/compose.override.yaml ]; then COMPOSE_FILES+=(-f deploy/compose/compose.override.yaml); fi
+COMPOSE="docker compose ${COMPOSE_FILES[*]} --profile observability"
+# MinerU 路线判定：override 用 profile（如 cpu-mineru）把 mineru 移出默认服务集时走本地 GPU 脚本，
+# 否则随 compose 容器化启动。以 compose 实际解析结果为准，不硬编码 override 文件内容。
+mineru_in_compose() { $COMPOSE config --services 2>/dev/null | grep -qx mineru; }
+# MinerU 端口单源：deploy/compose/.env 的 MINERU_PORT（容器端口映射与本地脚本共用；默认 38000）
+MINERU_PORT="$(grep -E '^MINERU_PORT=' deploy/compose/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
+MINERU_PORT="${MINERU_PORT:-38000}"
 export PYTHONUNBUFFERED=1  # uvicorn/celery 日志实时落盘，tail 即时可见
 # 智能体 env 根目录：开发默认落仓库内 tmp/（配置默认 /data/... 在开发机通常不可写）；显式 export 可覆盖
 export LOOMVEC_AGENT_STORAGE_ROOT="${LOOMVEC_AGENT_STORAGE_ROOT:-$ROOT/tmp/agent-envs}"
@@ -64,6 +76,14 @@ save_pid(){
   fi
   echo "$1=$2" >> "$PID_FILE"
 }
+start_bg() { # $1=名称 $2=pid名 $3=端口 $4=命令...（端口已监听/进程存活则跳过；日志 dev-{名称}.log）
+  local name="$1" pid_name="$2" port="$3"; shift 3
+  if port_up "$port"; then ok "$name 已在运行（:${port}），跳过"; return 0; fi
+  if alive "$pid_name"; then ok "$name 进程存活但端口未监听，等待中…"; return 0; fi
+  echo "启动 $name …"
+  nohup "$@" >"$LOG_DIR/dev-$name.log" 2>&1 &
+  save_pid "$pid_name" $!
+}
 
 do_stop() {
   if [ -f "$PID_FILE" ]; then
@@ -85,7 +105,7 @@ do_stop() {
 }
 
 do_status() {
-  for probe in "PostgreSQL:35433" "Redis:36379" "RustFS:39000" "Milvus:39530" "MinerU:38000" "Grafana:33002" "Prometheus:39090" "API:$API_PORT" "Agent:$AGENT_PORT" "Web:$WEB_PORT" "Admin:$ADMIN_PORT" "Ops:$OPS_PORT"; do
+  for probe in "PostgreSQL:35433" "Redis:36379" "RustFS:39000" "Milvus:39530" "MinerU:$MINERU_PORT" "Grafana:33002" "Prometheus:39090" "API:$API_PORT" "Agent:$AGENT_PORT" "Web:$WEB_PORT" "Admin:$ADMIN_PORT" "Ops:$OPS_PORT"; do
     port_up "${probe##*:}" && ok "$probe" || fail "$probe"
   done
   if alive worker; then ok "worker（本脚本启动）"
@@ -93,15 +113,22 @@ do_status() {
   else fail "worker"; fi
 }
 
-usage() { echo "用法: ./dev.sh start [--no-follow] | stop | status | logs [api|agent|worker|web|admin|ops|all]"; }
+usage() { echo "用法: ./dev.sh start [--no-follow] | stop | status | logs [api|agent|worker|web|admin|ops|mineru|all]"; }
 
-do_logs() { # $1=api|agent|worker|web|admin|ops|all —— tail -F 跟踪，Ctrl-C 退出不影响服务
+do_logs() { # $1=api|agent|worker|web|admin|ops|mineru|all —— tail -F 跟踪，Ctrl-C 退出不影响服务
   local pick="$1"
   local files=()
   case "$pick" in
     api|agent|worker|web|admin|ops) files=("$LOG_DIR/dev-$pick.log") ;;
-    all) files=("$LOG_DIR"/dev-api.log "$LOG_DIR"/dev-agent.log "$LOG_DIR"/dev-worker.log "$LOG_DIR"/dev-web.log "$LOG_DIR"/dev-admin.log "$LOG_DIR"/dev-ops.log) ;;
-    *) fail "未知日志名：${pick}（可选 api/agent/worker/web/admin/ops/all）"; usage; exit 1 ;;
+    mineru)
+      if [ -f "$LOG_DIR/dev-mineru.log" ]; then files=("$LOG_DIR/dev-mineru.log")
+      elif docker ps --format '{{.Names}}' 2>/dev/null | grep -qx loomvec-mineru; then
+        echo "MinerU 为容器版，日志在容器内：docker logs -f loomvec-mineru"; exit 0
+      else fail "暂无本地 MinerU 日志（dev-mineru.log 不存在；容器版用 docker logs loomvec-mineru）"; exit 1; fi ;;
+    all)
+      files=("$LOG_DIR"/dev-api.log "$LOG_DIR"/dev-agent.log "$LOG_DIR"/dev-worker.log "$LOG_DIR"/dev-web.log "$LOG_DIR"/dev-admin.log "$LOG_DIR"/dev-ops.log)
+      [ -f "$LOG_DIR/dev-mineru.log" ] && files+=("$LOG_DIR/dev-mineru.log") ;;
+    *) fail "未知日志名：${pick}（可选 api/agent/worker/web/admin/ops/mineru/all）"; usage; exit 1 ;;
   esac
   local f found=0
   for f in "${files[@]}"; do [ -f "$f" ] && found=1; done
@@ -177,7 +204,7 @@ if ! docker image inspect loomvec/postgres-age:18 >/dev/null 2>&1; then
   [ -d deploy/compose/postgres-age/age-src ] || make age-src
   $COMPOSE build postgres || { fail "postgres-age 镜像构建失败"; exit 1; }
 fi
-if ! docker image inspect loomvec/mineru:3.4.5-cpu >/dev/null 2>&1; then
+if mineru_in_compose && ! docker image inspect loomvec/mineru:3.4.5-cpu >/dev/null 2>&1; then
   warn "mineru 镜像缺失，准备构建（体积较大，耐心等待）"
   $COMPOSE build mineru || { fail "mineru 镜像构建失败"; exit 1; }
 fi
@@ -197,7 +224,22 @@ done
 [ "$i" -lt 15 ] && ok "Redis 就绪" || { fail "Redis 未就绪"; exit 1; }
 wait_http "RustFS"            "http://localhost:39000/health"     1 60
 wait_http "Milvus"            "http://localhost:39091/healthz"    1 120
-wait_http "MinerU"            "http://localhost:38000/health"     0 20
+
+# MinerU 双路线：容器版已随上方 compose up 拉起；本地 GPU 版在此接管拉起
+# （未安装只告警不阻塞，与「未就绪只告警」约定一致——解析功能暂不可用）
+if mineru_in_compose; then
+  ok "MinerU 随 compose 启动（容器版 loomvec-mineru）"
+  wait_http "MinerU ($MINERU_PORT)" "http://localhost:$MINERU_PORT/health" 0 20
+else
+  step "MinerU（宿主机 GPU：scripts/start-mineru-gpu.sh）"
+  if [ -x .venv-mineru/bin/mineru-api ]; then
+    start_bg mineru mineru "$MINERU_PORT" env MINERU_PORT="$MINERU_PORT" bash scripts/start-mineru-gpu.sh
+  else
+    warn "本地 MinerU 未安装（.venv-mineru 缺失）：解析功能暂不可用；安装：uv pip install --python .venv-mineru -e './third_party/mineru[pipeline]' six"
+  fi
+  wait_http "MinerU ($MINERU_PORT)" "http://localhost:$MINERU_PORT/health" 0 60
+fi
+
 wait_http "Grafana (33002)"    "http://localhost:33002/api/health" 1 120
 wait_http "Prometheus (39090)" "http://localhost:39090/-/ready"    1 120
 
@@ -211,15 +253,6 @@ else fail "初始化失败：$(tail -3 /tmp/loomvec-initdb.log)"; exit 1; fi
 [ -d node_modules ] || { step "安装前端依赖（pnpm install）"; pnpm install --frozen-lockfile; }
 
 # ---------------------------------------------------------------- 应用进程
-start_bg() { # $1=名称 $2=pid名 $3=端口 $4=命令...
-  local name="$1" pid_name="$2" port="$3"; shift 3
-  if port_up "$port"; then ok "$name 已在运行（:${port}），跳过"; return 0; fi
-  if alive "$pid_name"; then ok "$name 进程存活但端口未监听，等待中…"; return 0; fi
-  echo "启动 $name …"
-  nohup "$@" >"$LOG_DIR/dev-$name.log" 2>&1 &
-  save_pid "$pid_name" $!
-}
-
 # P5.5a：config 里 provider=docker 时，沙箱网络/镜像预检（缺失则 fail-closed，
 # 避免首问时 spawn 报 sandbox_unavailable）；provider=local 零影响
 check_sandbox_prereqs() {
@@ -286,14 +319,14 @@ echo "  运营端     http://localhost:$OPS_PORT    （dev 登录默认 operator
 echo "  API 文档   http://localhost:$API_PORT/docs"
 echo "  Grafana    http://localhost:33002 （admin，密码见 deploy/compose/.env 的 GRAFANA_ADMIN_PASSWORD，默认 admin）"
 echo "  Prometheus http://localhost:39090"
-echo "  日志       tmp/dev-{api,agent,worker,web,admin,ops}.log"
+echo "  日志       tmp/dev-{api,agent,worker,web,admin,ops,mineru}.log（MinerU 容器版时在 docker）"
 echo "  停止全部   ./dev.sh stop（应用进程 + 基础设施/监控容器；数据卷保留）"
 
 # ---------------------------------------------------------------- 实时日志（交互默认跟随 FastAPI 输出）
 # start 就绪后原地 tail -F API 日志，开发时直接观察 uvicorn 请求/重载输出；
 # Ctrl-C 只退出跟踪，服务继续运行。脚本化/CI 用 --no-follow（或非交互终端自动跳过）。
 if [ "$NO_FOLLOW" = "1" ] || [ ! -t 0 ]; then
-  echo "  实时日志   ./dev.sh logs api   （其余：agent/worker/web/admin/ops/all）"
+  echo "  实时日志   ./dev.sh logs api   （其余：agent/worker/web/admin/ops/mineru/all）"
 else
   step "实时日志（FastAPI 开发输出；Ctrl-C 退出跟踪，服务继续运行）"
   do_logs api

@@ -83,7 +83,7 @@ Notes: all infrastructure ports are now bound to `127.0.0.1` (do not revert; the
 | Grafana | http://localhost:33002 | password in `deploy/compose/.env` (`GRAFANA_ADMIN_PASSWORD`, default `admin`) |
 | Prometheus | http://localhost:39090 | |
 
-First run generates `deploy/compose/.env`, the root `.env`, and the app-params file `config/loomvec.json` (from template `config/loomvec.example.json`, with `ai.mock=true` so the full loop runs offline; the file holds secrets and is gitignored). The MinerU image builds slowly the first time and downloads ~1–2 GB of models on first start. `./dev.sh status` shows component status; `./dev.sh stop` stops app processes and containers (data volumes are kept).
+First run generates `deploy/compose/.env`, the root `.env`, and the app-params file `config/loomvec.json` (from template `config/loomvec.example.json`, with `ai.mock=true` so the full loop runs offline; the file holds secrets and is gitignored). MinerU startup is picked automatically by `dev.sh`: by default it starts as a compose container (the image builds slowly the first time and downloads ~1–2 GB of models on first start); if `deploy/compose/compose.override.yaml` (gitignored) moves the mineru service out of the default service set via a profile (e.g. `cpu-mineru`), the host-GPU launcher `scripts/start-mineru-gpu.sh` is used instead (requires `.venv-mineru`; see the install command at the top of that script). `./dev.sh status` shows component status; `./dev.sh stop` stops app processes and containers (data volumes are kept).
 
 <details>
 <summary>Manual step-by-step startup (equivalent to dev.sh)</summary>
@@ -91,6 +91,11 @@ First run generates `deploy/compose/.env`, the root `.env`, and the app-params f
 ```bash
 # 1) Infrastructure + observability stack
 cd deploy/compose && cp .env.example .env && docker compose --profile observability up -d && cd ../..
+
+# 1b) MinerU (optional; needed by the parse step): if a local compose.override.yaml
+#     isolates the containerized mineru, start the host-GPU launcher instead
+#     (same auto-detection dev.sh performs)
+MINERU_PORT=38000 bash scripts/start-mineru-gpu.sh &
 
 # 2) Backend (API on 38080, agent gateway on 38090 internal-only, MinerU on 38000) + pipeline worker
 uv sync && cp .env.example .env

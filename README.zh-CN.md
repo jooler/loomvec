@@ -83,7 +83,7 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 | Grafana | http://localhost:33002 | 密码见 `deploy/compose/.env` 的 `GRAFANA_ADMIN_PASSWORD`（默认 admin） |
 | Prometheus | http://localhost:39090 | |
 
-首次运行会自动生成 `deploy/compose/.env`、根 `.env` 与应用参数文件 `config/loomvec.json`（模板 `config/loomvec.example.json`，生成时已置 `ai.mock=true`，离线可跑通全链路；该文件含密钥、不入库）。MinerU 镜像首次构建较慢，首次启动需下载约 1~2GB 模型。`./dev.sh status` 查看各组件状态；`./dev.sh stop` 关闭应用进程与容器（数据卷保留）。
+首次运行会自动生成 `deploy/compose/.env`、根 `.env` 与应用参数文件 `config/loomvec.json`（模板 `config/loomvec.example.json`，生成时已置 `ai.mock=true`，离线可跑通全链路；该文件含密钥、不入库）。MinerU 双路线由 `dev.sh` 自动选择：默认随 compose 容器化启动（镜像首次构建较慢，首次启动需下载约 1~2GB 模型）；若存在 `deploy/compose/compose.override.yaml`（不入库）且其用 profile（如 `cpu-mineru`）把 mineru 移出默认服务集，则改拉宿主机 GPU 版 `scripts/start-mineru-gpu.sh`（依赖 `.venv-mineru`，安装命令见该脚本头部注释）。`./dev.sh status` 查看各组件状态；`./dev.sh stop` 关闭应用进程与容器（数据卷保留）。
 
 <details>
 <summary>手动分步启动（等价于 dev.sh）</summary>
@@ -91,6 +91,10 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 ```bash
 # 1) 基础设施栈 + 监控栈
 cd deploy/compose && cp .env.example .env && docker compose --profile observability up -d && cd ../..
+
+# 1b) MinerU（可选，解析功能依赖）：本机存在 compose.override.yaml 且其隔离了容器版时，
+#     改拉宿主机 GPU 版（等价于 dev.sh 的自动判定）
+MINERU_PORT=38000 bash scripts/start-mineru-gpu.sh &
 
 # 2) 后端（API 38080，agent 网关 38090 内网 only，MinerU 38000）+ 管线 worker
 uv sync && cp .env.example .env
