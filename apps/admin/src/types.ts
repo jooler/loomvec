@@ -282,4 +282,9 @@ export const WEBHOOK_EVENT_TYPES = [
 ] as const;
 
 /** 嵌入模型白名单（与 core/constants.EMBEDDING_MODELS 对齐）。 */
-export const EMBEDDING_MODEL_OPTIONS = ['text-embedding-v4', 'multimodal-embedding-v1', 'mock'];
+export const EMBEDDING_MODEL_OPTIONS = [
+  'text-embedding-v4',
+  'multimodal-embedding-v1',
+  'bge-m3',
+  'mock',
+];
