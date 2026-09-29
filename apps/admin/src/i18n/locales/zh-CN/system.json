@@ -13,6 +13,12 @@
   "storage": "存储用量",
   "storageUsage": "{{size}}（{{count}} 文件）",
   "generatedAt": "状态生成时间",
+  "localModels": {
+    "title": "本地模型推理",
+    "noModels": "运行中（未返回模型列表）",
+    "notRunning": "未运行",
+    "degraded": "以下通道配置指向本地但不可用：{{channels}}"
+  },
   "status": {
     "ok": "正常",
     "error": "异常"

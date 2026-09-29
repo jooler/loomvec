@@ -7472,6 +7472,64 @@
         ]
       }
     },
+    "/api/v1/admin/settings/ai/local-runtime": {
+      "get": {
+        "description": "本地模型推理（vLLM/Infinity）运行状态与每通道「选本地」建议配置。\n\n供 AI 供方分层表单判定本地档可否选择（available=false 时前端禁选本地）；\n纯探测无副作用，不含任何密钥。",
+        "operationId": "ai_local_runtime_api_v1_admin_settings_ai_local_runtime_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ai Local Runtime Api V1 Admin Settings Ai Local Runtime Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ai Local Runtime",
+        "tags": [
+          "admin",
+          "admin-settings"
+        ]
+      }
+    },
     "/api/v1/admin/settings/{key}": {
       "get": {
         "operationId": "get_one_api_v1_admin_settings__key__get",

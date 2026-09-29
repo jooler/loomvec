@@ -5,7 +5,7 @@
 #   ./dev.sh start             # 一键启动全部：部署门禁 → 镜像检查（缺失自动拉取/构建）→ 基础设施+监控栈
 #                              #   → 迁移 → api/agent/worker + 三个前端（web/admin/ops）；交互终端下
 #                              #   完成后实时跟随 FastAPI 日志（Ctrl-C 退出跟踪，服务继续运行；--no-follow 关闭）
-#   ./dev.sh logs [名称]       # 跟踪服务日志：api（默认）/agent/worker/web/admin/ops/mineru/all
+#   ./dev.sh logs [名称]       # 跟踪服务日志：api（默认）/agent/worker/web/admin/ops/mineru/models/all
 #   ./dev.sh stop              # 关闭应用进程（api/agent/worker/三个前端/本地 MinerU），并停止基础设施+监控容器（数据卷保留）
 #   ./dev.sh status            # 查看各组件运行状态
 #
@@ -18,22 +18,88 @@
 # - 日志：应用进程输出到 tmp/dev-{api,agent,worker,web,admin,ops,mineru}.log（MinerU 容器版时在 docker）；
 #   应用进程以 PYTHONUNBUFFERED=1 运行，日志实时落盘可即时 tail；
 # - 应用参数 config/loomvec.json（不入库）缺失时从模板自动生成（ai.mock=true，离线可跑）；
-# - MinerU 双路线：compose 默认服务集含 mineru（容器版）→ 随 compose 自动拉起；被 override
-#   以 profile（如 cpu-mineru）隔离时 → 拉起宿主机 GPU 版（scripts/start-mineru-gpu.sh）；
-# - MinerU 首次构建/启动较慢（模型下载 1~2GB），未就绪只告警不阻塞（解析功能暂不可用）。
+# - MinerU 双路线按配置路由（config/loomvec.json 的 mineru.device，./deploy.sh 交互写入）：
+#   cpu（默认）= compose 容器版随 compose 拉起；gpu = 宿主机 GPU 版（scripts/start-mineru-gpu.sh），
+#   start 时把容器版 mineru 移出 compose 服务集（tmp/compose-mineru-gpu.yaml，幂等生成不入库）；
+#   compose.override.yaml 手工以 profile 隔离 mineru 的旧用法继续兼容（叠加时以并集为准）；
+# - 本地模型服务（scripts/start-models-gpu.sh：vLLM/Infinity）按配置派生：ai.llm/embedding/
+#   rerank/clip 的 base_url 指向本地推理端口（127.0.0.1:MODELS_LLM_PORT/MODELS_INFINITY_PORT，
+#   缺省 38010/38011）的通道自动后台拉起（只加载所选通道）；由本脚本拉起的随 stop 一并停止；
+# - MinerU / 本地模型首次启动需下载权重（1~2GB / 约 13GB），未就绪只告警不阻塞（相应功能暂不可用）。
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 LOG_DIR="$ROOT/tmp"; PID_FILE="$LOG_DIR/dev.pids"; mkdir -p "$LOG_DIR"
 DEPLOY_STAMP="$LOG_DIR/loomvec-deployed.stamp"  # ./deploy.sh 成功完成时写入；缺失则 dev.sh 先拉起部署
+
+# ---------------------------------------------------------------- 应用参数读取（启动按配置走）
+# config/loomvec.json 缺失/非法时取默认：mineru.device=cpu（容器版）+ 无本地模型通道。
+# 本地模型派生：ai.<通道>.base_url 指向本地推理端口即视为该通道走本地 GPU（dev.sh 自动拉起
+# scripts/start-models-gpu.sh 并只加载所选通道）；改回云端地址即不再拉起——启动不再重复询问。
+CFG_VALUES="$(python3 - "$ROOT/config/loomvec.json" <<'PY'
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    cfg = {}
+mineru = cfg.get("mineru") or {}
+ai = cfg.get("ai") or {}
+print("MINERU_DEVICE\t" + str(mineru.get("device") or "cpu"))
+for name, channel in (("LLM_URL", "llm"), ("EMB_URL", "embedding"), ("RR_URL", "rerank"), ("CLIP_URL", "clip")):
+    v = (ai.get(channel) or {}).get("base_url")
+    print(f"{name}\t{v if isinstance(v, str) else ''}")
+PY
+)"
+MINERU_DEVICE="cpu"
+LLM_BASE_URL=""; EMB_BASE_URL=""; RR_BASE_URL=""; CLIP_BASE_URL=""
+while IFS=$'\t' read -r k v; do
+  case "$k" in
+    MINERU_DEVICE) MINERU_DEVICE="${v:-cpu}" ;;
+    LLM_URL)  LLM_BASE_URL="$v" ;;
+    EMB_URL)  EMB_BASE_URL="$v" ;;
+    RR_URL)   RR_BASE_URL="$v" ;;
+    CLIP_URL) CLIP_BASE_URL="$v" ;;
+  esac
+done <<< "$CFG_VALUES"
+
+# 本地推理端口单源：与 scripts/start-models-gpu.sh 相同的 env 覆盖（不读 .env，避免两处漂移）
+MODELS_LLM_PORT="${MODELS_LLM_PORT:-38010}"
+MODELS_INFINITY_PORT="${MODELS_INFINITY_PORT:-38011}"
+is_local_base() { # $1=base_url $2=port —— host 限 127.0.0.1/localhost 且端口匹配
+  local url="${1%/}"
+  case "$url" in
+    "http://127.0.0.1:$2" | "http://127.0.0.1:$2"/* | "http://localhost:$2" | "http://localhost:$2"/*) return 0 ;;
+  esac
+  return 1
+}
+LOAD_LLM=0; LOAD_EMBEDDING=0; LOAD_RERANK=0; LOAD_CLIP=0
+[ -n "$LLM_BASE_URL" ]  && is_local_base "$LLM_BASE_URL"  "$MODELS_LLM_PORT"     && LOAD_LLM=1
+[ -n "$EMB_BASE_URL" ]  && is_local_base "$EMB_BASE_URL"  "$MODELS_INFINITY_PORT" && LOAD_EMBEDDING=1
+[ -n "$RR_BASE_URL" ]   && is_local_base "$RR_BASE_URL"   "$MODELS_INFINITY_PORT" && LOAD_RERANK=1
+[ -n "$CLIP_BASE_URL" ] && is_local_base "$CLIP_BASE_URL" "$MODELS_INFINITY_PORT" && LOAD_CLIP=1
+USE_LOCAL_MODELS=0
+[ "$LOAD_LLM" = 1 -o "$LOAD_EMBEDDING" = 1 -o "$LOAD_RERANK" = 1 -o "$LOAD_CLIP" = 1 ] && USE_LOCAL_MODELS=1
+
 # compose.override.yaml 不入库（本机开发定制，如用 profile 关掉容器版 MinerU 改走宿主机 GPU）：
 # 存在才并入；缺失时新环境按纯 compose.yaml 跑（MinerU 随容器启动）
 COMPOSE_FILES=(-f deploy/compose/compose.yaml)
 if [ -f deploy/compose/compose.override.yaml ]; then COMPOSE_FILES+=(-f deploy/compose/compose.override.yaml); fi
+# mineru.device=gpu：把容器版 mineru 移出默认服务集（宿主机 GPU 脚本接管），幂等生成不入库
+if [ "$MINERU_DEVICE" = "gpu" ]; then
+  cat > "$LOG_DIR/compose-mineru-gpu.yaml" <<'YAML'
+# dev.sh 依 config/loomvec.json 的 mineru.device=gpu 生成：容器版 mineru 移出默认服务集，
+# 由宿主机 scripts/start-mineru-gpu.sh 接管（手动拉容器版：docker compose --profile cpu-mineru up -d mineru）
+services:
+  mineru:
+    profiles: ["cpu-mineru"]
+YAML
+  COMPOSE_FILES+=(-f "$LOG_DIR/compose-mineru-gpu.yaml")
+fi
 COMPOSE="docker compose ${COMPOSE_FILES[*]} --profile observability"
-# MinerU 路线判定：override 用 profile（如 cpu-mineru）把 mineru 移出默认服务集时走本地 GPU 脚本，
-# 否则随 compose 容器化启动。以 compose 实际解析结果为准，不硬编码 override 文件内容。
+# MinerU 路线判定：compose 解析出的服务集含 mineru（device=cpu 且未被 profile 隔离）→ 容器版；
+# 否则（device=gpu 生成的 tmp override 或用户 override 把 mineru 移出默认集）→ 宿主机 GPU 脚本。
+# 以 compose 实际解析结果为准，不硬编码 override 文件内容。
 mineru_in_compose() { $COMPOSE config --services 2>/dev/null | grep -qx mineru; }
 # MinerU 端口单源：deploy/compose/.env 的 MINERU_PORT（容器端口映射与本地脚本共用；默认 38000）
 MINERU_PORT="$(grep -E '^MINERU_PORT=' deploy/compose/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
@@ -95,6 +161,12 @@ do_stop() {
   else
     echo "- 无本脚本启动的应用进程（${PID_FILE} 不存在）"
   fi
+  # 本地模型服务：仅停由本脚本拉起的（标记文件）；外部手动 start 的不动（同 MinerU GPU 语义）
+  if [ -f "$LOG_DIR/dev-models.started" ]; then
+    step "停止本地模型服务（scripts/start-models-gpu.sh）"
+    bash scripts/start-models-gpu.sh stop || warn "模型服务停止失败"
+    rm -f "$LOG_DIR/dev-models.started"
+  fi
   step "停止基础设施 + 监控容器"
   if docker info --format ok >/dev/null 2>&1; then
     $COMPOSE stop || warn "compose stop 失败"
@@ -111,11 +183,15 @@ do_status() {
   if alive worker; then ok "worker（本脚本启动）"
   elif docker exec loomvec-redis redis-cli exists loomvec:worker:heartbeat 2>/dev/null | grep -q 1; then ok "worker（心跳在，非本脚本进程）"
   else fail "worker"; fi
+  # 本地模型服务：启动过（models.pids 在）才探测，纯云端环境不显示噪音
+  if [ -f "$LOG_DIR/models.pids" ]; then
+    bash scripts/start-models-gpu.sh status
+  fi
 }
 
-usage() { echo "用法: ./dev.sh start [--no-follow] | stop | status | logs [api|agent|worker|web|admin|ops|mineru|all]"; }
+usage() { echo "用法: ./dev.sh start [--no-follow] | stop | status | logs [api|agent|worker|web|admin|ops|mineru|models|all]"; }
 
-do_logs() { # $1=api|agent|worker|web|admin|ops|mineru|all —— tail -F 跟踪，Ctrl-C 退出不影响服务
+do_logs() { # $1=api|agent|worker|web|admin|ops|mineru|models|all —— tail -F 跟踪，Ctrl-C 退出不影响服务
   local pick="$1"
   local files=()
   case "$pick" in
@@ -125,10 +201,13 @@ do_logs() { # $1=api|agent|worker|web|admin|ops|mineru|all —— tail -F 跟踪
       elif docker ps --format '{{.Names}}' 2>/dev/null | grep -qx loomvec-mineru; then
         echo "MinerU 为容器版，日志在容器内：docker logs -f loomvec-mineru"; exit 0
       else fail "暂无本地 MinerU 日志（dev-mineru.log 不存在；容器版用 docker logs loomvec-mineru）"; exit 1; fi ;;
+    models)
+      files=("$LOG_DIR/dev-models.log" "$LOG_DIR/dev-vllm.log" "$LOG_DIR/dev-infinity.log") ;;
     all)
       files=("$LOG_DIR"/dev-api.log "$LOG_DIR"/dev-agent.log "$LOG_DIR"/dev-worker.log "$LOG_DIR"/dev-web.log "$LOG_DIR"/dev-admin.log "$LOG_DIR"/dev-ops.log)
-      [ -f "$LOG_DIR/dev-mineru.log" ] && files+=("$LOG_DIR/dev-mineru.log") ;;
-    *) fail "未知日志名：${pick}（可选 api/agent/worker/web/admin/ops/mineru/all）"; usage; exit 1 ;;
+      [ -f "$LOG_DIR/dev-mineru.log" ] && files+=("$LOG_DIR/dev-mineru.log")
+      for f in dev-models.log dev-vllm.log dev-infinity.log; do [ -f "$LOG_DIR/$f" ] && files+=("$LOG_DIR/$f"); done ;;
+    *) fail "未知日志名：${pick}（可选 api/agent/worker/web/admin/ops/mineru/models/all）"; usage; exit 1 ;;
   esac
   local f found=0
   for f in "${files[@]}"; do [ -f "$f" ] && found=1; done
@@ -240,6 +319,33 @@ else
   wait_http "MinerU ($MINERU_PORT)" "http://localhost:$MINERU_PORT/health" 0 60
 fi
 
+# 本地模型服务（vLLM/Infinity）：按 ai.*.base_url 派生的通道后台拉起（幂等，已在运行/下载中
+# 自动跳过）。首次需下载权重（约 13GB）+ 加载，不阻塞启动——就绪前指向本地端点的 ai 通道
+# 调用会失败并按既有重试/降级路径处理；就绪探测只等 30s，未就绪转后台继续。
+if [ "$USE_LOCAL_MODELS" = 1 ]; then
+  step "本地模型服务（LLM=$LOAD_LLM 嵌入=$LOAD_EMBEDDING 重排=$LOAD_RERANK CLIP=$LOAD_CLIP）"
+  if [ -x scripts/start-models-gpu.sh ]; then
+    if alive models_boot; then
+      ok "本地模型 bootstrap 进行中（pid $(sed -n 's/^models_boot=//p' "$PID_FILE" | head -1)），跳过"
+    else
+      nohup env MODELS_LOAD_LLM="$LOAD_LLM" MODELS_LOAD_EMBEDDING="$LOAD_EMBEDDING" \
+        MODELS_LOAD_RERANK="$LOAD_RERANK" MODELS_LOAD_CLIP="$LOAD_CLIP" \
+        bash scripts/start-models-gpu.sh start >"$LOG_DIR/dev-models.log" 2>&1 &
+      save_pid models_boot $!
+      touch "$LOG_DIR/dev-models.started"  # stop 标记：只停由本脚本拉起的模型服务
+      ok "已后台拉起（日志 tmp/dev-models.log；./scripts/start-models-gpu.sh status 看就绪）"
+    fi
+    if [ "$LOAD_LLM" = 1 ]; then
+      wait_http "vLLM (:${MODELS_LLM_PORT})" "http://127.0.0.1:${MODELS_LLM_PORT}/health" 0 30
+    fi
+    if [ "$LOAD_EMBEDDING" = 1 ] || [ "$LOAD_RERANK" = 1 ] || [ "$LOAD_CLIP" = 1 ]; then
+      wait_http "Infinity (:${MODELS_INFINITY_PORT})" "http://127.0.0.1:${MODELS_INFINITY_PORT}/health" 0 30
+    fi
+  else
+    warn "scripts/start-models-gpu.sh 缺失：指向本地端点的 ai 通道暂不可用"
+  fi
+fi
+
 wait_http "Grafana (33002)"    "http://localhost:33002/api/health" 1 120
 wait_http "Prometheus (39090)" "http://localhost:39090/-/ready"    1 120
 
@@ -253,14 +359,15 @@ else fail "初始化失败：$(tail -3 /tmp/loomvec-initdb.log)"; exit 1; fi
 [ -d node_modules ] || { step "安装前端依赖（pnpm install）"; pnpm install --frozen-lockfile; }
 
 # ---------------------------------------------------------------- 应用进程
-# P5.5a：config 里 provider=docker 时，沙箱网络/镜像预检（缺失则 fail-closed，
+# P5.5a：config 里 agent.runtime.provider=docker 时，沙箱网络/镜像预检（缺失则 fail-closed，
 # 避免首问时 spawn 报 sandbox_unavailable）；provider=local 零影响
 check_sandbox_prereqs() {
   local provider image subnet
   provider="$(python3 -c "
 import json
 try:
-    print((json.load(open('config/loomvec.json', encoding='utf-8')).get('runtime') or {}).get('provider') or 'local')
+    d = json.load(open('config/loomvec.json', encoding='utf-8'))
+    print(((d.get('agent') or {}).get('runtime') or {}).get('provider') or 'local')
 except Exception:
     print('local')
 ")"
@@ -274,7 +381,8 @@ except Exception:
   image="$(python3 -c "
 import json
 try:
-    print((((json.load(open('config/loomvec.json', encoding='utf-8')).get('runtime') or {}).get('sandbox')) or {}).get('image') or 'loomvec/agent-sandbox:stable')
+    d = json.load(open('config/loomvec.json', encoding='utf-8'))
+    print((((d.get('agent') or {}).get('runtime') or {}).get('sandbox') or {}).get('image') or 'loomvec/agent-sandbox:stable')
 except Exception:
     print('loomvec/agent-sandbox:stable')
 ")"
@@ -319,14 +427,17 @@ echo "  运营端     http://localhost:$OPS_PORT    （dev 登录默认 operator
 echo "  API 文档   http://localhost:$API_PORT/docs"
 echo "  Grafana    http://localhost:33002 （admin，密码见 deploy/compose/.env 的 GRAFANA_ADMIN_PASSWORD，默认 admin）"
 echo "  Prometheus http://localhost:39090"
-echo "  日志       tmp/dev-{api,agent,worker,web,admin,ops,mineru}.log（MinerU 容器版时在 docker）"
-echo "  停止全部   ./dev.sh stop（应用进程 + 基础设施/监控容器；数据卷保留）"
+echo "  日志       tmp/dev-{api,agent,worker,web,admin,ops,mineru}.log（MinerU 容器版时在 docker；本地模型 tmp/dev-{models,vllm,infinity}.log）"
+if [ "$USE_LOCAL_MODELS" = 1 ]; then
+  echo "  本地模型   ./scripts/start-models-gpu.sh status（vLLM :$MODELS_LLM_PORT / Infinity :$MODELS_INFINITY_PORT，按配置只载所选通道）"
+fi
+echo "  停止全部   ./dev.sh stop（应用进程 + 基础设施/监控容器 + 本脚本拉起的本地模型服务；数据卷保留）"
 
 # ---------------------------------------------------------------- 实时日志（交互默认跟随 FastAPI 输出）
 # start 就绪后原地 tail -F API 日志，开发时直接观察 uvicorn 请求/重载输出；
 # Ctrl-C 只退出跟踪，服务继续运行。脚本化/CI 用 --no-follow（或非交互终端自动跳过）。
 if [ "$NO_FOLLOW" = "1" ] || [ ! -t 0 ]; then
-  echo "  实时日志   ./dev.sh logs api   （其余：agent/worker/web/admin/ops/mineru/all）"
+  echo "  实时日志   ./dev.sh logs api   （其余：agent/worker/web/admin/ops/mineru/models/all）"
 else
   step "实时日志（FastAPI 开发输出；Ctrl-C 退出跟踪，服务继续运行）"
   do_logs api

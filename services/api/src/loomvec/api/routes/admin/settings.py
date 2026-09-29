@@ -2,7 +2,9 @@
 
 - sensitive 键脱敏回显（写入明文，读取 `******`）；
 - ai/sso/extensions 组仅 super_admin 可改（operator 无系统配置权限）；
-- effect 字段标注即时生效 / 需重启。
+- effect 字段标注即时生效 / 需重启；
+- AI 供方组在前端为分层表单（每通道本地 GPU / 云端，docs/16），
+  本地可用性探测见 GET /settings/ai/local-runtime。
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from loomvec.api.audit import record_audit
 from loomvec.api.context import Identity
 from loomvec.api.deps import get_session, require_admin
 from loomvec.api.services import admin_settings as settings_service
+from loomvec.api.services.local_models import channel_suggestions, probe_services
 from loomvec.core.constants import (
     PLATFORM_ROLE_SUPER_ADMIN,
 )
@@ -37,6 +40,19 @@ async def list_all(
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     return await settings_service.list_settings(session)
+
+
+@router.get("/settings/ai/local-runtime")
+async def ai_local_runtime(
+    identity: Identity = Depends(require_admin("admin:read")),
+) -> dict[str, Any]:
+    """本地模型推理（vLLM/Infinity）运行状态与每通道「选本地」建议配置。
+
+    供 AI 供方分层表单判定本地档可否选择（available=false 时前端禁选本地）；
+    纯探测无副作用，不含任何密钥。
+    """
+    probe = await probe_services()
+    return {"services": probe, "suggestions": channel_suggestions(probe)}
 
 
 @router.get("/settings/{key}")

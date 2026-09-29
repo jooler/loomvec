@@ -23,7 +23,7 @@ import os
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -121,6 +121,10 @@ class MineruSettings(BaseModel):
     backend: Literal["pipeline", "vlm-transformers", "vlm-vllm-engine"] = "pipeline"
     # 是否对外暴露 MinerU 官方 API 兼容层（/api/v4，mineru.net 精准解析 API 同构）
     compat_enabled: bool = True
+    # 部署路线（./deploy.sh 写入、./dev.sh start 依此路由，应用本身不消费）：
+    # cpu=compose 容器版（loomvec/mineru:3.4.5-cpu，默认）；gpu=宿主机脚本
+    # scripts/start-mineru-gpu.sh（需自建 .venv-mineru，见脚本头）
+    device: Literal["cpu", "gpu"] = "cpu"
 
 
 class AiProviderConfig(BaseModel):
@@ -190,6 +194,49 @@ class AiSettings(BaseModel):
     vlm: AiProviderConfig = Field(default_factory=AiProviderConfig)
     clip: ClipSettings = Field(default_factory=ClipSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
+
+
+# admin 动态配置（DB system_config）→ AiSettings 字段映射：
+# DB 有非空值即覆盖 config/loomvec.json（api/worker 网关启动时合并，需重启生效；
+# agent 的 ai.llm.base_url/api_key 另有会话级即时读取，语义一致）。
+AI_OVERRIDE_KEYS: dict[str, tuple[str, str]] = {
+    f"ai.{channel}.{field_name}": (channel, field_name)
+    for channel, fields in (
+        ("llm", ("base_url", "api_key", "model")),
+        ("embedding", ("base_url", "api_key", "model")),
+        ("rerank", ("base_url", "api_key", "model", "api_style")),
+        ("vlm", ("base_url", "api_key", "model")),
+        ("clip", ("base_url", "api_key", "model", "api_style")),
+    )
+    for field_name in fields
+}
+
+
+def apply_ai_overrides(ai: AiSettings, overrides: dict[str, Any]) -> AiSettings:
+    """把 admin 动态配置（DB system_config）的 ai.* 键合并进 AiSettings。
+
+    - 只有非空字符串覆盖（None/空串/空白视为未配置，回落文件值）；
+    - 注册表之外的 ai.* 键与意外类型忽略；
+    - api_style 非法值由 pydantic Literal 校验兜底（启动 fail-fast，
+      不把坏配置留到调用侧才报错）。
+    """
+    updates: dict[str, dict[str, str]] = {}
+    for key, (channel, field_name) in AI_OVERRIDE_KEYS.items():
+        if key not in overrides:
+            continue
+        value = overrides[key]
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value:
+            continue
+        updates.setdefault(channel, {})[field_name] = value
+    if not updates:
+        return ai
+    merged = ai.model_dump()
+    for channel, fields in updates.items():
+        merged[channel] = {**merged[channel], **fields}
+    return AiSettings.model_validate(merged)
 
 
 class SearchSettings(BaseModel):

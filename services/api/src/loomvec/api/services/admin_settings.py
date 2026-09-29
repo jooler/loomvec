@@ -3,7 +3,9 @@
 - key 注册表单源（SETTING_REGISTRY）：未入库的键回落 AppConfig 默认值；
 - sensitive 键回显脱敏（`******`），写入保留明文（密钥只写不读）；
 - effect="immediate" 经 effective_value() 即时生效（进程内 5s TTL 缓存）；
-  effect="restart" 仅落库提示，需重启读取（infra 启动项单源仍在 Settings/env）。
+  effect="restart" 仅落库提示，需重启读取（infra 启动项单源仍在 Settings/env；
+  ai 组经 core.config.apply_ai_overrides 在 api/worker 启动时合并，agent 的
+  llm 地址/密钥另做会话级即时读取）。
 
 配置来源唯一：DB 有值即生效；未配置回落 config/loomvec.json（AppConfig），
 不回落环境变量——应用参数（模型/检索/上传/图谱）不经 env 配置。
@@ -12,6 +14,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import select
@@ -20,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loomvec.core.config import get_app_config, get_settings
 from loomvec.core.constants import CHUNK_PRESETS, EMBEDDING_MODELS
 from loomvec.core.db.models import SystemConfig
+from loomvec.core.db.system_config import load_overrides as _load_overrides
 from loomvec.core.errors import NotFoundError, ValidationError
 
 CACHE_TTL_SECONDS = 5.0
@@ -39,6 +43,7 @@ class SettingDef:
         sensitive: bool = False,
         effect: str = "immediate",
         admin_only: bool = False,
+        validate: Callable[[Any], None] | None = None,
     ) -> None:
         self.key = key
         self.group = group
@@ -47,6 +52,25 @@ class SettingDef:
         self.sensitive = sensitive
         self.effect = effect  # immediate | restart
         self.admin_only = admin_only  # 仅 super_admin 可改（ai/sso/extensions 组）
+        self.validate = validate  # 写入前的值校验（None = 只做 JSON 兼容检查）
+
+
+def _validate_base_url(value: Any) -> None:
+    """base_url 可留空（回落 config/loomvec.json），非空必须为 http(s) URL。"""
+    if value in (None, ""):
+        return
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        return
+    raise ValidationError(reason="base_url 需以 http:// 或 https:// 开头（留空回落文件配置）")
+
+
+def _make_api_style_validator(allowed: tuple[str, ...]) -> Callable[[Any], None]:
+    def _validate(value: Any) -> None:
+        if value in allowed:
+            return
+        raise ValidationError(reason=f"api_style 只能是 {' / '.join(allowed)}（留空回落文件配置）")
+
+    return _validate
 
 
 def _build_registry() -> dict[str, SettingDef]:
@@ -123,102 +147,116 @@ def _build_registry() -> dict[str, SettingDef]:
             description="预签名有效期（秒）",
             default=s.upload.presign_expires_seconds,
         ),
-        # AI 供方（敏感；未配 runtime 键时回落进程 Settings，写库即刻生效）
-        SettingDef(
-            "ai.embedding.base_url",
-            group="ai",
-            description="向量化服务地址",
-            default=s.ai.embedding.base_url,
-            admin_only=True,
-        ),
-        SettingDef(
-            "ai.embedding.api_key",
-            group="ai",
-            description="向量化密钥",
-            default=None,
-            sensitive=True,
-            admin_only=True,
-        ),
-        SettingDef(
-            "ai.embedding.model",
-            group="ai",
-            description="向量化模型名",
-            default=s.ai.embedding.model,
-            admin_only=True,
-        ),
-        SettingDef(
-            "ai.rerank.base_url",
-            group="ai",
-            description="重排服务地址",
-            default=s.ai.rerank.base_url,
-            admin_only=True,
-        ),
-        SettingDef(
-            "ai.rerank.api_key",
-            group="ai",
-            description="重排密钥",
-            default=None,
-            sensitive=True,
-            admin_only=True,
-        ),
-        SettingDef(
-            "ai.llm.base_url",
-            group="ai",
-            description="LLM 服务地址",
-            default=s.ai.llm.base_url,
-            admin_only=True,
-        ),
-        SettingDef(
-            "ai.llm.api_key",
-            group="ai",
-            description="LLM 密钥",
-            default=None,
-            sensitive=True,
-            admin_only=True,
-        ),
-        # SSO（敏感）
-        SettingDef(
-            "sso.default_issuer",
-            group="sso",
-            description="平台级默认 IdP issuer（租户未绑定域时兜底）",
-            default=None,
-            admin_only=True,
-        ),
-        SettingDef(
-            "sso.default_client_secret",
-            group="sso",
-            description="平台级默认 OIDC client secret",
-            default=None,
-            sensitive=True,
-            admin_only=True,
-        ),
-        # 扩展
-        SettingDef(
-            "extensions.manifests",
-            group="extensions",
-            description="extensions/ manifest 列表与启停",
-            default=[],
-            admin_only=True,
-        ),
-        # 启动项（需重启）
-        SettingDef(
-            "infra.postgres_url",
-            group="infra",
-            description="PG 连接（需重启；单源为环境变量，此处仅展示）",
-            default=get_settings().postgres.url,
-            effect="restart",
-            sensitive=True,
-            admin_only=True,
-        ),
-        SettingDef(
-            "infra.milvus_uri",
-            group="infra",
-            description="Milvus URI（需重启；单源为环境变量，此处仅展示）",
-            default=get_settings().milvus.uri,
-            effect="restart",
-            admin_only=True,
-        ),
     ]
+
+    # AI 供方：DB 有非空值即覆盖 config/loomvec.json——api/worker 网关启动时
+    # 经 core.config.apply_ai_overrides 合并（effect=restart），agent 的
+    # llm 地址/密钥另做会话级即时读取。本地模型推理（vLLM/Infinity）的
+    # 端点与协议见 docs/16-本地模型推理.md。
+    _AI_CHANNELS: dict[str, str] = {
+        "llm": "LLM",
+        "embedding": "向量化",
+        "rerank": "重排",
+        "vlm": "VLM（图片描述）",
+        "clip": "CLIP（图文向量）",
+    }
+    # api_style 各通道支持面（网关实现为准）：rerank 无 infinity 通路
+    _API_STYLES: dict[str, tuple[str, ...]] = {
+        "rerank": ("openai", "dashscope"),
+        "clip": ("openai", "dashscope", "infinity"),
+    }
+    for channel, title in _AI_CHANNELS.items():
+        provider_cfg = getattr(s.ai, channel)
+        defs.extend(
+            [
+                SettingDef(
+                    f"ai.{channel}.base_url",
+                    group="ai",
+                    description=f"{title}服务地址（本地推理见 docs/16-本地模型推理.md）",
+                    default=provider_cfg.base_url,
+                    admin_only=True,
+                    effect="restart",
+                    validate=_validate_base_url,
+                ),
+                SettingDef(
+                    f"ai.{channel}.api_key",
+                    group="ai",
+                    description=f"{title}密钥",
+                    default=None,
+                    sensitive=True,
+                    admin_only=True,
+                    effect="restart",
+                ),
+                SettingDef(
+                    f"ai.{channel}.model",
+                    group="ai",
+                    description=f"{title}模型名",
+                    default=provider_cfg.model,
+                    admin_only=True,
+                    effect="restart",
+                ),
+            ]
+        )
+        if channel in _API_STYLES:
+            styles = _API_STYLES[channel]
+            defs.append(
+                SettingDef(
+                    f"ai.{channel}.api_style",
+                    group="ai",
+                    description=f"{title}协议（{' / '.join(styles)}）",
+                    default=provider_cfg.api_style,
+                    admin_only=True,
+                    effect="restart",
+                    validate=_make_api_style_validator(styles),
+                )
+            )
+
+    defs.extend(
+        [
+            # SSO（敏感）
+            SettingDef(
+                "sso.default_issuer",
+                group="sso",
+                description="平台级默认 IdP issuer（租户未绑定域时兜底）",
+                default=None,
+                admin_only=True,
+            ),
+            SettingDef(
+                "sso.default_client_secret",
+                group="sso",
+                description="平台级默认 OIDC client secret",
+                default=None,
+                sensitive=True,
+                admin_only=True,
+            ),
+            # 扩展
+            SettingDef(
+                "extensions.manifests",
+                group="extensions",
+                description="extensions/ manifest 列表与启停",
+                default=[],
+                admin_only=True,
+            ),
+            # 启动项（需重启）
+            SettingDef(
+                "infra.postgres_url",
+                group="infra",
+                description="PG 连接（需重启；单源为环境变量，此处仅展示）",
+                default=get_settings().postgres.url,
+                effect="restart",
+                sensitive=True,
+                admin_only=True,
+            ),
+            SettingDef(
+                "infra.milvus_uri",
+                group="infra",
+                description="Milvus URI（需重启；单源为环境变量，此处仅展示）",
+                default=get_settings().milvus.uri,
+                effect="restart",
+                admin_only=True,
+            ),
+        ]
+    )
     return {d.key: d for d in defs}
 
 
@@ -234,8 +272,7 @@ def mask(value: Any) -> Any:
 
 
 async def load_overrides(session: AsyncSession) -> dict[str, Any]:
-    rows = (await session.execute(select(SystemConfig))).scalars().all()
-    return {r.key: r.value for r in rows}
+    return await _load_overrides(session)
 
 
 async def list_settings(session: AsyncSession) -> list[dict[str, Any]]:
@@ -295,6 +332,8 @@ async def put_setting(
     if d is None:
         raise NotFoundError(resource="setting", id=key)
     validate_value(value)
+    if d.validate is not None:
+        d.validate(value)
     row = (
         await session.execute(select(SystemConfig).where(SystemConfig.key == key))
     ).scalar_one_or_none()

@@ -15,6 +15,7 @@ import { Input } from '@loomvec/ui/components/ui/input';
 import { Switch } from '@loomvec/ui/components/ui/switch';
 import { Textarea } from '@loomvec/ui/components/ui/textarea';
 import type { SettingItem } from '@/types';
+import { AiProvidersForm } from './AiProvidersForm';
 
 // 模块级文案（分组标题字典）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const GROUP_TITLE: Record<string, string> = {
@@ -70,7 +71,8 @@ function ValueEditor(props: {
   );
 }
 
-/** 配置页（五个路由复用，按 group 过滤 GET /admin/settings 渲染，docs/04 §5.9）。 */
+/** 配置页（路由复用，按 group 过滤 GET /admin/settings 渲染，docs/04 §5.9）。
+ * ai 组为分层表单（每通道本地 GPU / 云端，docs/16），其余组为通用键值表。 */
 export function SettingsPage({ group }: { group: string }) {
   const { isSuperAdmin } = usePerm();
   const queryClient = useQueryClient();
@@ -183,14 +185,27 @@ export function SettingsPage({ group }: { group: string }) {
     },
   ];
 
+  if (group === 'ai') {
+    return (
+      <div className="space-y-4">
+        <PageHeader title={GROUP_TITLE[group] ?? group} description={t('superAdminOnly')} />
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">{t('loading')}</p>
+        ) : isError ? (
+          <p className="text-sm text-destructive">{(error as Error).message}</p>
+        ) : (
+          <AiProvidersForm items={items} />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
         title={GROUP_TITLE[group] ?? group}
         description={
-          group === 'ai' || group === 'sso' || group === 'extensions'
-            ? t('superAdminOnly')
-            : undefined
+          group === 'sso' || group === 'extensions' ? t('superAdminOnly') : undefined
         }
       />
 

@@ -11,6 +11,9 @@
 # 端口（env 可覆盖）：
 #   vLLM     38010（MODELS_LLM_PORT）      OpenAI 兼容 /v1/chat/completions → ai.llm
 #   Infinity 38011（MODELS_INFINITY_PORT）  /embeddings + /rerank           → ai.embedding / ai.rerank / ai.clip
+# 通道选择性加载（env 开关，0 = 跳过该通道的权重下载与服务启动；手动运行缺省全载。
+# ./dev.sh start 按 config/loomvec.json 的 ai.*.base_url 是否指向本地端口自动注入）：
+#   MODELS_LOAD_LLM / MODELS_LOAD_EMBEDDING / MODELS_LOAD_RERANK / MODELS_LOAD_CLIP
 # 配套模板 config/loomvec.local-models.example.json：把 ai 段合并进 config/loomvec.json 后
 # 重启 api/worker/agent 生效（AiGateway 启动时快照配置）。详见 docs/16-本地模型推理.md。
 #
@@ -55,6 +58,14 @@ VLLM_MAX_LEN="${MODELS_VLLM_MAX_MODEL_LEN:-16384}"
 EMB_DIR="$MODELS/bge-m3"
 RERANK_DIR="$MODELS/bge-reranker-v2-m3"
 CLIP_DIR="$MODELS/jina-clip-v2"
+
+# 通道选择性加载：0 = 跳过该通道（下载 + 启动都跳）；缺省 1 = 全载
+WANT_LLM="${MODELS_LOAD_LLM:-1}"
+WANT_EMBEDDING="${MODELS_LOAD_EMBEDDING:-1}"
+WANT_RERANK="${MODELS_LOAD_RERANK:-1}"
+WANT_CLIP="${MODELS_LOAD_CLIP:-1}"
+want() { [ "$1" = "1" ]; }
+want_infinity() { want "$WANT_EMBEDDING" || want "$WANT_RERANK" || want "$WANT_CLIP"; }
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; DIM=$'\033[2m'; RST=$'\033[0m'
 ok()   { echo "${GRN}✓${RST} $*"; }
@@ -108,70 +119,86 @@ require_weights() {
 
 do_start() {
   step "前置检查"
-  [ -x "$VLLM_VENV/bin/vllm" ] || { fail "缺少 .venv-vllm（见文件头安装命令）"; exit 1; }
-  [ -x "$INF_VENV/bin/infinity_emb" ] || { fail "缺少 .venv-infinity（见文件头安装命令）"; exit 1; }
+  if want "$WANT_LLM"; then
+    [ -x "$VLLM_VENV/bin/vllm" ] || { fail "缺少 .venv-vllm（见文件头安装命令）"; exit 1; }
+  fi
+  if want_infinity; then
+    [ -x "$INF_VENV/bin/infinity_emb" ] || { fail "缺少 .venv-infinity（见文件头安装命令）"; exit 1; }
+  fi
+  want "$WANT_LLM" || want_infinity || { fail "四个通道均未启用（MODELS_LOAD_*），无事可做"; exit 1; }
   command -v nc >/dev/null 2>&1 || { fail "缺少 nc（端口探测用）"; exit 1; }
   ok "venv 就绪"
 
   step "模型权重（HuggingFace，断点续传；首次需联网）"
-  download "$LLM_ID" "${LLM_ID##*/}"
-  download "BAAI/bge-m3" "bge-m3" "--exclude onnx/*"
-  download "BAAI/bge-reranker-v2-m3" "bge-reranker-v2-m3"
-  # jina-clip-v2 的文本塔权重在 jina-embeddings-v3，远程代码在两个 *-implementation
-  # 仓——后三者为嵌套依赖，须进 HF 缓存（~/.cache/huggingface）供离线加载
-  download "jinaai/jina-clip-v2" "jina-clip-v2" "--exclude onnx/* --exclude pytorch_model.bin"
-  download "jinaai/jina-embeddings-v3" "" "--exclude onnx/* --exclude pytorch_model.bin"
-  download "jinaai/jina-clip-implementation" ""
-  download "jinaai/xlm-roberta-flash-implementation" ""
-  require_weights "$MODELS/${LLM_ID##*/}"
-  require_weights "$MODELS/bge-m3"
-  require_weights "$MODELS/bge-reranker-v2-m3"
-  require_weights "$MODELS/jina-clip-v2"
+  if want "$WANT_LLM"; then download "$LLM_ID" "${LLM_ID##*/}"; fi
+  if want "$WANT_EMBEDDING"; then download "BAAI/bge-m3" "bge-m3" "--exclude onnx/*"; fi
+  if want "$WANT_RERANK"; then download "BAAI/bge-reranker-v2-m3" "bge-reranker-v2-m3"; fi
+  if want "$WANT_CLIP"; then
+    # jina-clip-v2 的文本塔权重在 jina-embeddings-v3，远程代码在两个 *-implementation
+    # 仓——后三者为嵌套依赖，须进 HF 缓存（~/.cache/huggingface）供离线加载
+    download "jinaai/jina-clip-v2" "jina-clip-v2" "--exclude onnx/* --exclude pytorch_model.bin"
+    download "jinaai/jina-embeddings-v3" "" "--exclude onnx/* --exclude pytorch_model.bin"
+    download "jinaai/jina-clip-implementation" ""
+    download "jinaai/xlm-roberta-flash-implementation" ""
+  fi
+  if want "$WANT_LLM"; then require_weights "$MODELS/${LLM_ID##*/}"; fi
+  if want "$WANT_EMBEDDING"; then require_weights "$MODELS/bge-m3"; fi
+  if want "$WANT_RERANK"; then require_weights "$MODELS/bge-reranker-v2-m3"; fi
+  if want "$WANT_CLIP"; then require_weights "$MODELS/jina-clip-v2"; fi
 
-  step "启动 vLLM（:${LLM_PORT}）"
-  if port_up "$LLM_PORT"; then
-    ok "vLLM 已在运行（:${LLM_PORT}），跳过"
-  else
-    # deepseek-chat 别名：agent/dsh 经 ai.llm.base_url 注入 DEEPSEEK_BASE_URL，模型名固定
-    # deepseek-chat——别名让它免改配置直连本地 vLLM。
-    # VLLM_USE_FLASHINFER_SAMPLER=0：无系统 nvcc 时 flashinfer 采样器 JIT 编译会失败
-    #（本机未装 CUDA 工具链；torch 采样器够用）；kernel-config 同理关闭 autotune
-    VLLM_USE_FLASHINFER_SAMPLER=0 PYTHONUNBUFFERED=1 nohup "$VLLM_VENV/bin/vllm" serve "$LLM_DIR" \
-      --served-model-name "$LLM_ALIAS" deepseek-chat \
-      --enable-auto-tool-choice --tool-call-parser hermes \
-      --host 127.0.0.1 --port "$LLM_PORT" \
-      --gpu-memory-utilization "$VLLM_GPU_UTIL" \
-      --max-model-len "$VLLM_MAX_LEN" \
-      --kernel-config '{"enable_flashinfer_autotune": false}' \
-      >"$LOG_DIR/dev-vllm.log" 2>&1 &
-    save_pid vllm $!
-    ok "已启动（pid $(sed -n 's/^vllm=//p' "$PID_FILE" | head -1)），日志 tmp/dev-vllm.log"
+  if want "$WANT_LLM"; then
+    step "启动 vLLM（:${LLM_PORT}）"
+    if port_up "$LLM_PORT"; then
+      ok "vLLM 已在运行（:${LLM_PORT}），跳过"
+    else
+      # deepseek-chat 别名：agent/dsh 经 ai.llm.base_url 注入 DEEPSEEK_BASE_URL，模型名固定
+      # deepseek-chat——别名让它免改配置直连本地 vLLM。
+      # VLLM_USE_FLASHINFER_SAMPLER=0：无系统 nvcc 时 flashinfer 采样器 JIT 编译会失败
+      #（本机未装 CUDA 工具链；torch 采样器够用）；kernel-config 同理关闭 autotune
+      VLLM_USE_FLASHINFER_SAMPLER=0 PYTHONUNBUFFERED=1 nohup "$VLLM_VENV/bin/vllm" serve "$LLM_DIR" \
+        --served-model-name "$LLM_ALIAS" deepseek-chat \
+        --enable-auto-tool-choice --tool-call-parser hermes \
+        --host 127.0.0.1 --port "$LLM_PORT" \
+        --gpu-memory-utilization "$VLLM_GPU_UTIL" \
+        --max-model-len "$VLLM_MAX_LEN" \
+        --kernel-config '{"enable_flashinfer_autotune": false}' \
+        >"$LOG_DIR/dev-vllm.log" 2>&1 &
+      save_pid vllm $!
+      ok "已启动（pid $(sed -n 's/^vllm=//p' "$PID_FILE" | head -1)），日志 tmp/dev-vllm.log"
+    fi
   fi
 
-  step "启动 Infinity（:${INF_PORT}）"
-  if port_up "$INF_PORT"; then
-    ok "Infinity 已在运行（:${INF_PORT}），跳过"
-  else
-    # INFINITY_BETTERTRANSFORMER=false：optimum 未装时 infinity 0.0.77 的守卫有缺陷
-    # （NameError: BetterTransformerManager）；HF_HUB_OFFLINE=1：权重全本地，
-    # 且 jina 远程代码的 etag 校验直连 HF 会超时（嵌套依赖须已进 HF 缓存）
-    HF_HUB_OFFLINE=1 INFINITY_BETTERTRANSFORMER=false \
-      PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONUNBUFFERED=1 \
-      nohup "$INF_VENV/bin/infinity_emb" v2 \
-      --model-id "$EMB_DIR"     --served-model-name bge-m3 \
-      --model-id "$RERANK_DIR"  --served-model-name bge-reranker-v2-m3 \
-      --model-id "$CLIP_DIR"    --served-model-name jina-clip-v2 \
-      --engine torch --device cuda --dtype float16 \
-      --host 127.0.0.1 --port "$INF_PORT" \
-      >"$LOG_DIR/dev-infinity.log" 2>&1 &
-    save_pid infinity $!
-    ok "已启动（pid $(sed -n 's/^infinity=//p' "$PID_FILE" | head -1)），日志 tmp/dev-infinity.log"
+  if want_infinity; then
+    step "启动 Infinity（:${INF_PORT}）"
+    if port_up "$INF_PORT"; then
+      ok "Infinity 已在运行（:${INF_PORT}），跳过"
+    else
+      # 按通道拼 --model-id 对（只加载所选模型，省显存）
+      local inf_args=()
+      if want "$WANT_EMBEDDING"; then inf_args+=(--model-id "$EMB_DIR" --served-model-name bge-m3); fi
+      if want "$WANT_RERANK"; then inf_args+=(--model-id "$RERANK_DIR" --served-model-name bge-reranker-v2-m3); fi
+      if want "$WANT_CLIP"; then inf_args+=(--model-id "$CLIP_DIR" --served-model-name jina-clip-v2); fi
+      # INFINITY_BETTERTRANSFORMER=false：optimum 未装时 infinity 0.0.77 的守卫有缺陷
+      # （NameError: BetterTransformerManager）；HF_HUB_OFFLINE=1：权重全本地，
+      # 且 jina 远程代码的 etag 校验直连 HF 会超时（嵌套依赖须已进 HF 缓存）
+      HF_HUB_OFFLINE=1 INFINITY_BETTERTRANSFORMER=false \
+        PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONUNBUFFERED=1 \
+        nohup "$INF_VENV/bin/infinity_emb" v2 "${inf_args[@]}" \
+        --engine torch --device cuda --dtype float16 \
+        --host 127.0.0.1 --port "$INF_PORT" \
+        >"$LOG_DIR/dev-infinity.log" 2>&1 &
+      save_pid infinity $!
+      ok "已启动（pid $(sed -n 's/^infinity=//p' "$PID_FILE" | head -1)），日志 tmp/dev-infinity.log"
+    fi
   fi
 
   step "健康等待"
-  wait_http "vLLM"     "http://127.0.0.1:${LLM_PORT}/health" 600 || exit 1
-  wait_http "Infinity" "http://127.0.0.1:${INF_PORT}/health" 300 || exit 1
-  ok "本地模型服务就绪：LLM :${LLM_PORT} / 嵌入·重排·CLIP :${INF_PORT}"
+  if want "$WANT_LLM"; then wait_http "vLLM" "http://127.0.0.1:${LLM_PORT}/health" 600 || exit 1; fi
+  if want_infinity; then wait_http "Infinity" "http://127.0.0.1:${INF_PORT}/health" 300 || exit 1; fi
+  local channels=""
+  want "$WANT_LLM" && channels="LLM :${LLM_PORT}"
+  want_infinity && channels="${channels:+$channels / }嵌入·重排·CLIP（按需子集）:${INF_PORT}"
+  ok "本地模型服务就绪：$channels"
   echo "接线：把 config/loomvec.local-models.example.json 的 ai 段合并进 config/loomvec.json 后重启应用"
 }
 
@@ -193,14 +220,20 @@ do_stop() {
 }
 
 do_status() {
-  for probe in "vLLM:$LLM_PORT" "Infinity:$INF_PORT"; do
-    name="${probe%%:*}"; p="${probe##*:}"
-    if port_up "$p" && curl -sf -o /dev/null "http://127.0.0.1:${p}/health"; then
-      ok "$name :$p 健康"
+  if want "$WANT_LLM"; then
+    if port_up "$LLM_PORT" && curl -sf -o /dev/null "http://127.0.0.1:${LLM_PORT}/health"; then
+      ok "vLLM :$LLM_PORT 健康"
     else
-      fail "$name :$p 不可用（./scripts/start-models-gpu.sh start）"
+      fail "vLLM :$LLM_PORT 不可用（./scripts/start-models-gpu.sh start）"
     fi
-  done
+  fi
+  if want_infinity; then
+    if port_up "$INF_PORT" && curl -sf -o /dev/null "http://127.0.0.1:${INF_PORT}/health"; then
+      ok "Infinity :$INF_PORT 健康"
+    else
+      fail "Infinity :$INF_PORT 不可用（./scripts/start-models-gpu.sh start）"
+    fi
+  fi
   command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader
 }
 

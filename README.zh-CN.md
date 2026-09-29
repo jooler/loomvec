@@ -52,16 +52,16 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 
 前置：Docker；Python 3.12（由 [uv](https://docs.astral.sh/uv/) 管理）；Node 20+ 与 [pnpm](https://pnpm.io)。
 
-新环境首次部署：先运行 `./deploy.sh` 交互式录入真实 AI 供方（对话 LLM / 嵌入 / 重排为必配，VLM / CLIP 可选；全部回车选 mock 则生成离线配置），写入 `config/loomvec.json`；然后一键启动：
+新环境首次部署：先运行 `./deploy.sh` 交互式配置（MinerU 是否启用 GPU；对话 LLM / 嵌入 / 重排 / CLIP 逐通道选「本地 GPU 推理」或录入云端供方，VLM 仅云端可选；全部回车选 mock 则生成离线配置），全部选择持久化写入 `config/loomvec.json`，之后启动不再询问——改动直接编辑该文件或重跑部署脚本即可；然后一键启动：
 
 ```bash
-./deploy.sh      # 仅首次需要：交互式配置 AI 供方 + 端口迁移 + 安装全部 Python/前端依赖
+./deploy.sh      # 仅首次需要：交互式配置 AI 供方与 MinerU 路线 + 端口迁移 + 安装全部 Python/前端依赖
 ./dev.sh start
 ```
 
 若跳过 `./deploy.sh` 直接 `./dev.sh start`，脚本检测到尚未部署（无 tmp/loomvec-deployed.stamp 标记）时，会在交互终端下自动先拉起部署流程，完成后继续启动；部署被取消则本次启动终止（CI/脚本管道等非交互环境跳过自动部署，按离线 mock 兜底）。
 
-`./dev.sh start` 一条命令拉起全部：镜像检查（缺失自动拉取/构建）→ 基础设施 + 监控栈 → 数据库初始化 → api/agent/worker + 三个前端（幂等，已在跑的自动跳过）。交互终端下启动完成后会实时跟随 FastAPI 日志（Ctrl-C 退出跟踪，服务继续运行；`--no-follow` 关闭），随时可用 `./dev.sh logs [api|agent|worker|web|admin|ops|all]` 跟踪任一服务输出。
+`./dev.sh start` 一条命令拉起全部：镜像检查（缺失自动拉取/构建）→ 基础设施 + 监控栈 → 数据库初始化 → 本地模型服务（按配置：ai.* 指向本地端点的通道自动拉起 vLLM/Infinity）→ api/agent/worker + 三个前端（幂等，已在跑的自动跳过）。交互终端下启动完成后会实时跟随 FastAPI 日志（Ctrl-C 退出跟踪，服务继续运行；`--no-follow` 关闭），随时可用 `./dev.sh logs [api|agent|worker|web|admin|ops|mineru|models|all]` 跟踪任一服务输出。
 
 ### 智能体容器沙箱（可选，P5.5a）
 
@@ -83,7 +83,7 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 | Grafana | http://localhost:33002 | 密码见 `deploy/compose/.env` 的 `GRAFANA_ADMIN_PASSWORD`（默认 admin） |
 | Prometheus | http://localhost:39090 | |
 
-首次运行会自动生成 `deploy/compose/.env`、根 `.env` 与应用参数文件 `config/loomvec.json`（模板 `config/loomvec.example.json`，生成时已置 `ai.mock=true`，离线可跑通全链路；该文件含密钥、不入库）。MinerU 双路线由 `dev.sh` 自动选择：默认随 compose 容器化启动（镜像首次构建较慢，首次启动需下载约 1~2GB 模型）；若存在 `deploy/compose/compose.override.yaml`（不入库）且其用 profile（如 `cpu-mineru`）把 mineru 移出默认服务集，则改拉宿主机 GPU 版 `scripts/start-mineru-gpu.sh`（依赖 `.venv-mineru`，安装命令见该脚本头部注释）。`./dev.sh status` 查看各组件状态；`./dev.sh stop` 关闭应用进程与容器（数据卷保留）。
+首次运行会自动生成 `deploy/compose/.env`、根 `.env` 与应用参数文件 `config/loomvec.json`（模板 `config/loomvec.example.json`，生成时已置 `ai.mock=true`，离线可跑通全链路；该文件含密钥、不入库）。MinerU 双路线按配置路由：`config/loomvec.json` 的 `mineru.device` 为 `cpu`（默认）时随 compose 容器化启动（镜像首次构建较慢，首次启动需下载约 1~2GB 模型），为 `gpu`（deploy.sh 可选）时改拉宿主机 GPU 版 `scripts/start-mineru-gpu.sh`（依赖 `.venv-mineru`，安装命令见该脚本头部注释）；历史做法——用 `deploy/compose/compose.override.yaml`（不入库）以 profile 把 mineru 移出默认服务集——继续兼容。本地模型服务（vLLM/Infinity，[docs/16](docs/16-本地模型推理.md)）由 `dev.sh start` 按 `ai.*.base_url` 是否指向本地推理端口自动拉起/停止，也可 `scripts/start-models-gpu.sh` 手动管理。`./dev.sh status` 查看各组件状态；`./dev.sh stop` 关闭应用进程与容器（数据卷保留）。
 
 <details>
 <summary>手动分步启动（等价于 dev.sh）</summary>
@@ -92,9 +92,14 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 # 1) 基础设施栈 + 监控栈
 cd deploy/compose && cp .env.example .env && docker compose --profile observability up -d && cd ../..
 
-# 1b) MinerU（可选，解析功能依赖）：本机存在 compose.override.yaml 且其隔离了容器版时，
-#     改拉宿主机 GPU 版（等价于 dev.sh 的自动判定）
+# 1b) MinerU（可选，解析功能依赖）：config/loomvec.json 的 mineru.device=gpu（或
+#     compose.override.yaml 隔离了容器版）时改拉宿主机 GPU 版（等价于 dev.sh 的自动判定）
 MINERU_PORT=38000 bash scripts/start-mineru-gpu.sh &
+
+# 1c) 本地模型（可选，对话/嵌入/重排/CLIP 本地 GPU 推理，docs/16）：
+#     ai.*.base_url 指向本地端口时由 dev.sh start 自动拉起；手动等价命令
+MODELS_LOAD_LLM=1 MODELS_LOAD_EMBEDDING=1 MODELS_LOAD_RERANK=1 MODELS_LOAD_CLIP=1 \
+  bash scripts/start-models-gpu.sh &
 
 # 2) 后端（API 38080，agent 网关 38090 内网 only，MinerU 38000）+ 管线 worker
 uv sync && cp .env.example .env
@@ -121,7 +126,9 @@ make evals        # 检索评测回归（rerank A/B：--no-rerank）
 
 ### AI 供方
 
-AI 供方参数**只**来自 `config/loomvec.json`（模板 `config/loomvec.example.json`；文件含密钥不入库，环境变量对其不生效）。推荐经 `./deploy.sh` 交互式写入（对话 LLM / 嵌入 / 重排必配，VLM / CLIP 可选；跳过则置 `ai.mock=true`，用确定性本地供方离线跑通全链路）。手工接入云端供方：在该文件中把 `ai.mock` 改为 `false`，填写 `ai.llm` / `ai.embedding` / `ai.rerank` 等段的 `base_url` / `api_key` / `model`（OpenAI 兼容端点；rerank / clip 另支持 `api_style: "dashscope"` 原生协议），然后重启 api/agent/worker 使其生效（`./dev.sh stop && ./dev.sh start`）。一切 AI 调用经 `loomvec.core.ai` 网关；供方地址、密钥、模型名均为部署配置——未来内网化时指向自托管端点即可，不改代码。
+AI 供方参数**只**来自 `config/loomvec.json`（模板 `config/loomvec.example.json`；文件含密钥不入库，环境变量对其不生效）。推荐经 `./deploy.sh` 交互式写入（对话 LLM / 嵌入 / 重排 / CLIP 逐通道选本地 GPU 推理或云端供方，VLM 仅云端；mock 模式则置 `ai.mock=true`，用确定性本地供方离线跑通全链路）。手工接入云端供方：在该文件中把 `ai.mock` 改为 `false`，填写 `ai.llm` / `ai.embedding` / `ai.rerank` 等段的 `base_url` / `api_key` / `model`（OpenAI 兼容端点；rerank / clip 另支持 `api_style: "dashscope"` 原生协议），然后重启 api/agent/worker 使其生效（`./dev.sh stop && ./dev.sh start`）。
+
+运维端「设置 → AI 供方」为分层表单：五通道（对话 LLM / 向量化 / 重排 / VLM / CLIP）逐通道选「本地 GPU 推理 / 云端供方」——本地档实时探测 vLLM/Infinity 运行状态与 served 模型（不可用时禁选本地），选本地一键写标准配置，选云端展开地址/密钥/模型名（重排与 CLIP 另有 `api_style`）；保存逐键写入并记审计，重启后生效。DB 有非空值即优先于 `config/loomvec.json`——api/worker 网关在启动时合并，agent/dsh 的 LLM 地址/密钥每会话即时生效。本地模型推理的端点与协议见 [docs/16-本地模型推理.md](docs/16-本地模型推理.md)。一切 AI 调用经 `loomvec.core.ai` 网关；供方地址、密钥、模型名均为部署配置——未来内网化时指向自托管端点即可，不改代码。
 
 新环境部署注意：若走"手动分步启动"且漏建 `config/loomvec.json`，mock 停留在代码默认 `false`，上传资产会在 embed 步骤因拿不到 AI 供方的 key/model 而失败（资产卡在"失败"）。补救：补跑 `./deploy.sh`（离线开发可置 `ai.mock=true`），重启 api/agent/worker，再对失败资产在页面点"重试"即可重跑。
 

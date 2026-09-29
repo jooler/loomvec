@@ -80,6 +80,18 @@ async def system_status(
         for key in COMPONENT_KEYS
     ]
 
+    # ---- 本地模型推理（docs/16；纯云端部署 enabled=false，前端不展示）----
+    from loomvec.api.services.local_models import channel_status, probe_services
+
+    ai_settings = getattr(state, "ai_settings", None) or settings.ai
+    local_probe = await probe_services()
+    local_channels = channel_status(ai_settings, local_probe)
+    local_models = {
+        "enabled": any(c["configured_local"] for c in local_channels.values()),
+        **local_probe,
+        "channels": local_channels,
+    }
+
     # ---- 管线态势（24h）----
     # asyncpg 对 naive timestamp 列绑定 aware 参数会报错，这里统一用 naive UTC
     since = (datetime.now(UTC) - timedelta(hours=24)).replace(tzinfo=None)
@@ -174,6 +186,7 @@ async def system_status(
 
     return {
         "components": components,
+        "local_models": local_models,
         "pipeline": {
             "queue_depths": queue_depths,
             "dead_letter": dead_letter,

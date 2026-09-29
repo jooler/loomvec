@@ -4,6 +4,7 @@ import { ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
+import { LocalModelsStatus } from '@/components/LocalModelsStatus';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
 import { PageHeader } from '@loomvec/ui/components/page-header';
@@ -132,6 +133,9 @@ export function OverviewPage() {
 
         {/* 右列：三张卡片纵向堆叠 */}
         <div className="space-y-4">
+          {/* 本地模型推理（docs/16；纯云端部署不渲染） */}
+          {data?.local_models?.enabled && <LocalModelsStatus data={data.local_models} />}
+
           {/* 平台规模 */}
           <Card>
             <CardHeader>

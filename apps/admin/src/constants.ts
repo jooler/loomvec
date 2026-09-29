@@ -16,6 +16,15 @@ export const COMPONENT_LABEL: Record<string, string> = {
   mineru: 'MinerU',
 };
 
+/** AI 供方通道 → 展示名（settings/ai 分层表单与本地模型状态卡共用）。 */
+export const AI_CHANNEL_LABEL: Record<string, string> = {
+  llm: t('settings:channel.llm'),
+  embedding: t('settings:channel.embedding'),
+  rerank: t('settings:channel.rerank'),
+  vlm: t('settings:channel.vlm'),
+  clip: t('settings:channel.clip'),
+};
+
 /** 队列名 → 展示名。 */
 export const QUEUE_LABEL: Record<string, string> = {
   pipeline: t('components:queue.pipeline'),

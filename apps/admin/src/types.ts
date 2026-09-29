@@ -11,9 +11,33 @@ export interface PagedResp<T> {
   offset: number;
 }
 
+/** 本地推理单服务探测（vLLM / Infinity，scripts/start-models-gpu.sh）。 */
+export interface LocalModelServiceStatus {
+  ok: boolean;
+  port: number;
+  models: string[];
+  error?: string;
+}
+
+/** GET /admin/settings/ai/local-runtime：本地运行状态 + 每通道「选本地」建议配置。 */
+export interface AiLocalRuntime {
+  services: { vllm: LocalModelServiceStatus; infinity: LocalModelServiceStatus };
+  suggestions: Record<
+    string,
+    { available: boolean; base_url?: string; model?: string; api_key?: string; api_style?: string }
+  >;
+}
+
 /** GET /admin/system/status（P4-API-02 状态聚合）。 */
 export interface SystemStatus {
   components: { name: string; ok: boolean; detail: Record<string, unknown> }[];
+  /** 本地模型推理段：纯云端部署（无 ai.* 指向本地端口）enabled=false，前端不展示。 */
+  local_models?: {
+    enabled: boolean;
+    vllm: LocalModelServiceStatus;
+    infinity: LocalModelServiceStatus;
+    channels: Record<string, { configured_local: boolean; available: boolean }>;
+  };
   pipeline: {
     queue_depths: Record<string, number>;
     dead_letter: number;

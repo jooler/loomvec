@@ -1,5 +1,6 @@
 {
   "superAdminOnly": "本组仅 super_admin 可修改",
+  "loading": "加载中…",
   "jsonInvalid": "JSON 格式无效，请修正后再保存",
   "savedToast": "配置已保存",
   "saveFailed": "保存失败",
@@ -17,6 +18,13 @@
     "sso": "SSO / OIDC",
     "extensions": "扩展插件"
   },
+  "channel": {
+    "llm": "对话 LLM",
+    "embedding": "向量化",
+    "rerank": "重排",
+    "vlm": "VLM（图片描述）",
+    "clip": "CLIP（图文向量）"
+  },
   "effect": {
     "restart": "需重启",
     "immediate": "即时生效"
@@ -26,5 +34,31 @@
     "description": "说明",
     "value": "当前值",
     "effect": "生效方式"
+  },
+  "ai": {
+    "form": {
+      "location": "运行位置",
+      "locationLocal": "本地 GPU 推理",
+      "locationCloud": "云端供方",
+      "locationCloudOnly": "仅云端",
+      "vlmCloudOnly": "VLM 未本地化（docs/16）：图片/视频描述走云端供方，或关闭 image.caption_enabled。",
+      "localUnavailable": "本地推理服务未运行或未加载该通道模型，暂不可选本地。",
+      "localDownWarning": "当前配置指向本地端点，但本地服务不可用——该通道调用将持续失败；可切回云端或启动本地服务。",
+      "servedModels": "已加载模型",
+      "notRunning": "未运行",
+      "model": "模型名",
+      "apiKeyKeep": "已设置，留空保留",
+      "apiKeyEmpty": "未设置",
+      "baseUrlFallbackHint": "留空回落 config/loomvec.json 的文件配置。",
+      "localNote": "本地推理由 scripts/start-models-gpu.sh 提供（dev.sh start 按配置自动拉起）；api_key 固定 local，无鉴权。",
+      "save": "保存变更",
+      "reset": "还原",
+      "probing": "正在探测本地推理服务…",
+      "saveTitle": "保存 AI 供方配置",
+      "saveDescription": "写入选中的配置项；需重启 api/agent/worker 后生效。",
+      "savedToast": "已写入 {{count}} 项配置，重启后生效",
+      "runtimeLoadFailed": "本地推理探测不可用（API 版本过旧或网络异常）。",
+      "restartHint": "所有 AI 供方变更在重启 api / agent / worker 后生效（./dev.sh stop && ./dev.sh start）。"
+    }
   }
 }

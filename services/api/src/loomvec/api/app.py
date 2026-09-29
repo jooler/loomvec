@@ -47,8 +47,9 @@ from loomvec.api.routes.spaces import router as spaces_router
 from loomvec.api.routes.units import router as units_router
 from loomvec.api.routes.uploads import router as uploads_router
 from loomvec.core.ai import AiGateway
-from loomvec.core.config import Env, Settings, get_settings
+from loomvec.core.config import Env, Settings, apply_ai_overrides, get_settings
 from loomvec.core.db.base import create_engine_and_sessionmaker
+from loomvec.core.db.system_config import load_ai_overrides
 from loomvec.core.logging import get_logger, setup_logging
 from loomvec.core.metrics import registry
 from loomvec.core.retrieval import MilvusStore, Retriever
@@ -76,8 +77,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine, session_factory = create_engine_and_sessionmaker(settings.postgres)
         redis_client = aioredis.from_url(settings.redis.url, decode_responses=True)
         storage = ObjectStorage(settings.storage)
-        ai = AiGateway(settings.ai)
-        milvus = MilvusStore(settings.milvus, settings.ai)
+        # AI 供方生效值：admin 动态配置（DB system_config）有非空值即覆盖
+        # config/loomvec.json（core.config 模块头「三层配置」语义）；DB 不可达时
+        # 回落文件配置不阻塞启动（同 storage.ensure_buckets 的容错口径）
+        try:
+            async with session_factory() as session:
+                ai_overrides = await load_ai_overrides(session)
+            ai_settings = apply_ai_overrides(settings.ai, ai_overrides)
+        except Exception:
+            logger.warning("ai_overrides_load_failed", detail="DB 不可达，AI 供方回落文件配置")
+            ai_settings = settings.ai
+        ai = AiGateway(ai_settings)
+        milvus = MilvusStore(settings.milvus, ai_settings)
         graph_retriever = GraphRetriever(milvus, settings.graph, settings.search)
         retriever = Retriever(milvus, ai, settings.search, graph=graph_retriever)
         celery = _make_celery(settings)
@@ -105,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:  # 启动时存储不可用不应阻塞进程
             logger.warning("storage_ensure_buckets_failed")
         app.state.settings = settings
+        app.state.ai_settings = ai_settings  # 网关实际生效的 AI 供方（system status 展示用）
         app.state.engine = engine
         app.state.session_factory = session_factory
         app.state.redis = redis_client

@@ -87,3 +87,66 @@ def test_storage_ensure_buckets(monkeypatch):
         "create_bucket",
         "put_bucket_cors",
     ]
+
+
+# ---------------------------------------------------------------- AI 供方 DB 覆盖合并
+def test_apply_ai_overrides_merges_nonempty_values():
+    from loomvec.core.config import AiSettings, apply_ai_overrides
+
+    ai = AiSettings()
+    merged = apply_ai_overrides(
+        ai,
+        {
+            "ai.llm.base_url": "http://127.0.0.1:38010/v1",
+            "ai.llm.model": " qwen2.5-1.5b ",  # 前后空白应剥掉
+            "ai.clip.base_url": "http://127.0.0.1:38011",
+            "ai.clip.api_style": "infinity",
+        },
+    )
+    assert merged is not ai
+    assert merged.llm.base_url == "http://127.0.0.1:38010/v1"
+    assert merged.llm.model == "qwen2.5-1.5b"
+    assert merged.clip.api_style == "infinity"
+    # 未覆盖的键保持文件默认
+    assert merged.embedding.model is None
+    assert merged.rerank.base_url is None
+
+
+def test_apply_ai_overrides_ignores_blank_unknown_and_noop():
+    from loomvec.core.config import AiSettings, apply_ai_overrides
+
+    ai = AiSettings()
+    # None / 空串 / 空白 / 非字符串 / 注册表外键全部忽略
+    merged = apply_ai_overrides(
+        ai,
+        {
+            "ai.rerank.api_key": "",
+            "ai.llm.model": None,
+            "ai.vlm.model": "   ",
+            "ai.embedding.dim": 1024,  # 意外类型：覆盖面只有字符串端点字段
+            "ai.unknown.channel": "x",
+        },
+    )
+    assert merged is ai  # 无有效更新 → 原对象返回（网关零开销路径）
+
+
+def test_apply_ai_overrides_rejects_bad_api_style():
+    """api_style 坏值在合并时即 fail-fast（Literal 校验），不留到调用侧。"""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from loomvec.core.config import AiSettings, apply_ai_overrides
+
+    with pytest.raises(PydanticValidationError):
+        apply_ai_overrides(AiSettings(), {"ai.clip.api_style": "bogus"})
+
+
+def test_mineru_device_route_values():
+    """mineru.device 是部署路线档位：cpu=compose 容器版（默认）/ gpu=宿主机脚本。"""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from loomvec.core.config import MineruSettings
+
+    assert MineruSettings().device == "cpu"
+    assert MineruSettings(device="gpu").device == "gpu"
+    with pytest.raises(PydanticValidationError):
+        MineruSettings(device="cuda")

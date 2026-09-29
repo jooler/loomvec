@@ -2,8 +2,13 @@
 # LoomVec 新环境部署脚本（交互式）
 #
 # 用法：新环境首次部署运行一次，录入真实 AI 供方后交由 ./dev.sh start 启动：
-#   ./deploy.sh    # 交互式录入 对话 LLM / 嵌入 / 重排（可选 VLM / CLIP）的地址、key、模型名，
+#   ./deploy.sh    # 交互式选择：MinerU 是否启用 GPU；对话 LLM / 嵌入 / 重排 / CLIP 逐通道
+#                  # 选「本地 GPU 推理」（vLLM/Infinity）或录入云端供方（可选 VLM），
 #                  # 写入 config/loomvec.json（ai.mock=false）；首问选 n 则生成离线 mock 配置
+#
+# 选择持久化：全部选项落 config/loomvec.json（mineru.device、ai.*.base_url 等），
+# 重跑本脚本逐项回显现值（回车保留）；./dev.sh start 依同一份配置启动（MinerU 路线、
+# 本地模型通道派生），不再重复询问——后续改动直接编辑该文件或重跑本脚本。
 #
 # 行为约定：
 # - 幂等：config/loomvec.json 已存在时逐项回显现值，直接回车保留原值（覆盖前备份到 tmp/）；
@@ -14,6 +19,8 @@
 #   被 dev.sh 调起时（LOOMVEC_DEPLOY_INVOKED_BY_DEV=1）跳过"立即启动"询问，返回调用方继续；
 # - 用户取消（确认门禁选 n）以退出码 1 结束，dev.sh 会终止本次启动；
 # - 不主动启动服务：部署只落配置，启动/停止/状态用 ./dev.sh start|stop|status；
+# - 本地 GPU 推理（scripts/start-models-gpu.sh）依赖自建 venv 与 GPU，脚本只做存在性提醒，
+#   拉起由 ./dev.sh start 按配置自动完成；MinerU gpu 路线需自建 .venv-mineru；
 # - 未配置 VLM 时自动置 image.caption_enabled=false（图片描述关闭；管线本就不被 caption 阻断）；
 #   未配置 CLIP 时以文搜图在检索侧自动降级，无需处理；
 # - 密钥输入不回显；base_url / model 必填，api_key 可留空（本地无鉴权端点）。
@@ -70,6 +77,18 @@ ask_nonempty() {
     fail "$1 不能为空"
   done
 }
+# ask_yn PROMPT DEFAULT(Y/N) VAR —— 回答存 yes/no 到 VAR；返回 0=yes 1=no
+ask_yn() {
+  local d="$2"
+  while :; do
+    read -r -p "$1 [${d}]：" REPLY_YN; REPLY_YN="$(trim "$REPLY_YN")"; REPLY_YN="${REPLY_YN:-$d}"
+    case "$REPLY_YN" in
+      [Yy]|[Yy][Ee][Ss]) printf -v "$3" '%s' "yes"; return 0 ;;
+      [Nn]|[Nn][Oo])     printf -v "$3" '%s' "no";  return 1 ;;
+    esac
+    fail "请回答 y 或 n"
+  done
+}
 # ask_int PROMPT CURRENT DEFAULT VAR
 ask_int() {
   local v
@@ -78,6 +97,25 @@ ask_int() {
     [[ "$v" =~ ^[1-9][0-9]*$ ]] && { printf -v "$4" '%s' "$v"; return 0; }
     fail "需为正整数"
   done
+}
+
+# ---------------------------------------------------------------- 本地 GPU 推理（scripts/start-models-gpu.sh）
+# 端口单源与该脚本一致：env MODELS_LLM_PORT / MODELS_INFINITY_PORT 覆盖，缺省 38010/38011
+LOCAL_LLM_PORT="${MODELS_LLM_PORT:-38010}"
+LOCAL_INF_PORT="${MODELS_INFINITY_PORT:-38011}"
+# is_local_base URL PORT —— base_url 是否指向本地推理端口（host 限 127.0.0.1/localhost）
+is_local_base() {
+  local url="${1%/}"
+  case "$url" in
+    "http://127.0.0.1:$2" | "http://127.0.0.1:$2"/* | "http://localhost:$2" | "http://localhost:$2"/*) return 0 ;;
+  esac
+  return 1
+}
+warn_local_missing() { # 选中本地通道后的存在性提醒（venv 安装见 scripts/start-models-gpu.sh 文件头）
+  command -v nvidia-smi >/dev/null 2>&1 \
+    || warn "未检测到 nvidia-smi（无 NVIDIA GPU/驱动）：本地推理将不可用，建议改选云端供方"
+  [ -x .venv-vllm/bin/vllm ] || warn "缺少 .venv-vllm：本地 LLM 通道暂不可用（安装命令见 scripts/start-models-gpu.sh 文件头）"
+  [ -x .venv-infinity/bin/infinity_emb ] || warn "缺少 .venv-infinity：本地嵌入/重排/CLIP 通道暂不可用（安装命令见 scripts/start-models-gpu.sh 文件头）"
 }
 # read_cfg KEY（形如 ai.llm.base_url）—— 从 CFG 读现值；缺失 / 模板占位 sk-xxx 视为空
 read_cfg() {
@@ -144,7 +182,7 @@ setup_sandbox() {
     echo "${DIM}ai.mock=true（离线确定性供方）：沙箱不适用（容器内不可达本机 mock 服务），跳过${RST}"
     return 0
   fi
-  local provider; provider="$(read_cfg runtime.provider)"; provider="${provider:-local}"
+  local provider; provider="$(read_cfg agent.runtime.provider)"; provider="${provider:-local}"
   if ! command -v docker >/dev/null 2>&1; then
     [ "$provider" = "docker" ] && fail "配置为 provider=docker 但本机无 docker CLI"
     echo "${DIM}未检测到 docker：跳过沙箱部署（provider=local，L1 同机子进程）${RST}"
@@ -157,7 +195,7 @@ setup_sandbox() {
     GO="$(trim "$LOOMVEC_SANDBOX")"
     echo "${DIM}LOOMVEC_SANDBOX=${GO}（环境变量旁路交互确认）${RST}"
   else
-    read -r -p "是否启用每用户容器沙箱隔离（runtime.provider=docker，docs/Research/01 P5.5a）？[y/N]（当前: ${provider}）：" GO
+    read -r -p "是否启用每用户容器沙箱隔离（agent.runtime.provider=docker，docs/Research/01 P5.5a）？[y/N]（当前: ${provider}）：" GO
     GO="$(trim "$GO")"
   fi
   if [[ ! "$GO" =~ ^[Yy] ]]; then
@@ -168,20 +206,22 @@ setup_sandbox() {
       return 0
     fi
   else
-    # 写入 provider 与沙箱用 MCP 地址（host-gateway 可达宿主 api）
+    # 写入 provider 与沙箱用 MCP 地址（host-gateway 可达宿主 api）——
+    # 键位与 AppConfig 一致（agent.runtime.provider / agent.mcp.url_sandbox）
     local API_PORT; API_PORT="$(load_api_port)"
     python3 - "$CFG" "$API_PORT" <<'PY'
 import json, sys
 path, api_port = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as f:
     cfg = json.load(f)
-cfg.setdefault("runtime", {})["provider"] = "docker"
-cfg.setdefault("mcp", {})["url_sandbox"] = f"http://host.docker.internal:{api_port}/api/v1/mcp"
+agent = cfg.setdefault("agent", {})
+agent.setdefault("runtime", {})["provider"] = "docker"
+agent.setdefault("mcp", {})["url_sandbox"] = f"http://host.docker.internal:{api_port}/api/v1/mcp"
 with open(path, "w", encoding="utf-8") as f:
     json.dump(cfg, f, ensure_ascii=False, indent=2)
     f.write("\n")
 PY
-    ok "已写入 runtime.provider=docker 与 mcp.url_sandbox（改完需重启 agent 生效）"
+    ok "已写入 agent.runtime.provider=docker 与 agent.mcp.url_sandbox（改完需重启 agent 生效）"
     provider="docker"
   fi
 
@@ -370,8 +410,10 @@ FRESH=0
 
 echo ""
 echo "${DIM}LoomVec AI 供方配置：对话 LLM / 嵌入 / 重排为必配（RAG 主链路），"
-echo "VLM（图片描述）/ CLIP（以文搜图）可选。均走 OpenAI 兼容端点；"
-echo "重排与 CLIP 另支持 DashScope 原生协议（api_style=dashscope）。${RST}"
+echo "VLM（图片描述）/ CLIP（以文搜图）可选。四个通道可逐个选择「本地 GPU 推理」"
+echo "（vLLM/Infinity，scripts/start-models-gpu.sh）或云端 OpenAI 兼容端点；"
+echo "重排与 CLIP 云端另支持 DashScope 原生协议（api_style=dashscope）。"
+echo "MinerU 解析可选 GPU（宿主机脚本）或 CPU（compose 容器版，默认）。${RST}"
 read -r -p "是否配置真实 AI 供方？[Y/n]（n = 离线 mock 模式）：" MODE
 MODE="$(trim "$MODE")"; MODE="${MODE:-Y}"
 
@@ -383,66 +425,133 @@ if [ "$FRESH" = "0" ]; then
   [[ "$CONFIRM" =~ ^[Yy] ]] || { echo "已取消部署（未做任何修改）；dev.sh 将终止本次启动"; exit 1; }
 fi
 
+# ---------------------------------------------------------------- MinerU 设备（mock / 真实供方两路都问）
+# mineru.device 持久化进 config/loomvec.json，./dev.sh start 依此路由：
+# gpu=宿主机 scripts/start-mineru-gpu.sh（需自建 .venv-mineru）；cpu=compose 容器版（默认）
+MINERU_CUR="$(read_cfg mineru.device)"; MINERU_CUR="${MINERU_CUR:-cpu}"
+MINERU_DEF="N"; [ "$MINERU_CUR" = "gpu" ] && MINERU_DEF="Y"
+if ask_yn "MinerU 是否启用 GPU（gpu=宿主机 GPU 脚本，需 .venv-mineru；cpu=compose 容器版）？" "$MINERU_DEF" MINERU_YN; then
+  MINERU_DEVICE="gpu"
+  command -v nvidia-smi >/dev/null 2>&1 \
+    || warn "未检测到 nvidia-smi（无 NVIDIA GPU/驱动）：gpu 路线将不可用，建议改选 cpu"
+  [ -x .venv-mineru/bin/mineru-api ] \
+    || warn "缺少 .venv-mineru：gpu 路线暂不可用（安装：uv pip install --python .venv-mineru -e './third_party/mineru[pipeline]' six）"
+else
+  MINERU_DEVICE="cpu"
+fi
+
 if [[ ! "$MODE" =~ ^[Yy] ]]; then
-  python3 - "$CFG" <<'PY'
+  python3 - "$CFG" "$MINERU_DEVICE" <<'PY'
 import json, sys
-p = sys.argv[1]
+p, device = sys.argv[1], sys.argv[2]
 with open(p, encoding="utf-8") as f:
     cfg = json.load(f)
 cfg.setdefault("ai", {})["mock"] = True
+cfg.setdefault("mineru", {})["device"] = device
 with open(p, "w", encoding="utf-8") as f:
     json.dump(cfg, f, ensure_ascii=False, indent=2)
     f.write("\n")
 PY
-  ok "已置 ai.mock=true（确定性本地供方，离线跑通全链路）"
+  ok "已置 ai.mock=true（确定性本地供方，离线跑通全链路）；mineru.device=$MINERU_DEVICE"
   setup_sandbox
   stamp_deploy
   maybe_start
   exit 0
 fi
 
-# ---------------------------------------------------------------- 对话 LLM
-step "对话 LLM（OpenAI 兼容 /chat/completions）"
-ask_url     "base_url（如 https://api.deepseek.com）" "$(cur_cfg ai.llm.base_url)" LLM_URL
-ask_nonempty "模型名（如 deepseek-chat）"             "$(cur_cfg ai.llm.model)" LLM_MODEL
-ask_secret  "API Key" "$([ -n "$(cur_cfg ai.llm.api_key)" ] && echo 1 || echo 0)" LLM_KEY
+# ---------------------------------------------------------------- 对话 LLM（本地 GPU 或云端）
+step "对话 LLM（本地 GPU：vLLM :$LOCAL_LLM_PORT；云端：OpenAI 兼容 /chat/completions）"
+LLM_URL=""; LLM_MODEL=""; LLM_KEY=""
+if is_local_base "$(cur_cfg ai.llm.base_url)" "$LOCAL_LLM_PORT"; then LLM_DEF="Y"; else LLM_DEF="N"; fi
+if ask_yn "对话 LLM 走本地 GPU 推理（vLLM :${LOCAL_LLM_PORT}，模型档位见 scripts/start-models-gpu.sh）？" "$LLM_DEF" LLM_LOCAL; then
+  LLM_URL="$(printf 'http://127.0.0.1:%s/v1' "$LOCAL_LLM_PORT")"
+  if [ "$LLM_DEF" = "Y" ]; then LLM_MODEL_CUR="$(cur_cfg ai.llm.model)"; else LLM_MODEL_CUR="qwen2.5-1.5b"; fi
+  ask_nonempty "模型名（vLLM served 名）" "$LLM_MODEL_CUR" LLM_MODEL
+  LLM_KEY="local"
+else
+  ask_url     "base_url（如 https://api.deepseek.com）" "$(cur_cfg ai.llm.base_url)" LLM_URL
+  ask_nonempty "模型名（如 deepseek-chat）"             "$(cur_cfg ai.llm.model)" LLM_MODEL
+  ask_secret  "API Key" "$([ -n "$(cur_cfg ai.llm.api_key)" ] && echo 1 || echo 0)" LLM_KEY
+fi
 
-# ---------------------------------------------------------------- 嵌入
-step "嵌入模型（OpenAI 兼容 /embeddings；dim 决定 Milvus 集合维度，更换模型/维度需重建集合）"
-ask_url     "base_url（如 https://dashscope.aliyuncs.com/compatible-mode/v1）" "$(cur_cfg ai.embedding.base_url)" EMB_URL
-ask_nonempty "模型名（如 text-embedding-v4）" "$(cur_cfg ai.embedding.model)" EMB_MODEL
-ask_secret  "API Key" "$([ -n "$(cur_cfg ai.embedding.api_key)" ] && echo 1 || echo 0)" EMB_KEY
-ask_int     "向量维度 dim"          "$(cur_cfg ai.embedding.dim)" 1024 EMB_DIM
-ask_int     "单次批量 batch_size"   "$(cur_cfg ai.embedding.batch_size)" 16 EMB_BATCH
+# ---------------------------------------------------------------- 嵌入（本地 GPU 或云端）
+step "嵌入模型（本地 GPU：Infinity :$LOCAL_INF_PORT；云端：OpenAI 兼容 /embeddings；dim 决定 Milvus 集合维度，更换模型/维度需重建集合）"
+EMB_URL=""; EMB_MODEL=""; EMB_KEY=""
+if is_local_base "$(cur_cfg ai.embedding.base_url)" "$LOCAL_INF_PORT"; then EMB_DEF="Y"; else EMB_DEF="N"; fi
+if ask_yn "嵌入走本地 GPU 推理（Infinity :${LOCAL_INF_PORT}，bge-m3）？" "$EMB_DEF" EMB_LOCAL; then
+  EMB_URL="$(printf 'http://127.0.0.1:%s' "$LOCAL_INF_PORT")"
+  if [ "$EMB_DEF" = "Y" ]; then EMB_MODEL_CUR="$(cur_cfg ai.embedding.model)"; else EMB_MODEL_CUR="bge-m3"; fi
+  ask_nonempty "模型名（Infinity served 名）" "$EMB_MODEL_CUR" EMB_MODEL
+  EMB_KEY="local"
+  ask_int     "向量维度 dim"          "$(cur_cfg ai.embedding.dim)" 1024 EMB_DIM
+  ask_int     "单次批量 batch_size"   "$(cur_cfg ai.embedding.batch_size)" 16 EMB_BATCH
+else
+  ask_url     "base_url（如 https://dashscope.aliyuncs.com/compatible-mode/v1）" "$(cur_cfg ai.embedding.base_url)" EMB_URL
+  ask_nonempty "模型名（如 text-embedding-v4）" "$(cur_cfg ai.embedding.model)" EMB_MODEL
+  ask_secret  "API Key" "$([ -n "$(cur_cfg ai.embedding.api_key)" ] && echo 1 || echo 0)" EMB_KEY
+  ask_int     "向量维度 dim"          "$(cur_cfg ai.embedding.dim)" 1024 EMB_DIM
+  ask_int     "单次批量 batch_size"   "$(cur_cfg ai.embedding.batch_size)" 16 EMB_BATCH
+fi
 
-# ---------------------------------------------------------------- 重排
-step "重排模型（cross-encoder；OpenAI 兼容端点用 openai，阿里百炼原生用 dashscope）"
-ask_url     "base_url（DashScope 原生: https://dashscope.aliyuncs.com/api/v1）" "$(cur_cfg ai.rerank.base_url)" RR_URL
-ask_nonempty "模型名（如 qwen3-vl-rerank / bge-reranker-v2-m3）" "$(cur_cfg ai.rerank.model)" RR_MODEL
-ask_secret  "API Key" "$([ -n "$(cur_cfg ai.rerank.api_key)" ] && echo 1 || echo 0)" RR_KEY
-RR_STYLE_CUR="$(cur_cfg ai.rerank.api_style)"; RR_STYLE_CUR="${RR_STYLE_CUR:-openai}"
-RR_STYLE=""
-while :; do
-  ask "api_style（openai / dashscope）" "$RR_STYLE_CUR"
-  case "$REPLY" in openai|dashscope) RR_STYLE="$REPLY"; break ;; esac
-  fail "只能填 openai 或 dashscope"
-done
+# ---------------------------------------------------------------- 重排（本地 GPU 或云端）
+step "重排模型（本地 GPU：Infinity :$LOCAL_INF_PORT；云端 cross-encoder：openai / dashscope 协议）"
+RR_URL=""; RR_MODEL=""; RR_KEY=""
+if is_local_base "$(cur_cfg ai.rerank.base_url)" "$LOCAL_INF_PORT"; then RR_DEF="Y"; else RR_DEF="N"; fi
+if ask_yn "重排走本地 GPU 推理（Infinity :${LOCAL_INF_PORT}，bge-reranker-v2-m3）？" "$RR_DEF" RR_LOCAL; then
+  RR_URL="$(printf 'http://127.0.0.1:%s' "$LOCAL_INF_PORT")"
+  if [ "$RR_DEF" = "Y" ]; then RR_MODEL_CUR="$(cur_cfg ai.rerank.model)"; else RR_MODEL_CUR="bge-reranker-v2-m3"; fi
+  ask_nonempty "模型名（Infinity served 名）" "$RR_MODEL_CUR" RR_MODEL
+  RR_KEY="local"; RR_STYLE="openai"
+else
+  ask_url     "base_url（DashScope 原生: https://dashscope.aliyuncs.com/api/v1）" "$(cur_cfg ai.rerank.base_url)" RR_URL
+  ask_nonempty "模型名（如 qwen3-vl-rerank / bge-reranker-v2-m3）" "$(cur_cfg ai.rerank.model)" RR_MODEL
+  ask_secret  "API Key" "$([ -n "$(cur_cfg ai.rerank.api_key)" ] && echo 1 || echo 0)" RR_KEY
+  RR_STYLE_CUR="$(cur_cfg ai.rerank.api_style)"; RR_STYLE_CUR="${RR_STYLE_CUR:-openai}"
+  RR_STYLE=""
+  while :; do
+    ask "api_style（openai / dashscope）" "$RR_STYLE_CUR"
+    case "$REPLY" in openai|dashscope) RR_STYLE="$REPLY"; break ;; esac
+    fail "只能填 openai 或 dashscope"
+  done
+fi
 
 # ---------------------------------------------------------------- 可选：VLM / CLIP
-step "可选：VLM（图片描述）/ CLIP（以文搜图）——base_url 直接回车即跳过"
-echo "${DIM}跳过 VLM 将置 image.caption_enabled=false；跳过 CLIP 检索侧自动降级。${RST}"
+step "可选：VLM（图片描述，仅云端）/ CLIP（以文搜图，本地 GPU 或云端）——云端 base_url 直接回车即跳过"
+echo "${DIM}VLM 未本地化；跳过 VLM 将置 image.caption_enabled=false。跳过 CLIP 检索侧自动降级。${RST}"
 ask_url_opt "VLM base_url" "$(cur_cfg ai.vlm.base_url)" VLM_URL
 VLM_MODEL=""; VLM_KEY=""
 if [ -n "$VLM_URL" ]; then
   ask_nonempty "VLM 模型名（如 qwen3-vl-plus）" "$(cur_cfg ai.vlm.model)" VLM_MODEL
   ask_secret   "VLM API Key" "$([ -n "$(cur_cfg ai.vlm.api_key)" ] && echo 1 || echo 0)" VLM_KEY
 fi
-ask_url_opt "CLIP base_url" "$(cur_cfg ai.clip.base_url)" CLIP_URL
-CLIP_MODEL=""; CLIP_KEY=""
-if [ -n "$CLIP_URL" ]; then
-  ask_nonempty "CLIP 模型名（如 multimodal-embedding-v1）" "$(cur_cfg ai.clip.model)" CLIP_MODEL
-  ask_secret   "CLIP API Key" "$([ -n "$(cur_cfg ai.clip.api_key)" ] && echo 1 || echo 0)" CLIP_KEY
+CLIP_URL=""; CLIP_MODEL=""; CLIP_KEY=""; CLIP_STYLE=""
+if is_local_base "$(cur_cfg ai.clip.base_url)" "$LOCAL_INF_PORT"; then CLIP_DEF="Y"; else CLIP_DEF="N"; fi
+if ask_yn "CLIP 走本地 GPU 推理（Infinity :${LOCAL_INF_PORT}，jina-clip-v2；选 n 则可录入云端或回车跳过）？" "$CLIP_DEF" CLIP_LOCAL; then
+  CLIP_URL="$(printf 'http://127.0.0.1:%s' "$LOCAL_INF_PORT")"
+  if [ "$CLIP_DEF" = "Y" ]; then CLIP_MODEL_CUR="$(cur_cfg ai.clip.model)"; else CLIP_MODEL_CUR="jina-clip-v2"; fi
+  ask_nonempty "模型名（Infinity served 名）" "$CLIP_MODEL_CUR" CLIP_MODEL
+  CLIP_KEY="local"; CLIP_STYLE="infinity"
+else
+  ask_url_opt "CLIP base_url" "$(cur_cfg ai.clip.base_url)" CLIP_URL
+  if [ -n "$CLIP_URL" ]; then
+    ask_nonempty "CLIP 模型名（如 multimodal-embedding-v1）" "$(cur_cfg ai.clip.model)" CLIP_MODEL
+    ask_secret   "CLIP API Key" "$([ -n "$(cur_cfg ai.clip.api_key)" ] && echo 1 || echo 0)" CLIP_KEY
+    CLIP_STYLE_CUR="$(cur_cfg ai.clip.api_style)"; CLIP_STYLE_CUR="${CLIP_STYLE_CUR:-dashscope}"
+    CLIP_STYLE=""
+    while :; do
+      ask "CLIP api_style（openai / dashscope）" "$CLIP_STYLE_CUR"
+      case "$REPLY" in openai|dashscope) CLIP_STYLE="$REPLY"; break ;; esac
+      fail "只能填 openai 或 dashscope"
+    done
+  fi
 fi
+
+ANY_LOCAL=0
+is_local_base "$LLM_URL" "$LOCAL_LLM_PORT" 2>/dev/null && ANY_LOCAL=1
+is_local_base "$EMB_URL" "$LOCAL_INF_PORT" 2>/dev/null && ANY_LOCAL=1
+is_local_base "$RR_URL" "$LOCAL_INF_PORT" 2>/dev/null && ANY_LOCAL=1
+is_local_base "$CLIP_URL" "$LOCAL_INF_PORT" 2>/dev/null && ANY_LOCAL=1
+[ "$ANY_LOCAL" = 1 ] && warn_local_missing
 
 # ---------------------------------------------------------------- 写入配置
 mkdir -p tmp
@@ -456,7 +565,8 @@ python3 - "$CFG" \
   "$EMB_URL" "$EMB_MODEL" "$EMB_KEY" "$EMB_DIM" "$EMB_BATCH" \
   "$RR_URL" "$RR_MODEL" "$RR_KEY" "$RR_STYLE" \
   "$VLM_URL" "$VLM_MODEL" "$VLM_KEY" \
-  "$CLIP_URL" "$CLIP_MODEL" "$CLIP_KEY" <<'PY'
+  "$CLIP_URL" "$CLIP_MODEL" "$CLIP_KEY" "$CLIP_STYLE" \
+  "$MINERU_DEVICE" <<'PY'
 import json, sys
 
 path = sys.argv[1]
@@ -464,7 +574,8 @@ path = sys.argv[1]
  emb_url, emb_model, emb_key, emb_dim, emb_batch,
  rr_url, rr_model, rr_key, rr_style,
  vlm_url, vlm_model, vlm_key,
- clip_url, clip_model, clip_key) = sys.argv[2:]
+ clip_url, clip_model, clip_key, clip_style,
+ mineru_device) = sys.argv[2:]
 
 with open(path, encoding="utf-8") as f:
     cfg = json.load(f)
@@ -498,7 +609,10 @@ provider("llm", llm_url, llm_model, llm_key)
 provider("embedding", emb_url, emb_model, emb_key, {"dim": emb_dim, "batch_size": emb_batch})
 provider("rerank", rr_url, rr_model, rr_key, {"api_style": rr_style})
 provider("vlm", vlm_url, vlm_model, vlm_key)
-provider("clip", clip_url, clip_model, clip_key)
+provider("clip", clip_url, clip_model, clip_key, {"api_style": clip_style})
+
+# MinerU 部署路线（./dev.sh start 依此路由：gpu=宿主机脚本 / cpu=compose 容器版）
+cfg.setdefault("mineru", {})["device"] = mineru_device
 
 # VLM 未配置 → 关闭图片描述（caption 失败本就降级不阻断，关掉免得逐图报错）
 cfg.setdefault("image", {})["caption_enabled"] = bool(vlm_url)
@@ -510,14 +624,16 @@ PY
 
 python3 -m json.tool "$CFG" >/dev/null 2>&1 || { fail "写入的 $CFG 不是合法 JSON"; exit 1; }
 step "部署完成"
-ok "已写入 ${CFG}（ai.mock=false）"
+ok "已写入 ${CFG}（ai.mock=false；mineru.device=$MINERU_DEVICE）"
 echo "  对话 LLM   $LLM_URL   $LLM_MODEL   key=$(keydesc ai.llm.api_key "$LLM_KEY")"
 echo "  嵌入       $EMB_URL   $EMB_MODEL   dim=$EMB_DIM batch=$EMB_BATCH key=$(keydesc ai.embedding.api_key "$EMB_KEY")"
 echo "  重排       $RR_URL    $RR_MODEL    style=$RR_STYLE key=$(keydesc ai.rerank.api_key "$RR_KEY")"
 if [ -n "$VLM_URL" ]; then echo "  VLM        $VLM_URL   $VLM_MODEL   key=$(keydesc ai.vlm.api_key "$VLM_KEY")"
 else echo "  VLM        （未配置，image.caption_enabled 已置 false）"; fi
-if [ -n "$CLIP_URL" ]; then echo "  CLIP       $CLIP_URL   $CLIP_MODEL   key=$(keydesc ai.clip.api_key "$CLIP_KEY")"
+if [ -n "$CLIP_URL" ]; then echo "  CLIP       $CLIP_URL   $CLIP_MODEL   style=$CLIP_STYLE key=$(keydesc ai.clip.api_key "$CLIP_KEY")"
 else echo "  CLIP       （未配置，以文搜图自动降级）"; fi
+echo "  MinerU     device=$MINERU_DEVICE（gpu=宿主机 GPU 脚本 / cpu=compose 容器版；./dev.sh start 依此路由）"
+echo "  本地模型   ./dev.sh start 会按 ai.*.base_url 指向的本地端口自动拉起（vLLM :$LOCAL_LLM_PORT / Infinity :$LOCAL_INF_PORT）"
 warn "改动了 AI 配置时，需重启 api/agent/worker 才生效（./dev.sh stop && ./dev.sh start）"
 setup_sandbox
 stamp_deploy

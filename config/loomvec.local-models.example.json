@@ -1,5 +1,5 @@
 {
-  "$comment": "本地模型推理模板（scripts/start-models-gpu.sh：vLLM :38010 对话 + Infinity :38011 嵌入/重排/CLIP）。支持部分覆盖：把本文件的 ai 段合并进 config/loomvec.json 即可，其余键取内置默认。vlm 未本地化，保持原配置（图片/视频 caption 走云端，或关闭 image.caption_enabled）。切换后需重启 api/worker/agent（AiGateway 启动时快照配置）；存量空间的向量是旧模型产物，请经 admin 重嵌入或重建空间。见 docs/16-本地模型推理.md。",
+  "$comment": "本地模型推理模板（scripts/start-models-gpu.sh：vLLM :38010 对话 + Infinity :38011 嵌入/重排/CLIP）。支持部分覆盖：把本文件的 ai 段合并进 config/loomvec.json 即可，其余键取内置默认。./dev.sh start 依 ai.*.base_url 是否指向本地端口自动拉起对应本地服务（也可经 ./deploy.sh 逐通道选择本地/云端）。vlm 未本地化，保持原配置（图片/视频 caption 走云端，或关闭 image.caption_enabled）。切换后需重启 api/worker/agent（AiGateway 启动时快照配置）；存量空间的向量是旧模型产物，请经 admin 重嵌入或重建空间。见 docs/16-本地模型推理.md。",
   "ai": {
     "mock": false,
     "llm": {

@@ -52,16 +52,16 @@ Current-system docs live in [docs/](./docs) (Chinese): `docs/00-项目核心文�
 
 Prerequisites: Docker; Python 3.12 (managed by [uv](https://docs.astral.sh/uv/)); Node 20+ and [pnpm](https://pnpm.io).
 
-For a fresh environment, run `./deploy.sh` first — it interactively collects your real AI providers (chat LLM / embedding / rerank required; VLM / CLIP optional; answer "mock" to generate an offline config instead) and writes `config/loomvec.json`. Then bring everything up:
+For a fresh environment, run `./deploy.sh` first — it interactively asks whether MinerU should use the GPU, and lets you pick **local GPU inference or a cloud provider per channel** (chat LLM / embedding / rerank / CLIP; VLM is cloud-only; answer "mock" to generate an offline config instead). Every choice is persisted to `config/loomvec.json`, so later startups just follow that file — edit it (or rerun the deploy script) to change anything. Then bring everything up:
 
 ```bash
-./deploy.sh      # first run only: interactive AI provider setup + port migration + installs all Python/Node deps
+./deploy.sh      # first run only: interactive AI provider & MinerU route setup + port migration + installs all Python/Node deps
 ./dev.sh start
 ```
 
 If you skip `./deploy.sh` and run `./dev.sh start` directly, the script detects an undeployed environment (no `tmp/loomvec-deployed.stamp` marker) and automatically runs the deploy flow first on an interactive terminal; cancelling the deploy aborts the startup. Non-interactive environments (CI / piped scripts) skip auto-deploy and fall back to the offline mock bootstrap.
 
-`./dev.sh start` brings up everything in one command: image check (auto pull/build) → infrastructure + observability stack → database init → api/agent/worker + the three front-ends (idempotent; already-running components are skipped). On an interactive terminal it then tails the FastAPI log live (Ctrl-C stops following; services keep running; use `--no-follow` to opt out). `./dev.sh logs [api|agent|worker|web|admin|ops|all]` follows any service at any time.
+`./dev.sh start` brings up everything in one command: image check (auto pull/build) → infrastructure + observability stack → database init → local model services (per config: channels whose `ai.*` points at the local inference ports auto-start vLLM/Infinity) → api/agent/worker + the three front-ends (idempotent; already-running components are skipped). On an interactive terminal it then tails the FastAPI log live (Ctrl-C stops following; services keep running; use `--no-follow` to opt out). `./dev.sh logs [api|agent|worker|web|admin|ops|mineru|models|all]` follows any service at any time.
 
 ### Agent container sandbox (optional, P5.5a)
 
@@ -83,7 +83,7 @@ Notes: all infrastructure ports are now bound to `127.0.0.1` (do not revert; the
 | Grafana | http://localhost:33002 | password in `deploy/compose/.env` (`GRAFANA_ADMIN_PASSWORD`, default `admin`) |
 | Prometheus | http://localhost:39090 | |
 
-First run generates `deploy/compose/.env`, the root `.env`, and the app-params file `config/loomvec.json` (from template `config/loomvec.example.json`, with `ai.mock=true` so the full loop runs offline; the file holds secrets and is gitignored). MinerU startup is picked automatically by `dev.sh`: by default it starts as a compose container (the image builds slowly the first time and downloads ~1–2 GB of models on first start); if `deploy/compose/compose.override.yaml` (gitignored) moves the mineru service out of the default service set via a profile (e.g. `cpu-mineru`), the host-GPU launcher `scripts/start-mineru-gpu.sh` is used instead (requires `.venv-mineru`; see the install command at the top of that script). `./dev.sh status` shows component status; `./dev.sh stop` stops app processes and containers (data volumes are kept).
+First run generates `deploy/compose/.env`, the root `.env`, and the app-params file `config/loomvec.json` (from template `config/loomvec.example.json`, with `ai.mock=true` so the full loop runs offline; the file holds secrets and is gitignored). The MinerU route follows the config: `mineru.device: "cpu"` (default) starts it as a compose container (the image builds slowly the first time and downloads ~1–2 GB of models on first start); `mineru.device: "gpu"` (selectable in deploy.sh) uses the host-GPU launcher `scripts/start-mineru-gpu.sh` instead (requires `.venv-mineru`; see the install command at the top of that script). The legacy approach — moving mineru out of the default service set via a profile in `deploy/compose/compose.override.yaml` (gitignored) — keeps working. Local model services (vLLM/Infinity, [docs/16](docs/16-本地模型推理.md)) are auto-started/stopped by `dev.sh start/stop` whenever `ai.*.base_url` points at the local inference ports, and can also be managed manually via `scripts/start-models-gpu.sh`. `./dev.sh status` shows component status; `./dev.sh stop` stops app processes and containers (data volumes are kept).
 
 <details>
 <summary>Manual step-by-step startup (equivalent to dev.sh)</summary>
@@ -92,10 +92,16 @@ First run generates `deploy/compose/.env`, the root `.env`, and the app-params f
 # 1) Infrastructure + observability stack
 cd deploy/compose && cp .env.example .env && docker compose --profile observability up -d && cd ../..
 
-# 1b) MinerU (optional; needed by the parse step): if a local compose.override.yaml
-#     isolates the containerized mineru, start the host-GPU launcher instead
-#     (same auto-detection dev.sh performs)
+# 1b) MinerU (optional; needed by the parse step): start the host-GPU launcher when
+#     config/loomvec.json has mineru.device=gpu (or a compose.override.yaml isolates
+#     the containerized mineru) — same auto-detection dev.sh performs
 MINERU_PORT=38000 bash scripts/start-mineru-gpu.sh &
+
+# 1c) Local models (optional; chat/embedding/rerank/CLIP on local GPU, docs/16):
+#     auto-started by dev.sh start when ai.*.base_url points at the local ports;
+#     manual equivalent:
+MODELS_LOAD_LLM=1 MODELS_LOAD_EMBEDDING=1 MODELS_LOAD_RERANK=1 MODELS_LOAD_CLIP=1 \
+  bash scripts/start-models-gpu.sh &
 
 # 2) Backend (API on 38080, agent gateway on 38090 internal-only, MinerU on 38000) + pipeline worker
 uv sync && cp .env.example .env
@@ -122,7 +128,9 @@ make evals        # retrieval regression (rerank A/B: --no-rerank)
 
 ### AI providers
 
-AI provider settings come **only** from `config/loomvec.json` (template `config/loomvec.example.json`; the file holds secrets and is gitignored — environment variables do not apply to it). The recommended way is `./deploy.sh`, which writes it interactively (chat LLM / embedding / rerank required, VLM / CLIP optional; skipping everything sets `ai.mock=true` — a deterministic local provider that runs the full loop offline). To configure cloud providers by hand, set `ai.mock=false` in that file and fill in `base_url` / `api_key` / `model` under `ai.llm` / `ai.embedding` / `ai.rerank` etc. (OpenAI-compatible endpoints; rerank / clip also support the native `api_style: "dashscope"` protocol), then restart api/agent/worker for it to take effect (`./dev.sh stop && ./dev.sh start`). All AI calls flow through the `loomvec.core.ai` gateway; provider endpoints, keys, and model names are deployment configuration only — pointing them at self-hosted endpoints requires no code changes. To run everything fully offline on a local GPU instead, start `scripts/start-models-gpu.sh` (vLLM for chat + Infinity for embedding/rerank/CLIP) and merge `config/loomvec.local-models.example.json` into `config/loomvec.json` — see [docs/16-本地模型推理.md](docs/16-本地模型推理.md) (VLM stays cloud-only).
+AI provider settings come **only** from `config/loomvec.json` (template `config/loomvec.example.json`; the file holds secrets and is gitignored — environment variables do not apply to it). The recommended way is `./deploy.sh`, which writes it interactively (pick local GPU inference or a cloud provider per channel for chat LLM / embedding / rerank / CLIP; VLM is cloud-only; the mock path sets `ai.mock=true` — a deterministic local provider that runs the full loop offline). To configure cloud providers by hand, set `ai.mock=false` in that file and fill in `base_url` / `api_key` / `model` under `ai.llm` / `ai.embedding` / `ai.rerank` etc. (OpenAI-compatible endpoints; rerank / clip also support the native `api_style: "dashscope"` protocol), then restart api/agent/worker for it to take effect (`./dev.sh stop && ./dev.sh start`).
+
+The admin console "Settings → AI providers" is a layered form: for each of the five channels (chat LLM / embedding / rerank / VLM / CLIP) you pick **local GPU inference or a cloud provider** — the local option is gated by a live probe of vLLM/Infinity (running state + served models; unavailable means local is disabled), picking it writes the standard local bundle in one click, and picking cloud reveals endpoint/key/model fields (plus `api_style` for rerank & clip). Saving writes each changed key with an audit reason and takes effect after restart. Any non-empty DB value takes precedence over `config/loomvec.json` — api/worker gateways merge it at startup, while agent/dsh picks up the LLM endpoint/key per session. For local GPU inference endpoints and protocols see [docs/16-本地模型推理.md](docs/16-本地模型推理.md). All AI calls flow through the `loomvec.core.ai` gateway; provider endpoints, keys, and model names are deployment configuration only — pointing them at self-hosted endpoints requires no code changes. To run everything fully offline on a local GPU instead, start `scripts/start-models-gpu.sh` (vLLM for chat + Infinity for embedding/rerank/CLIP) and merge `config/loomvec.local-models.example.json` into `config/loomvec.json` — see [docs/16-本地模型推理.md](docs/16-本地模型推理.md) (VLM stays cloud-only).
 
 Fresh-deployment pitfall: with the manual step-by-step startup, if `config/loomvec.json` is missing, mock stays at its code default `false` and asset uploads fail at the embed step because no AI provider key/model is available (assets stuck in "failed"). Fix: run `./deploy.sh` (or set `ai.mock=true` for offline development), restart api/agent/worker, then hit "retry" on the failed assets.
 

@@ -16,7 +16,7 @@ import redis as sync_redis
 from celery import Task
 
 from loomvec.core.ai import AiGateway
-from loomvec.core.config import get_settings
+from loomvec.core.config import apply_ai_overrides, get_settings
 from loomvec.core.constants import (
     DEAD_LETTER_KEY,
     DEAD_LETTER_MAX_LEN,
@@ -25,6 +25,7 @@ from loomvec.core.constants import (
     QUEUE_PIPELINE_LOW,
 )
 from loomvec.core.db.base import create_engine_and_sessionmaker
+from loomvec.core.db.system_config import load_ai_overrides
 from loomvec.core.errors import UpstreamUnavailableError
 from loomvec.core.logging import get_logger
 from loomvec.core.mineru_client import MineruClient
@@ -37,19 +38,30 @@ from loomvec.worker.metrics import pipeline_jobs_total
 logger = get_logger("loomvec.worker.tasks")
 
 
-def build_deps() -> PipelineDeps:
-    """逐任务装配：engine/redis/httpx 绑定当前事件循环，任务结束 dispose（见 PipelineDeps）。"""
+async def build_deps() -> PipelineDeps:
+    """逐任务装配：engine/redis/httpx 绑定当前事件循环，任务结束 dispose（见 PipelineDeps）。
+
+    AI 供方生效值在装配时读取：admin 动态配置（DB system_config）有非空值即
+    覆盖 config/loomvec.json（core.config 三层配置语义）；DB 不可达时回落
+    文件配置，不阻塞管线。
+    """
     settings = get_settings()
     import redis.asyncio as aioredis
 
     engine, session_factory = create_engine_and_sessionmaker(settings.postgres)
+    try:
+        async with session_factory() as session:
+            ai_settings = apply_ai_overrides(settings.ai, await load_ai_overrides(session))
+    except Exception:
+        logger.warning("ai_overrides_load_failed", detail="DB 不可达，AI 供方回落文件配置")
+        ai_settings = settings.ai
     return PipelineDeps(
         settings=settings,
         session_factory=session_factory,
         storage=ObjectStorage(settings.storage),
-        ai=AiGateway(settings.ai),
+        ai=AiGateway(ai_settings),
         mineru=MineruClient(settings.mineru),
-        milvus=MilvusStore(settings.milvus, settings.ai),
+        milvus=MilvusStore(settings.milvus, ai_settings),
         redis=aioredis.from_url(settings.redis.url, decode_responses=True),
         engine=engine,
     )
@@ -119,7 +131,7 @@ def process_asset(self, asset_id: str, from_step: str = "parse") -> dict:
     """执行资产管线；from_step 支持单步重跑（retry 入口）。"""
 
     async def _run() -> dict:
-        deps = build_deps()
+        deps = await build_deps()
         try:
             # attempts 观测口径：随 celery autoretry 递增（P4 已知限制修复）
             results = await PipelineRunner(deps).run(
@@ -199,7 +211,7 @@ def reembed_space(task_id: str) -> dict:
             Space,
         )
 
-        deps = build_deps()
+        deps = await build_deps()
         try:
             async with deps.session_factory() as session:
                 task_row = (
@@ -312,7 +324,7 @@ def merge_scan() -> dict:
         from loomvec.core.db.models import Space
         from loomvec.core.graph.merge import should_trigger_merge
 
-        deps = build_deps()
+        deps = await build_deps()
         try:
             async with deps.session_factory() as session:
                 space_ids = (
@@ -341,7 +353,7 @@ def merge_space(space_id: str, created_by: str = "system") -> dict:
 
         from loomvec.core.graph.merge import run_space_merge
 
-        deps = build_deps()
+        deps = await build_deps()
         try:
 
             async def vector_fetch(entities):
@@ -373,7 +385,7 @@ def community_scan() -> dict:
 
         from loomvec.core.db.models import Entity, Space
 
-        deps = build_deps()
+        deps = await build_deps()
         try:
             async with deps.session_factory() as session:
                 rows = (
@@ -411,7 +423,7 @@ def community_space(space_id: str) -> dict:
             run_space_communities,
         )
 
-        deps = build_deps()
+        deps = await build_deps()
         try:
             async with deps.session_factory() as session:
                 space = (
@@ -513,7 +525,7 @@ def transcode_asset(self, asset_id: str) -> dict:
         )
         from loomvec.core.storage_keys import transcode_key
 
-        deps = build_deps()
+        deps = await build_deps()
         settings = deps.settings
         try:
             async with deps.session_factory() as session:
