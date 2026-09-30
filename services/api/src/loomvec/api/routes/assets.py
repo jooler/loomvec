@@ -65,12 +65,16 @@ async def list_assets(
     folder_id: str | None = Query(
         default=None, description="目录浏览过滤：'root' 仅根目录；uuid 仅该文件夹内；缺省不过滤"
     ),
+    q: str | None = Query(
+        default=None, max_length=128, description="名称过滤（大小写不敏感包含；与 folder_id 可组合）"
+    ),
     identity: Identity = Depends(require_scope("read")),
     session: AsyncSession = Depends(get_session),
 ) -> AssetListOut:
     """资产列表：指定空间（成员校验）或聚合我的全部空间（viewer 可见性过滤）。
 
     Finder 目录浏览经 folder_id 过滤（根目录用 'root' 哨兵）。
+    q 为名称 ILIKE 包含过滤（% _ \\ 按字面匹配），不传时行为与旧版一致。
     """
     from loomvec.core.db.pagination import Cursor
 
@@ -91,6 +95,7 @@ async def list_assets(
     else:
         space_ids = await _visible_space_ids(session, identity)
 
+    name_like = q.strip() if q and q.strip() else None
     rows = await AssetRepo(session).list_in_spaces(
         space_ids,
         limit=limit + 1,
@@ -104,6 +109,7 @@ async def list_assets(
         category_id=category_id,
         review_status=review_status,
         folder_id=folder_id,
+        name_like=name_like,
     )
     next_cursor = asset_service.encode_cursor(rows[-1]) if len(rows) > limit else None
     return AssetListOut(

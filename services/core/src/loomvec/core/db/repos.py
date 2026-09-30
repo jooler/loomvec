@@ -159,11 +159,14 @@ class AssetRepo(Repository[Asset]):
         category_id: uuid.UUID | None = None,
         review_status: str | None = None,
         folder_id: str | None = None,
+        name_like: str | None = None,
     ) -> list[Asset]:
         """跨空间游标列表：P2 资产列表/聚合检索的统一取数入口。
 
         folder_id（Finder 目录浏览）：'root' 仅根目录（folder_id IS NULL）、
         uuid 仅该文件夹内；缺省不过滤（全空间聚合视图）。
+        name_like（名称搜索）：大小写不敏感 ILIKE 包含匹配；调用方传原始
+        关键字，通配符转义（% _ \\）在此完成，字面匹配不放大范围。
         """
         if not space_ids:
             return []
@@ -176,6 +179,9 @@ class AssetRepo(Repository[Asset]):
             stmt = stmt.where(Asset.folder_id.is_(None))
         elif folder_id:
             stmt = stmt.where(Asset.folder_id == uuid.UUID(folder_id))
+        if name_like:
+            escaped = name_like.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            stmt = stmt.where(Asset.name.ilike(f"%{escaped}%", escape="\\"))
         review = self._review_filter(include_unreviewed, strict_review)
         if review is not None:
             stmt = stmt.where(review)
@@ -212,6 +218,7 @@ class AssetRepo(Repository[Asset]):
         category_id: uuid.UUID | None = None,
         review_status: str | None = None,
         folder_id: str | None = None,
+        name_like: str | None = None,
     ) -> list[Asset]:
         return await self.list_in_spaces(
             [space_id],
@@ -226,6 +233,7 @@ class AssetRepo(Repository[Asset]):
             category_id=category_id,
             review_status=review_status,
             folder_id=folder_id,
+            name_like=name_like,
         )
 
     async def find_by_checksum(self, space_id: uuid.UUID, checksum: str) -> list[Asset]:
