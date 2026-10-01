@@ -283,7 +283,7 @@ if ! docker image inspect loomvec/postgres-age:18 >/dev/null 2>&1; then
   [ -d deploy/compose/postgres-age/age-src ] || make age-src
   $COMPOSE build postgres || { fail "postgres-age 镜像构建失败"; exit 1; }
 fi
-if mineru_in_compose && ! docker image inspect loomvec/mineru:3.4.5-cpu >/dev/null 2>&1; then
+if mineru_in_compose && ! docker image inspect loomvec/mineru:4.0.10-cpu >/dev/null 2>&1; then
   warn "mineru 镜像缺失，准备构建（体积较大，耐心等待）"
   $COMPOSE build mineru || { fail "mineru 镜像构建失败"; exit 1; }
 fi
@@ -303,20 +303,19 @@ done
 [ "$i" -lt 15 ] && ok "Redis 就绪" || { fail "Redis 未就绪"; exit 1; }
 wait_http "RustFS"            "http://localhost:39000/health"     1 60
 wait_http "Milvus"            "http://localhost:39091/healthz"    1 120
-
 # MinerU 双路线：容器版已随上方 compose up 拉起；本地 GPU 版在此接管拉起
 # （未安装只告警不阻塞，与「未就绪只告警」约定一致——解析功能暂不可用）
 if mineru_in_compose; then
   ok "MinerU 随 compose 启动（容器版 loomvec-mineru）"
-  wait_http "MinerU ($MINERU_PORT)" "http://localhost:$MINERU_PORT/health" 0 20
+  wait_http "MinerU ($MINERU_PORT)" "http://localhost:$MINERU_PORT/v1/health" 0 20
 else
   step "MinerU（宿主机 GPU：scripts/start-mineru-gpu.sh）"
   if [ -x .venv-mineru/bin/mineru-api ]; then
     start_bg mineru mineru "$MINERU_PORT" env MINERU_PORT="$MINERU_PORT" bash scripts/start-mineru-gpu.sh
   else
-    warn "本地 MinerU 未安装（.venv-mineru 缺失）：解析功能暂不可用；安装：uv pip install --python .venv-mineru -e './third_party/mineru[pipeline]' six"
+    warn "本地 MinerU 未安装（.venv-mineru 缺失）：解析功能暂不可用；安装：uv pip install --python .venv-mineru 'mineru[full]==4.0.10'"
   fi
-  wait_http "MinerU ($MINERU_PORT)" "http://localhost:$MINERU_PORT/health" 0 60
+  wait_http "MinerU ($MINERU_PORT)" "http://localhost:$MINERU_PORT/v1/health" 0 60
 fi
 
 # 本地模型服务（vLLM/Infinity）：按 ai.*.base_url 派生的通道后台拉起（幂等，已在运行/下载中

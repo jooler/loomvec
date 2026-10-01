@@ -146,7 +146,7 @@ LoomVec stands on the shoulders of many outstanding open-source projects — sin
 
 **Ingestion & agent runtime**
 
-- [MinerU](https://github.com/opendatalab/MinerU) — PDF/document parsing engine, vendored under `third_party/mineru` (Apache-2.0 with additional terms; see `third_party/mineru/LICENSE.md` and the compliance checklist in `docs/13`). The parser chain is pluggable (MinerU → plain-text fallback by default), so alternative parsers can be swapped in without touching pipeline steps.
+- [MinerU](https://github.com/opendatalab/MinerU) — PDF/document parsing engine, installed as a pinned PyPI dependency (`MINERU_VERSION` in `deploy/compose/mineru/Dockerfile`) in the parser image (Apache-2.0 with additional terms; the license ships with the wheel — see the compliance checklist in `docs/13`). The parser chain is pluggable (MinerU → plain-text fallback by default), so alternative parsers can be swapped in without touching pipeline steps.
 - [deepseek-harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) — the agent runtime behind enterprise chat (MIT); pinned as a git submodule under `third_party/deepseek-harness` for protocol reference, and consumed in production via the `deepseek-harness-sdk` package.
 
 **Data & infrastructure**

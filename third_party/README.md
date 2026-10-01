@@ -1,10 +1,14 @@
 # third_party 目录说明
 
-本目录存放第三方上游项目，采用两种方式：
+本目录存放第三方上游项目（git submodule 形式）：
+
+> **MinerU 不在本目录**：解析引擎自 4.0.10 起以 PyPI 固定版本依赖装入解析镜像
+> （`deploy/compose/mineru/Dockerfile` 的 `MINERU_VERSION`，升级只改这一处）；
+> 项目经 HTTP 调用 mineru-api，不 import 其源码，故不再 vendor。P1~P4 曾以
+> vendor 拷贝引入（3.4.5 → 4.0.10），经核对无本地修改后移出入库。
 
 | 目录 | 方式 | 说明 |
 | --- | --- | --- |
-| `mineru/` | vendor 拷贝 | P1 期引入的 PDF 解析引擎，含裁剪 |
 | `deepseek-harness/` | **git submodule** | P5 起的 dsh 智能体运行时（协议参考与本地联调） |
 
 ## deepseek-harness（dsh）使用与更新

@@ -118,29 +118,26 @@ services:
       start_period: 60s
       retries: 30
 
-  # ---------- MinerU 3.4（文档解析，CPU pipeline 后端） ----------
-  # 镜像从仓库内 vendored 源码构建（third_party/mineru，Apache-2.0+附加条款，见 02 文档合规项）
-  # 首次启动会自动下载 pipeline 模型到 mineru_models 卷（约 1~2GB，需等待）
+  # ---------- MinerU 4.0（文档解析，CPU basic/flash 档位，ONNX 小模型） ----------
+  # 镜像内以 PyPI 固定版本依赖安装 MinerU（版本钉在 mineru/Dockerfile 的
+  # MINERU_VERSION；Apache-2.0+附加条款，见 02/13 文档合规项），源码不入库。
+  # 首次启动会自动下载解析模型到 mineru_models 卷（约 1~2GB，需等待）
   mineru:
     build:
-      context: ../../third_party/mineru
-      dockerfile: ../../deploy/compose/mineru/Dockerfile
-      additional_contexts:
-        # entrypoint.sh 位于 deploy 目录，经命名上下文注入构建
-        deploy: ../../deploy/compose/mineru
-    image: loomvec/mineru:3.4.5-cpu
+      context: ./mineru
+    image: loomvec/mineru:4.0.10-cpu
     container_name: loomvec-mineru
     restart: unless-stopped
     entrypoint: ["/bin/bash", "/app/entrypoint.sh"]
     environment:
       MINERU_MODEL_SOURCE: modelscope
-      MINERU_TOOLS_CONFIG_JSON: /models/mineru.template.json
+      MINERU_HOME: /models
     ports:
       - "127.0.0.1:${MINERU_PORT:-38000}:8000"
     volumes:
       - mineru_models:/models
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/health || exit 1"]
       interval: 15s
       timeout: 5s
       start_period: 600s # 首次启动含模型下载

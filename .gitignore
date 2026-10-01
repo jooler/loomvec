@@ -31,8 +31,8 @@ deploy/compose/.env
 # ZCode 会话本地数据（会话记录/草稿等，仅本机有效）
 .zcode/
 
-# MinerU 本地解析输出
-third_party/mineru/output/
+# MinerU 源码不再入库：解析镜像以 PyPI 固定版本依赖安装（deploy/compose/mineru/Dockerfile）
+third_party/mineru/
 # AGE 扩展源码（构建 postgres-age 镜像前经 `make age-src` 克隆，见 Makefile）
 deploy/compose/postgres-age/age-src/
 # compose 本机开发定制（如用 profile 关掉容器版 MinerU 改走宿主机 GPU；仅本机有效，不入库）

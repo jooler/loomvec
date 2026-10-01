@@ -1,13 +1,17 @@
-# MinerU 3.4 CPU 镜像：pipeline 后端 + mineru-api（FastAPI HTTP 服务）
-# 构建上下文为仓库内 vendored 源码（third_party/mineru）。
-# GPU/VLM 后端见 MinerU 官方 docker/（vllm 基础镜像，需 NVIDIA GPU）。
+# MinerU 4.0 解析镜像：basic/flash 档位（ONNX 小模型）+ mineru-api（V1 HTTP 服务）
+# MinerU 以 PyPI 固定版本依赖安装，源码不入库；升级只改 MINERU_VERSION。
+# License（Apache-2.0+附加条款）随 wheel 分发，条款复核见 docs/13。
+# CPU 上 small_backend 自动解析为 onnx，无需 torch；GPU/VLM 档位
+# （standard/advanced，需 mineru[full]+vllm）见 MinerU 官方 docker/。
 FROM python:3.12-slim
+
+ARG MINERU_VERSION=4.0.10
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    # 模型缓存卷约定：下载缓存与 mineru.json 全部落在 /models（compose 卷 mineru_models）
+    # 模型缓存与 config.yaml 全部落在 /models（compose 卷 mineru_models，经 MINERU_HOME）
+    MINERU_HOME=/models \
     MINERU_MODEL_SOURCE=modelscope \
-    MINERU_TOOLS_CONFIG_JSON=/models/mineru.json \
     MODELSCOPE_CACHE=/models/modelscope \
     HF_HOME=/models/huggingface
 
@@ -19,11 +23,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY . /app/mineru-src
-# six：pipeline 依赖链中部分包运行时隐式依赖，未在 mineru 元数据中声明
-RUN pip install --no-cache-dir "/app/mineru-src[pipeline]" six
+RUN pip install --no-cache-dir "mineru==${MINERU_VERSION}"
 
-COPY --from=deploy entrypoint.sh /app/entrypoint.sh
+COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8000

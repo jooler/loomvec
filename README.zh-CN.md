@@ -144,7 +144,7 @@ LoomVec 站在众多优秀开源项目的肩膀上，向它们的作者与社区
 
 **摄取与智能体运行时**
 
-- [MinerU](https://github.com/opendatalab/MinerU) — PDF/文档解析引擎，vendored 于 `third_party/mineru`（Apache-2.0 + 附加条款，见 `third_party/mineru/LICENSE.md` 与 `docs/13` 合规核对清单）。解析器链可插拔（默认 MinerU → 纯文本兜底），替换解析器无需改动管线步骤。
+- [MinerU](https://github.com/opendatalab/MinerU) — PDF/文档解析引擎，以 PyPI 固定版本依赖装入解析镜像（版本钉在 `deploy/compose/mineru/Dockerfile` 的 `MINERU_VERSION`；Apache-2.0 + 附加条款，License 随 wheel 分发，见 `docs/13` 合规核对清单）。解析器链可插拔（默认 MinerU → 纯文本兜底），替换解析器无需改动管线步骤。
 - [deepseek-harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) — 企业对话背后的智能体运行时（MIT）；以 git submodule 形式固定在 `third_party/deepseek-harness` 作协议参考，生产运行时经 `deepseek-harness-sdk` 包接入。
 
 **数据与基础设施**
