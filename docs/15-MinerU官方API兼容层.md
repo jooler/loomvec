@@ -7,8 +7,8 @@
 ## 一、背景
 
 loomvec 的解析能力由自建 MinerU 提供（`deploy/compose` 中的 `mineru` 服务，
-官方 `mineru-api`，端口 38000，仅内网），此前唯一调用方是摄取管线
-（`MineruClient.parse()` → `POST /file_parse`，worker 进程内）。
+官方 `mineru-api` 4.x，V1 HTTP 接口，端口 38000，仅内网），此前唯一调用方是
+摄取管线（`MineruClient.parse()` → V1 uploads/parse-jobs 工作流，worker 进程内）。
 
 本阶段把同一能力以 **mineru.net 官方「精准解析 API」（v4）** 的形态经 loomvec
 API（38080）对外开放（`services/api/src/loomvec/api/routes/mineru_compat.py`）：
@@ -53,7 +53,7 @@ for url, path in zip(r["file_urls"], ["demo.pdf"]):
 # 轮询批量结果（状态：waiting-file / pending / running / done / failed）
 res = requests.get(f"{BASE}/api/v4/extract-results/batch/{r['batch_id']}", headers=headers).json()
 zip_url = res["data"]["extract_result"][0]["full_zip_url"]   # done 时返回
-requests.get(zip_url)                                        # 完整产物 zip（md/content_list/images）
+requests.get(zip_url)                                        # 完整产物 zip（markdown/structured_content/images）
 
 # 流程二：单文件 URL 解析
 task = requests.post(f"{BASE}/api/v4/extract/task", headers=headers,
@@ -86,22 +86,22 @@ status = requests.get(f"{BASE}/api/v4/extract/task/{task['task_id']}", headers=h
 
 ### 请求参数映射
 
-| 官方参数 | 内部 mineru-api | 说明 |
+| 官方参数 | 内部 mineru-api（4.x V1） | 说明 |
 |---|---|---|
-| `model_version=pipeline` | `backend=pipeline` | 默认值（官方默认 vlm，见「差异」） |
-| `model_version=vlm` | `backend=vlm-*` | 仅当部署配置 `mineru.backend` 为 VLM 时接受 |
-| `is_ocr=true` | `parse_method=ocr` | 按文件粒度 |
-| `language` | `lang_list=[language]` | — |
-| `enable_formula` / `enable_table` | `formula_enable` / `table_enable` | 批次级 |
-| `page_range` | `start_page_id` / `end_page_id` | 仅 `'N'` / `'N-M'` |
+| `model_version=pipeline` | `tier=basic` | 默认值（官方默认 vlm，见「差异」） |
+| `model_version=vlm` | `tier=standard/advanced` | 部署档位为 VLM 档时按原语义映射，否则降级为配置档位 |
+| `is_ocr=true` | `ocr_mode=ocr` | 按文件粒度 |
+| `language` | — | 接受但不透传：4.x 解析自动检测语言，无对应任务字段 |
+| `enable_formula` / `enable_table` | — | 接受但不透传：4.x 无对应任务字段 |
+| `page_range` | `page_range` | 官方语法原样透传（`'N'` / `'N-M'` / `'rN'` / 逗号多段 / `'all'`） |
 | `data_id` | — | 原样回显在批量结果中 |
 
 ### 产物
 
-内部任务以 `response_format_zip=true` 提交，`done` 后签发一次性下载令牌，
-`GET /api/v4/extract-results/file/{token}` 向内部 mineru-api
-`GET /tasks/{task_id}/result` 拉取完整产物 zip（markdown + content_list + images）
-原样流式返回——对齐官方 `full_zip_url` 的完整结果包语义。
+内部任务以 zip 产物格式提交（V1 `output_formats=["zip"]`），`done` 后签发
+一次性下载令牌，`GET /api/v4/extract-results/file/{token}` 向内部 mineru-api
+经 Files API 拉取完整产物 zip（markdown + structured_content + middle_json +
+images）原样流式返回——对齐官方 `full_zip_url` 的完整结果包语义。
 
 ## 五、实现要点
 
@@ -113,8 +113,9 @@ loomvec API :38080  services/api/src/loomvec/api/routes/mineru_compat.py
     │  /api/v4/*（include_in_schema=False：兼容面不进 loomvec 契约/SDK）
     │  状态：Redis mineru_compat:{task|batch|upload|download}:*（批次 72h / 令牌 24h）
     │  文件中转：对象存储 derived 桶 mineru-compat/{batch}/{index}（提交成功即删）
-    ▼  复用 MineruClient（services/core/.../mineru_client.py）新增异步任务方法
-自建 MinerU :38000  POST /tasks → GET /tasks/{id} → GET /tasks/{id}/result(zip)
+    ▼  复用 MineruClient（services/core/.../mineru_client.py）异步任务方法
+自建 MinerU :38000  V1：POST /v1/uploads(+content/complete) → POST /v1/parse/jobs
+                    → GET /v1/parse/jobs/{id} → GET /v1/files/{file_id}/content(zip)
 ```
 
 - **惰性轮询**：客户端查询时才向内部 mineru-api 拉一次实时状态，无后台轮询
@@ -132,9 +133,10 @@ loomvec API :38080  services/api/src/loomvec/api/routes/mineru_compat.py
 
 | 项 | 说明 |
 |---|---|
-| `model_version` 默认值 | loomvec 默认 `pipeline`（官方默认 `vlm`）；显式 `vlm` 在配置了 VLM 后端时按原语义处理，pipeline-only 部署上**降级为配置后端**（服务端记 `mineru_compat_vlm_degraded` 告警日志）而非 400——第三方客户端普遍携带官方默认值，硬拒绝会破坏开箱兼容 |
+| `model_version` 默认值 | loomvec 默认 `pipeline`（官方默认 `vlm`）；显式 `vlm` 在部署配置为 standard/advanced 档位时按原语义映射，无 VLM 档位部署上**降级为配置档位**（服务端记 `mineru_compat_vlm_degraded` 告警日志）而非 400——第三方客户端普遍携带官方默认值，硬拒绝会破坏开箱兼容 |
 | `model_version=MinerU-HTML` | 云端专属能力，不支持（400） |
-| `page_range` 多段语法 | 官方支持 `'1-3,5,8-10'`，自建 MinerU 仅有起止页概念，仅支持 `'N'` / `'N-M'` |
+| `language` | 接受但不透传：MinerU 4.x 解析自动检测语言，V1 任务无语言字段 |
+| `enable_formula` / `enable_table` | 接受但不透传：V1 任务无对应字段 |
 | Agent 轻量解析 API（`/api/v1/agent/*`，免鉴权） | 不提供：企业平台解析入口必须鉴权，且路径与 loomvec 自身 agent 路由冲突 |
 | 结果保留时长 | 批次/任务记录 72h、上传/下载令牌 24h（官方结果保留 3 天，语义一致） |
 | `extract_progress` | 官方运行中任务返回页级进度；自建 mineru-api 无此数据，不返回 |
@@ -155,9 +157,9 @@ InkCop（Qt 桌面端）经其 MinerU 设置的 `baseUrl` 直连本兼容层（�
 
 ## 七、测试
 
-`services/api/tests/test_mineru_compat.py`（18 例，免 infra：Redis / 对象存储 /
+`services/api/tests/test_mineru_compat.py`（19 例，免 infra：Redis / 对象存储 /
 内部 mineru-api 全打桩）覆盖：单 URL 任务全流程（提交→轮询→zip 下载）、上传
 批量全流程（申请→直传→自动解析→轮询）、重复直传 409、空/超限请求体、
-`model_version` 降级与 `page_range` 校验、下载失败标记、租户隔离、Bearer 直带
-API Key 的鉴权映射、无凭证 401 与凭证无效 401 的消息区分、`/api/v4` 不进
-OpenAPI 契约。
+`model_version` 档位映射（默认 basic、vlm 原样/降级）与 `page_range` 校验、
+下载失败标记、租户隔离、Bearer 直带 API Key 的鉴权映射、无凭证 401 与凭证
+无效 401 的消息区分、`/api/v4` 不进 OpenAPI 契约。

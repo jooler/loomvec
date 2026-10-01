@@ -133,7 +133,7 @@ async def test_extract_task_submit_then_poll_then_download(env, monkeypatch):
     await mc.drain_background_tasks()
     assert len(e.mineru.submitted) == 1
     sub = e.mineru.submitted[0]
-    assert sub["backend"] == "pipeline"
+    assert sub["tier"] == "basic"
     assert sub["filename"] == "doc.pdf"
     assert sub["mime"] == "application/pdf"
 
@@ -171,8 +171,8 @@ async def test_extract_task_rejects_mineru_html_model(env):
     assert "MinerU-HTML" in r.json()["msg"]
 
 
-async def test_extract_task_vlm_degrades_to_configured_backend(env, monkeypatch):
-    """官方默认值 vlm 在 pipeline-only 部署上降级为配置后端（而非 400）。"""
+async def test_extract_task_vlm_degrades_to_configured_tier(env, monkeypatch):
+    """官方默认值 vlm 在无 VLM 档位部署上降级为配置档位（而非 400）。"""
     e, client = env
     _stub_download(monkeypatch)
     r = await client.post(
@@ -180,7 +180,26 @@ async def test_extract_task_vlm_degrades_to_configured_backend(env, monkeypatch)
     )
     assert r.status_code == 200
     await mc.drain_background_tasks()
-    assert e.mineru.submitted[0]["backend"] == "pipeline"  # settings.mineru.backend 默认值
+    assert e.mineru.submitted[0]["tier"] == "basic"  # settings.mineru.tier 默认值
+
+
+async def test_extract_task_vlm_uses_configured_vlm_tier(env, monkeypatch):
+    """部署档位为 standard/advanced 时，vlm 原样映射到配置档位。"""
+    import loomvec.core.config as core_config
+    from loomvec.core.config import AppConfig, MineruSettings
+
+    e, client = env
+    monkeypatch.setattr(
+        core_config,
+        "get_app_config",
+        lambda: AppConfig(mineru=MineruSettings(tier="advanced")),
+    )
+    _stub_download(monkeypatch)
+    await client.post(
+        "/api/v4/extract/task", json={"url": "https://example.com/a.pdf", "model_version": "vlm"}
+    )
+    await mc.drain_background_tasks()
+    assert e.mineru.submitted[0]["tier"] == "advanced"
 
 
 async def test_extract_task_page_range_mapping(env, monkeypatch):
@@ -191,13 +210,22 @@ async def test_extract_task_page_range_mapping(env, monkeypatch):
         json={"url": "https://example.com/a.pdf", "page_range": "2-5"},
     )
     await mc.drain_background_tasks()
-    assert (e.mineru.submitted[0]["start_page_id"], e.mineru.submitted[0]["end_page_id"]) == (2, 5)
+    assert e.mineru.submitted[0]["page_range"] == "2-5"
+
+    # 官方逗号多段 / 倒数页语法自 4.0 起原生支持，直接透传
+    r = await client.post(
+        "/api/v4/extract/task",
+        json={"url": "https://example.com/a.pdf", "page_range": "1-2,4,r3-r1"},
+    )
+    assert r.status_code == 200
+    await mc.drain_background_tasks()
+    assert e.mineru.submitted[-1]["page_range"] == "1-2,4,r3-r1"
 
     r = await client.post(
         "/api/v4/extract/task",
-        json={"url": "https://example.com/a.pdf", "page_range": "1-2,4"},
+        json={"url": "https://example.com/a.pdf", "page_range": "abc"},
     )
-    assert r.status_code == 400  # 官方逗号多段语法不支持，须显式报错
+    assert r.status_code == 400  # 非法语法仍须显式报错
 
 
 async def test_extract_task_download_failure_marks_failed(env, monkeypatch):
@@ -292,7 +320,7 @@ async def test_batch_upload_submit_failure_marks_file_failed(env):
     assert extract[0]["err_msg"]
 
 
-async def test_batch_is_ocr_maps_parse_method(env):
+async def test_batch_is_ocr_maps_ocr_mode(env):
     e, client = env
     r = await client.post(
         "/api/v4/file-urls/batch",
@@ -301,7 +329,7 @@ async def test_batch_is_ocr_maps_parse_method(env):
     upload_path = r.json()["data"]["file_urls"][0].removeprefix("http://testserver")
     await client.put(upload_path, content=b"%PDF-scan")
     await mc.drain_background_tasks()
-    assert e.mineru.submitted[0]["parse_method"] == "ocr"
+    assert e.mineru.submitted[0]["ocr_mode"] == "ocr"
 
 
 async def test_batch_rejects_empty_and_oversized_file_list(env):

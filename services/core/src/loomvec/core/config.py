@@ -113,17 +113,20 @@ class StorageSettings(BaseModel):
 
 
 class MineruSettings(BaseModel):
-    """MinerU 解析服务（mineru-api，HTTP）。"""
+    """MinerU 解析服务（mineru-api 4.x，HTTP V1 接口）。"""
 
     base_url: str = "http://localhost:38000"
     # 大 PDF 首次/冷启动解析可能超过 10 分钟（模型加载 + 版面推理）
     timeout_seconds: float = 1800.0
-    backend: Literal["pipeline", "vlm-transformers", "vlm-vllm-engine"] = "pipeline"
+    # 解析质量档位（4.0 tiers）：flash=轻量文本抽取、basic=本地小模型、
+    # standard/advanced=VLM。CPU 部署的 mineru-api 以 --tier basic 启动，
+    # 可用档位为 flash/basic；请求 standard/advanced 会被服务端 400。
+    tier: Literal["flash", "basic", "standard", "advanced"] = "basic"
     # 是否对外暴露 MinerU 官方 API 兼容层（/api/v4，mineru.net 精准解析 API 同构）
     compat_enabled: bool = True
     # 部署路线（./deploy.sh 写入、./dev.sh start 依此路由，应用本身不消费）：
-    # cpu=compose 容器版（loomvec/mineru:3.4.5-cpu，默认）；gpu=宿主机脚本
-    # scripts/start-mineru-gpu.sh（需自建 .venv-mineru，见脚本头）
+    # cpu=compose 容器版（镜像版本见 deploy/compose/mineru/Dockerfile，默认）；
+    # gpu=宿主机脚本 scripts/start-mineru-gpu.sh（需自建 .venv-mineru，见脚本头）
     device: Literal["cpu", "gpu"] = "cpu"
 
 
@@ -259,7 +262,7 @@ class SearchSettings(BaseModel):
 class PipelineSettings(BaseModel):
     """P1 管线参数：分片钳制、LLM 分批、嵌入批处理、截断上限、可选摘要。"""
 
-    parser_version: str = "mineru-3.4.5"
+    parser_version: str = "mineru-4.0.10"
     # P3 起分片与图谱抽取合并为单次 LLM 调用（03 文档 §3.2），prompt 版本升级；
     # 缓存键含此版本 → 升级后旧资产重跑会重新计费抽取
     prompt_version: str = "chunk-graph-v2"

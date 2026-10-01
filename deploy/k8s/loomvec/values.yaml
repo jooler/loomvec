@@ -88,7 +88,7 @@ appConfig:
       model: ""
   mineru:
     base_url: ""
-    backend: pipeline
+    tier: basic
 
 # ---------- 敏感配置（Secret 注入） ----------
 secret:

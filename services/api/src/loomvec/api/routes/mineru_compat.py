@@ -20,17 +20,18 @@ loomvec API Key（或平台 Bearer JWT）即可无缝迁移，请求/响应信�
   X-API-Key（loomvec 惯例）与平台 JWT 同样接受。多租户隔离沿用 identity 体系。
 - 状态机：waiting-file / pending / running / done / failed（与官方一致）；
   内部 mineru-api 任务状态 pending/processing/completed/failed 一一映射。
-- 产物：内部任务以 response_format_zip=true 提交，结果端点流式转发完整 zip
-  （markdown + content_list + images），对齐官方 full_zip_url。
+- 产物：内部任务以 zip 产物格式提交，结果端点流式转发完整 zip
+  （markdown + structured_content + middle_json + images），对齐官方 full_zip_url。
 - 状态存 Redis（mineru_compat: 前缀，批次 72h / 上传下载令牌 24h）；
   上传文件落对象存储 derived 桶，内部任务提交成功后即删除。
 - 轮询为惰性拉取：客户端查询时才向内部 mineru-api 查一次实时状态，
   无后台轮询进程。
 
 与官方的差异（文档「差异与局限」节）：
-- model_version 默认 pipeline（官方默认 vlm）；vlm 在 pipeline-only 部署上
-  降级为配置后端（服务端告警日志），MinerU-HTML（云端专属）不支持；
-- page_range 仅支持 'N' / 'N-M'（官方逗号多段语法依赖云端分片）；
+- model_version 默认 pipeline（官方默认 vlm）；pipeline 映射为 basic 档位，
+  vlm 在无 VLM 档位部署上降级为配置档位（服务端告警日志），
+  MinerU-HTML（云端专属）不支持；
+- language 参数接受但不透传：MinerU 4.x 解析自动检测语言，无对应任务字段；
 - Agent 轻量解析 API（免鉴权）不提供——企业平台解析入口必须鉴权。
 """
 
@@ -237,39 +238,44 @@ def _name_from_url(url: str) -> str:
     return name or "document"
 
 
-def _resolve_backend(model_version: str | None, settings: Settings) -> str:
+def _resolve_tier(model_version: str | None, settings: Settings) -> str:
+    """官方 model_version → MinerU 4.x 解析档位（tier）。"""
     mv = (model_version or "pipeline").strip() or "pipeline"
     if mv == "pipeline":
-        return "pipeline"
+        return "basic"
     if mv == "vlm":
-        configured = settings.mineru.backend
-        if configured.startswith("vlm"):
+        configured = settings.mineru.tier
+        if configured in ("standard", "advanced"):
             return configured
         # 官方云端 vlm 恒可用，第三方客户端普遍携带该默认值（如 InkCop 存量配置）；
-        # 自建 pipeline-only 部署选择降级为配置后端而非 400，保证兼容面开箱可用。
-        logger.warning("mineru_compat_vlm_degraded", model_version=mv, resolved_backend=configured)
+        # 自建无 VLM 档位部署选择降级为配置档位而非 400，保证兼容面开箱可用。
+        logger.warning("mineru_compat_vlm_degraded", model_version=mv, resolved_tier=configured)
         return configured
     raise MineruCompatError(
         400, f"不支持的 model_version: {mv}（MinerU-HTML 为云端专属，自建 MinerU 不支持）"
     )
 
 
-def _parse_page_range(page_range: str | None) -> tuple[int, int] | None:
-    if not page_range:
+# 官方 page_range 语法（与 MinerU 4.x 一致）：'all' 或逗号分隔的
+# N / N-M / rN / rN-rM（rN 为倒数第 N 页）；倒序区间非法，越界页忽略。
+_PAGE_RANGE_SEGMENT = re.compile(r"(r?[1-9][0-9]*)(?:\s*-\s*(r?[1-9][0-9]*))?")
+
+
+def _validate_page_range(page_range: str | None) -> str | None:
+    if page_range is None:
         return None
     s = page_range.strip()
-    if re.fullmatch(r"\d+", s):
-        n = int(s)
-        return n, n
-    m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", s)
-    if m:
-        start, end = int(m.group(1)), int(m.group(2))
-        if start > end:
-            raise MineruCompatError(400, f"page_range 起止倒置：{page_range}")
-        return start, end
-    raise MineruCompatError(
-        400, f"page_range 仅支持 'N' 或 'N-M'（官方逗号多段语法自建 MinerU 不支持）：{page_range}"
-    )
+    if not s:
+        return None
+    if s == "all":
+        return s
+    for part in s.split(","):
+        m = _PAGE_RANGE_SEGMENT.fullmatch(part.strip())
+        if m is None:
+            raise MineruCompatError(
+                400, f"page_range 语法非法（官方语法：'1-5,8,r3-r1' 或 'all'）：{page_range}"
+            )
+    return s
 
 
 def _now_iso() -> str:
@@ -320,24 +326,18 @@ async def _submit_to_mineru(
     file_name: str,
     data: bytes,
     mime: str,
-    backend: str,
+    tier: str,
     is_ocr: bool,
-    language: str | None,
-    enable_formula: bool,
-    enable_table: bool,
-    page_range: tuple[int, int] | None,
+    page_range: str | None,
 ) -> str:
+    # language 接受但不透传：MinerU 4.x 自动检测语言，无对应任务字段
     return await mineru.submit_task(
         file_name,
         data,
         mime,
-        backend=backend,
-        parse_method="ocr" if is_ocr else None,
-        language=language,
-        formula_enable=enable_formula,
-        table_enable=enable_table,
-        start_page_id=page_range[0] if page_range else None,
-        end_page_id=page_range[1] if page_range else None,
+        tier=tier,
+        ocr_mode="ocr" if is_ocr else "auto",
+        page_range=page_range,
     )
 
 
@@ -346,12 +346,9 @@ async def _bg_url_file(
     index: int | None,
     url: str,
     *,
-    backend: str,
+    tier: str,
     is_ocr: bool,
-    language: str | None,
-    enable_formula: bool,
-    enable_table: bool,
-    page_range: tuple[int, int] | None,
+    page_range: str | None,
     redis: Any,
     mineru: MineruClient,
 ) -> None:
@@ -363,11 +360,8 @@ async def _bg_url_file(
             file_name=name,
             data=data,
             mime=mime,
-            backend=backend,
+            tier=tier,
             is_ocr=is_ocr,
-            language=language,
-            enable_formula=enable_formula,
-            enable_table=enable_table,
             page_range=page_range,
         )
         record = (await _load(redis, key)) or {}
@@ -415,11 +409,8 @@ async def _bg_upload_file(
             file_name=file["file_name"],
             data=data,
             mime=mime,
-            backend=batch["backend"],
+            tier=batch["tier"],
             is_ocr=bool(file.get("is_ocr")),
-            language=batch.get("language"),
-            enable_formula=bool(batch.get("enable_formula", True)),
-            enable_table=bool(batch.get("enable_table", True)),
             page_range=None,
         )
         file["internal_task_id"] = internal_id
@@ -559,8 +550,8 @@ async def create_extract_task(
     """单文件 URL 解析（官方 POST /api/v4/extract/task）。"""
     if not body.url.lower().startswith(("http://", "https://")):
         raise MineruCompatError(400, "url 必须为 http(s) 地址")
-    backend = _resolve_backend(body.model_version, settings)
-    page_range = _parse_page_range(body.page_range)
+    tier = _resolve_tier(body.model_version, settings)
+    page_range = _validate_page_range(body.page_range)
 
     task_id = uuid.uuid4().hex
     record: dict[str, Any] = {
@@ -581,11 +572,8 @@ async def create_extract_task(
             _task_key(task_id),
             None,
             body.url,
-            backend=backend,
+            tier=tier,
             is_ocr=body.is_ocr,
-            language=body.language,
-            enable_formula=body.enable_formula,
-            enable_table=body.enable_table,
             page_range=page_range,
             redis=redis,
             mineru=mineru,
@@ -633,7 +621,7 @@ async def create_batch_upload(
     """
     if not body.files or len(body.files) > _MAX_BATCH_FILES:
         raise MineruCompatError(400, f"files 数量需为 1~{_MAX_BATCH_FILES}")
-    backend = _resolve_backend(body.model_version, settings)
+    tier = _resolve_tier(body.model_version, settings)
 
     batch_id = uuid.uuid4().hex
     file_urls: list[str] = []
@@ -668,11 +656,8 @@ async def create_batch_upload(
         "kind": "upload",
         "tenant_id": identity.tenant_id,
         "created_by": identity.user_id,
-        "backend": backend,
+        "tier": tier,
         "model_version": (body.model_version or "pipeline").strip() or "pipeline",
-        "language": body.language,
-        "enable_formula": body.enable_formula,
-        "enable_table": body.enable_table,
         "files": files,
         "created_at": _now_iso(),
     }
@@ -739,7 +724,7 @@ async def create_url_batch(
     """URL 批量解析（官方 POST /api/v4/extract/task/batch）。"""
     if not body.files or len(body.files) > _MAX_BATCH_FILES:
         raise MineruCompatError(400, f"files 数量需为 1~{_MAX_BATCH_FILES}")
-    backend = _resolve_backend(body.model_version, settings)
+    tier = _resolve_tier(body.model_version, settings)
     for i, spec in enumerate(body.files):
         if not spec.url.lower().startswith(("http://", "https://")):
             raise MineruCompatError(400, f"files[{i}].url 必须为 http(s) 地址")
@@ -762,11 +747,8 @@ async def create_url_batch(
         "kind": "url",
         "tenant_id": identity.tenant_id,
         "created_by": identity.user_id,
-        "backend": backend,
+        "tier": tier,
         "model_version": (body.model_version or "pipeline").strip() or "pipeline",
-        "language": body.language,
-        "enable_formula": body.enable_formula,
-        "enable_table": body.enable_table,
         "files": files,
         "created_at": _now_iso(),
     }
@@ -777,11 +759,8 @@ async def create_url_batch(
                 _batch_key(batch_id),
                 i,
                 spec.url,
-                backend=backend,
+                tier=tier,
                 is_ocr=spec.is_ocr,
-                language=body.language,
-                enable_formula=body.enable_formula,
-                enable_table=body.enable_table,
                 page_range=None,
                 redis=redis,
                 mineru=mineru,

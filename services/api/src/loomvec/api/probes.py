@@ -57,17 +57,14 @@ async def check_worker(redis_client) -> dict[str, Any]:
 
 
 async def check_mineru(settings: Settings) -> dict[str, Any]:
-    """MinerU 解析服务连通性（轻量 GET /health 或根路径）。"""
+    """MinerU 解析服务连通性（GET /v1/health：200=就绪，503=模型未就绪）。"""
     import httpx
 
     base = settings.mineru.base_url.rstrip("/")
     # 内网服务直连，不走环境代理（trust_env=False）
     async with httpx.AsyncClient(timeout=3.0, trust_env=False) as client:
-        try:
-            resp = await client.get(f"{base}/health")
-        except httpx.HTTPStatusError:
-            resp = await client.get(base)
-    return {"ok": resp.status_code < 500, "status_code": resp.status_code}
+        resp = await client.get(f"{base}/v1/health")
+    return {"ok": resp.status_code == 200, "status_code": resp.status_code}
 
 
 async def safe(coro) -> dict[str, Any]:
