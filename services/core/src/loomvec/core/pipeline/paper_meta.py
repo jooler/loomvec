@@ -71,9 +71,7 @@ class PaperMeta:
     @property
     def usable(self) -> bool:
         # 文件名可省略缺段；有标题 + 任一辅助字段即可改名（不发明字段）
-        return bool(self.title) and bool(
-            self.year or self.journal or self.first_author or self.doi
-        )
+        return bool(self.title) and bool(self.year or self.journal or self.first_author or self.doi)
 
 
 # ---------- 来源 1：DOI → Crossref ----------
@@ -431,7 +429,8 @@ async def extract_paper_meta(
 ) -> PaperMeta | None:
     """Crossref → LLM → PDF Info。
 
-    仅 Markdown 内 DOI（可能来自参考文献）须标题印证；PDF Subject/doi 字段视为出版社写入，可直接采信 Crossref。
+    仅 Markdown 内 DOI（可能来自参考文献）须标题印证；
+    PDF Subject/doi 字段视为出版社写入，可直接采信 Crossref。
     空 head 或 LLM 失败时，pdf_info 兜底须 ``_pdf_info_alone_ok``（有 DOI 或年+刊）。
     """
     cfg = deps.settings.pipeline
@@ -573,9 +572,7 @@ async def auto_rename_asset(
                 )
 
         # Markdown 为空时仍可用 Subject DOI 走 Crossref，或带 DOI/年+刊的 pdf_info 兜底
-        meta = (
-            await extract_paper_meta(deps, head, pdf_info) if (head or pdf_info) else None
-        )
+        meta = await extract_paper_meta(deps, head, pdf_info) if (head or pdf_info) else None
 
         async with deps.session_factory() as session:
             asset, version = await _load(session, asset_id)

@@ -66,7 +66,9 @@ async def list_assets(
         default=None, description="目录浏览过滤：'root' 仅根目录；uuid 仅该文件夹内；缺省不过滤"
     ),
     q: str | None = Query(
-        default=None, max_length=128, description="名称过滤（大小写不敏感包含；与 folder_id 可组合）"
+        default=None,
+        max_length=128,
+        description="名称过滤（大小写不敏感包含；与 folder_id 可组合）",
     ),
     identity: Identity = Depends(require_scope("read")),
     session: AsyncSession = Depends(get_session),

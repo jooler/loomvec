@@ -535,7 +535,7 @@ async def test_auto_rename_force_reloads_pdf_info_before_extract(monkeypatch):
 async def test_auto_rename_force_preserves_published_online_when_llm_fallback(monkeypatch):
     """force 走 LLM 时不应冲掉先前 Crossref 写入的 published_online。"""
     title = "Deep Residual Learning for Image Recognition"
-    asset_id, asset, version, deps, ai, _ = _force_rename_fixture(title, "no-doi-here")
+    asset_id, asset, version, deps, _ai, _ = _force_rename_fixture(title, "no-doi-here")
     asset.asset_meta["paper"] = {
         "checksum": "other",
         "original_name": "upload.pdf",

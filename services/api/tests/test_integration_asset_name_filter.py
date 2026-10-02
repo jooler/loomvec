@@ -15,6 +15,9 @@ pytest.importorskip("testcontainers", reason="testcontainers 未安装")
 
 pytestmark = [pytest.mark.integration]
 
+# 名称过滤所需的最小表集（资产外键链 + 分类）
+_TABLES = {"tenant", "user", "space", "space_member", "asset_folder", "asset", "category"}
+
 
 @pytest.fixture()
 async def db(pg_url):
@@ -30,11 +33,7 @@ async def db(pg_url):
         await conn.run_sync(
             lambda c: Base.metadata.create_all(
                 c,
-                tables=[
-                    t
-                    for t in Base.metadata.sorted_tables
-                    if t.key in {"tenant", "user", "space", "space_member", "asset_folder", "asset", "category"}
-                ],
+                tables=[t for t in Base.metadata.sorted_tables if t.key in _TABLES],
             )
         )
 
@@ -125,9 +124,7 @@ async def test_name_like_filters_case_insensitive(db):
 
     async with maker() as session:
         await _seed_assets(session, ids)
-        rows = await AssetRepo(session).list_in_spaces(
-            [ids["space"]], limit=50, name_like="inkcop"
-        )
+        rows = await AssetRepo(session).list_in_spaces([ids["space"]], limit=50, name_like="inkcop")
         assert sorted(await _names(rows)) == ["InkCop 手册", "inkcop-release-notes"]
 
 

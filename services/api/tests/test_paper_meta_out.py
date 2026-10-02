@@ -48,7 +48,4 @@ def test_paper_meta_out_falls_back_when_only_invalid_online():
 
 
 def test_paper_meta_out_hides_explicit_non_paper():
-    assert (
-        paper_meta_out({"paper": {"is_paper": False, "published_online": "2016-06-27"}})
-        is None
-    )
+    assert paper_meta_out({"paper": {"is_paper": False, "published_online": "2016-06-27"}}) is None
