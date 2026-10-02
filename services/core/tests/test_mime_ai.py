@@ -235,3 +235,15 @@ def test_provider_headers_survive_admin_overrides():
     merged = apply_ai_overrides(ai, {"ai.llm.api_key": "sk-db"})
     assert merged.llm.api_key == "sk-db"
     assert merged.llm.headers == {"x-opencode-session": "s"}
+
+
+def test_llm_prompt_over_limit_rejected_without_request():
+    # 提示词超 llm.max_prompt_chars：不发请求（不计费）、抛 ValidationError（不触发重试）
+    seen: list[httpx.Headers] = []
+    gw = _header_capture_gateway(seen, max_prompt_chars=100)
+    with pytest.raises(ValidationError):
+        asyncio.run(gw.complete([{"role": "user", "content": "x" * 101}]))
+    with pytest.raises(ValidationError):
+        asyncio.run(_drain(gw.stream([{"role": "user", "content": "x" * 101}])))
+    assert seen == []
+    assert asyncio.run(gw.complete([{"role": "user", "content": "x" * 100}])) == "pong"

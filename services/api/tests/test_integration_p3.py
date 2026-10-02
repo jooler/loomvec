@@ -69,6 +69,8 @@ def deps() -> PipelineDeps:
     settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:35433/loomvec"
     settings.ai.mock = True
     settings.graph.entity_link_threshold = -1.0  # mock 向量无语义：强制链接走通全链路
+    settings.graph.extraction_enabled = True  # 本测试断言 graph_status=ready，显式开（不依赖
+    # config/loomvec.json 当前值——pipeline/graph 段是应用参数，_env_file=None 不隔离这层）
     settings.search.graph_enabled = True
     from loomvec.core.ai import AiGateway
     from loomvec.core.db.base import create_engine_and_sessionmaker

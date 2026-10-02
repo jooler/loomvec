@@ -10,7 +10,8 @@
       "json_retries": 2,
       "timeout_seconds": 120.0,
       "api_style": "openai",
-      "headers": {}
+      "headers": {},
+      "max_prompt_chars": 100000
     },
     "embedding": {
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -50,6 +51,8 @@
     "base_url": "http://localhost:38000",
     "tier": "basic",
     "timeout_seconds": 1800.0,
+    "max_concurrency": 1,
+    "busy_retry_seconds": 30.0,
     "compat_enabled": true,
     "device": "cpu"
   },
@@ -66,8 +69,9 @@
     "filter_scan_limit": 10000
   },
   "pipeline": {
-    "parser_version": "mineru-4.0.10",
+    "parser_version": "mineru-4.0.10-zip",
     "prompt_version": "chunk-graph-v2",
+    "chunk_strategy": "llm",
     "chunk_min_chars": 120,
     "chunk_max_chars": 2000,
     "llm_batch_chars": 6000,

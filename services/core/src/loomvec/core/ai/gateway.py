@@ -135,6 +135,14 @@ class AiGateway:
             headers["Authorization"] = f"Bearer {cfg.api_key}"
         return headers
 
+    def _check_prompt_size(self, messages: list[dict[str, str]]) -> None:
+        """LLM 提示词上限闸门：超 llm.max_prompt_chars 不发请求（不计费、不重试）。"""
+        limit = self._settings.llm.max_prompt_chars
+        size = sum(len(str(m.get("content") or "")) for m in messages)
+        if size > limit:
+            logger.warning("llm_prompt_rejected", chars=size, limit=limit)
+            raise ValidationError("LLM 提示词超过上限，未发送", chars=size, limit=limit)
+
     async def _post(self, channel: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         cfg = self._provider(channel)
         headers = self._headers(cfg)
@@ -261,6 +269,7 @@ class AiGateway:
         if self._mock is not None:
             return self._mock.complete("\n".join(m.get("content", "") for m in messages))
 
+        self._check_prompt_size(messages)
         cfg = self._settings.llm
         payload: dict[str, Any] = {
             "model": cfg.model,
@@ -310,6 +319,7 @@ class AiGateway:
                 await asyncio.sleep(0)
             return
 
+        self._check_prompt_size(messages)
         cfg = self._settings.llm
         payload: dict[str, Any] = {
             "model": cfg.model,

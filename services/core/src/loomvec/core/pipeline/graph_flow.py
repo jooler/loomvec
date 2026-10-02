@@ -24,7 +24,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.core.constants import EVENT_GRAPH_READY, GRAPH_NAME
-from loomvec.core.db.models import Asset, AssetVersion, Entity, GraphStatus, SemanticUnit
+from loomvec.core.db.models import Asset, AssetVersion, Entity, GraphStatus, SemanticUnit, Space
 from loomvec.core.events import publish_event
 from loomvec.core.graph.age import AgeStore, GraphEdge, GraphNode
 from loomvec.core.graph.ontology import (
@@ -32,7 +32,11 @@ from loomvec.core.graph.ontology import (
     entity_key,
     normalize_entity_name,
 )
-from loomvec.core.pipeline.base import PipelineDeps
+from loomvec.core.pipeline.base import (
+    PipelineDeps,
+    resolve_chunk_strategy,
+    resolve_graph_extraction,
+)
 from loomvec.core.pipeline.mime import is_media_mime
 
 logger = structlog.get_logger("loomvec.pipeline.graph")
@@ -452,6 +456,20 @@ class GraphStep:
             asset.graph_status = GraphStatus.SKIPPED
             await session.flush()
             return {"skipped": True, "reason": "graph_disabled"}
+        if asset.graph_status == GraphStatus.SKIPPED:
+            # chunk 步骤曾按当时的空间覆盖/chunk_strategy 判定不产出图谱数据；
+            # 但该判定可能已过期（如空间事后把 graph_extraction 改回 on 并单独
+            # 重跑 graph 步）。按当前生效配置复核，仍该跳过才尊重，否则继续往下
+            # 走正常抽取逻辑——没有抽取缓存时会落到 pending_retry，提示需要先
+            # 从 chunk 步重跑，而不是静默卡在 skipped。
+            space = (
+                await session.execute(select(Space).where(Space.id == asset.space_id))
+            ).scalar_one_or_none()
+            still_skipped = resolve_chunk_strategy(
+                deps.settings, space
+            ) == "structural" or not resolve_graph_extraction(deps.settings, space)
+            if still_skipped:
+                return {"skipped": True, "reason": "chunk_step_skipped"}
 
         units = (
             (
@@ -527,7 +545,12 @@ class GraphStep:
         from loomvec.core.pipeline.extraction import build_extraction_messages, parse_merged
 
         messages = build_extraction_messages(
-            [""] * (start - 1) + lines, start, end, min_chars=1, max_chars=10**6
+            [""] * (start - 1) + lines,
+            start,
+            end,
+            min_chars=1,
+            max_chars=10**6,
+            max_line_chars=self._deps.settings.pipeline.llm_batch_chars,
         )
         try:
             raw = await self._deps.ai.complete_json(messages)

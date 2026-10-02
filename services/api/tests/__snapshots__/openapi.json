@@ -3216,6 +3216,18 @@
             ],
             "title": "Journal"
           },
+          "published_online": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Crossref published-online（YYYY / YYYY-MM / YYYY-MM-DD）",
+            "title": "Published Online"
+          },
           "source": {
             "anyOf": [
               {
@@ -4059,6 +4071,18 @@
             "description": "白名单：['balanced', 'fine', 'long']",
             "title": "Chunk Preset"
           },
+          "chunk_strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "留空跟随全局配置；白名单：['llm', 'structural']",
+            "title": "Chunk Strategy"
+          },
           "description": {
             "anyOf": [
               {
@@ -4082,6 +4106,18 @@
             ],
             "description": "白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'mock']",
             "title": "Embedding Model"
+          },
+          "graph_extraction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "留空跟随全局配置；白名单：['on', 'off']",
+            "title": "Graph Extraction"
           },
           "name": {
             "maxLength": 255,
@@ -4166,6 +4202,17 @@
             ],
             "title": "Chunk Preset"
           },
+          "chunk_strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Strategy"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -4192,6 +4239,17 @@
               }
             ],
             "title": "Embedding Model"
+          },
+          "graph_extraction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Extraction"
           },
           "id": {
             "format": "uuid",
@@ -4267,6 +4325,8 @@
           "review_required",
           "embedding_model",
           "chunk_preset",
+          "chunk_strategy",
+          "graph_extraction",
           "quota_storage_bytes",
           "quota_file_count",
           "created_at"
@@ -4333,6 +4393,17 @@
             ],
             "title": "Chunk Preset"
           },
+          "chunk_strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Strategy"
+          },
           "description": {
             "anyOf": [
               {
@@ -4355,6 +4426,17 @@
               }
             ],
             "title": "Embedding Model"
+          },
+          "graph_extraction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Extraction"
           },
           "name": {
             "anyOf": [
@@ -11014,7 +11096,7 @@
     },
     "/api/v1/assets": {
       "get": {
-        "description": "资产列表：指定空间（成员校验）或聚合我的全部空间（viewer 可见性过滤）。\n\nFinder 目录浏览经 folder_id 过滤（根目录用 'root' 哨兵）。",
+        "description": "资产列表：指定空间（成员校验）或聚合我的全部空间（viewer 可见性过滤）。\n\nFinder 目录浏览经 folder_id 过滤（根目录用 'root' 哨兵）。\nq 为名称 ILIKE 包含过滤（% _ \\ 按字面匹配），不传时行为与旧版一致。",
         "operationId": "list_assets_api_v1_assets_get",
         "parameters": [
           {
@@ -11161,6 +11243,25 @@
               ],
               "description": "目录浏览过滤：'root' 仅根目录；uuid 仅该文件夹内；缺省不过滤",
               "title": "Folder Id"
+            }
+          },
+          {
+            "description": "名称过滤（大小写不敏感包含；与 folder_id 可组合）",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "名称过滤（大小写不敏感包含；与 folder_id 可组合）",
+              "title": "Q"
             }
           },
           {

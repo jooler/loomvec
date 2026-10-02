@@ -21,7 +21,12 @@ from loomvec.api.deps import (
 )
 from loomvec.api.services import spaces as space_service
 from loomvec.core.authz import SpaceAccess
-from loomvec.core.constants import CHUNK_PRESETS, EMBEDDING_MODELS
+from loomvec.core.constants import (
+    CHUNK_PRESETS,
+    CHUNK_STRATEGIES,
+    EMBEDDING_MODELS,
+    GRAPH_EXTRACTION_MODES,
+)
 from loomvec.core.db.models import SpaceRole, SpaceType
 from loomvec.core.db.repos import SpaceMemberRepo
 from loomvec.core.errors import ValidationError
@@ -39,6 +44,12 @@ class SpaceCreateRequest(BaseModel):
         default=None, description=f"白名单：{list(EMBEDDING_MODELS)}"
     )
     chunk_preset: str | None = Field(default=None, description=f"白名单：{list(CHUNK_PRESETS)}")
+    chunk_strategy: str | None = Field(
+        default=None, description=f"留空跟随全局配置；白名单：{list(CHUNK_STRATEGIES)}"
+    )
+    graph_extraction: str | None = Field(
+        default=None, description=f"留空跟随全局配置；白名单：{list(GRAPH_EXTRACTION_MODES)}"
+    )
 
 
 class SpaceUpdateRequest(BaseModel):
@@ -47,6 +58,8 @@ class SpaceUpdateRequest(BaseModel):
     review_required: bool | None = None
     embedding_model: str | None = None
     chunk_preset: str | None = None
+    chunk_strategy: str | None = None
+    graph_extraction: str | None = None
     quota_storage_bytes: int | None = Field(default=None, ge=0)
     quota_file_count: int | None = Field(default=None, ge=0)
 
@@ -61,6 +74,8 @@ class SpaceOut(BaseModel):
     review_required: bool
     embedding_model: str | None
     chunk_preset: str | None
+    chunk_strategy: str | None
+    graph_extraction: str | None
     quota_storage_bytes: int
     quota_file_count: int
     created_at: datetime
@@ -125,6 +140,8 @@ async def create_space(
         review_required=body.review_required,
         embedding_model=body.embedding_model,
         chunk_preset=body.chunk_preset,
+        chunk_strategy=body.chunk_strategy,
+        graph_extraction=body.graph_extraction,
     )
     return _out(space, my_role=SpaceRole.OWNER.value, member_count=1)
 

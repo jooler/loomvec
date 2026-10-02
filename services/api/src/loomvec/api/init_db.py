@@ -54,6 +54,9 @@ _ADDITIVE_COLUMNS: list[tuple[str, str]] = [
     # API Key 绑定用户（PAT）：非空即按用户语义鉴权。新库由 create_all 建全
     # （含 FK/索引）；既有库补列 + 索引，FK 省略（列可空，历史行全空）
     ("api_key", "ADD COLUMN IF NOT EXISTS user_id UUID"),
+    # 分片策略 / 图谱抽取空间级覆盖（constants.CHUNK_STRATEGIES / GRAPH_EXTRACTION_MODES）
+    ("space", "ADD COLUMN IF NOT EXISTS chunk_strategy VARCHAR(32)"),
+    ("space", "ADD COLUMN IF NOT EXISTS graph_extraction VARCHAR(32)"),
 ]
 
 # 既有库的增量补索引（幂等；须在对应补列之后执行）

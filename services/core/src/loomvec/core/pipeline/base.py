@@ -10,7 +10,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from loomvec.core.db.models import Asset
+from loomvec.core.constants import CHUNK_STRATEGIES, GRAPH_EXTRACTION_MODES
+from loomvec.core.db.models import Asset, Space
 from loomvec.core.mineru_client import MineruClient
 from loomvec.core.retrieval import MilvusStore
 from loomvec.core.storage import ObjectStorage
@@ -47,14 +48,48 @@ class PipelineDeps:
 IMAGE_UNIT_MODEL_PREFIX = "clip:"
 
 
-def chunk_cache_key(settings: Settings, checksum: str | None, llm_model: str | None) -> str:
-    """幂等缓存键 = (checksum, 解析器版本, 模型, prompt 版本)——03 文档 §二.5。"""
+def resolve_chunk_strategy(settings: Settings, space: Space | None) -> str:
+    """分片策略：空间覆盖优先，白名单外的脏数据按未设置处理（防御，不中断管线）。
+
+    ChunkStep 与 GraphStep 共用：后者需要用它判断某资产的 graph_status=skipped
+    是否仍与当前生效配置一致，而不是盲目信任写入时的旧判定。
+    """
+    override = space.chunk_strategy if space else None
+    if override in CHUNK_STRATEGIES:
+        return override
+    return settings.pipeline.chunk_strategy
+
+
+def resolve_graph_extraction(settings: Settings, space: Space | None) -> bool:
+    """图谱抽取开关：空间覆盖优先（on/off），否则回落全局 extraction_enabled。"""
+    override = space.graph_extraction if space else None
+    if override in GRAPH_EXTRACTION_MODES:
+        return override == "on"
+    return settings.graph.extraction_enabled
+
+
+def chunk_cache_key(
+    settings: Settings,
+    checksum: str | None,
+    llm_model: str | None,
+    *,
+    chunk_strategy: str = "llm",
+    graph_extraction: bool = True,
+) -> str:
+    """幂等缓存键 = (checksum, 解析器版本, 模型, prompt 版本, 分片策略, 图谱抽取开关)。
+
+    chunk_strategy/graph_extraction 为本次生效值（已按空间覆盖解析，见 ChunkStep）：
+    纳入缓存键是为了让切换这两项设置后重跑能绕过旧缓存，而不是"设置改了但命中
+    旧分片结果不重跑"（03 文档 §二.5）。
+    """
     raw = "|".join(
         [
             checksum or "",
             settings.pipeline.parser_version,
             llm_model or ("mock" if settings.ai.mock else "unknown"),
             settings.pipeline.prompt_version,
+            chunk_strategy,
+            "graph-on" if graph_extraction else "graph-off",
         ]
     )
     return hashlib.sha256(raw.encode()).hexdigest()

@@ -30,6 +30,7 @@ from sqlalchemy import select
 
 from loomvec.core.db.models import Asset, AssetVersion
 from loomvec.core.pipeline.base import PipelineDeps
+from loomvec.core.pipeline.pages import sanitize_text
 
 logger = structlog.get_logger("loomvec.pipeline.paper")
 
@@ -484,7 +485,8 @@ async def _load_markdown_head(deps: PipelineDeps, version: AssetVersion) -> str:
     if not md_key:
         return ""
     data = await deps.storage.get_object(deps.settings.storage.bucket_derived, md_key)
-    return data.decode(errors="ignore")[:HEAD_CHARS_DOI]
+    # 先清洗再截头：页首内嵌图片的 base64 会占满截取窗口，标题/DOI 被挤出
+    return sanitize_text(data.decode(errors="ignore"))[:HEAD_CHARS_DOI]
 
 
 def _uploaded_name(version: AssetVersion) -> str | None:

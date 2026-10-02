@@ -95,10 +95,31 @@ def split_batches(lines: list[str], max_chars: int) -> list[tuple[int, int]]:
     return batches
 
 
+def numbered_lines(lines: list[str], start: int, end: int, *, max_line_chars: int) -> str:
+    """提示词正文：`L{行号}: 内容`。单行超过 max_line_chars 时截断显示并注明原长——
+
+    split_batches 只在行间切批，一行再长也整行入批；截断保证单次请求有上限，
+    行号不变，分片边界仍按原行落库（入库内容取原文，不受截断影响）。
+    """
+    out: list[str] = []
+    for n in range(start, end + 1):
+        line = lines[n - 1]
+        if len(line) > max_line_chars:
+            line = f"{line[:max_line_chars]}…[本行过长已截断，原 {len(line)} 字]"
+        out.append(f"L{n}: {line}")
+    return "\n".join(out)
+
+
 def build_chunk_messages(
-    lines: list[str], start: int, end: int, *, min_chars: int, max_chars: int
+    lines: list[str],
+    start: int,
+    end: int,
+    *,
+    min_chars: int,
+    max_chars: int,
+    max_line_chars: int,
 ) -> list[dict[str, str]]:
-    body = "\n".join(f"L{n}: {lines[n - 1]}" for n in range(start, end + 1))
+    body = numbered_lines(lines, start, end, max_line_chars=max_line_chars)
     system = (
         "你是文档语义分片引擎。根据给定的带行号文档行，输出语义完整的分片边界 JSON。"
         '输出格式（仅输出 JSON）：{"chunk_markers": ['

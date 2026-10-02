@@ -196,7 +196,9 @@ def test_mock_complete_chunk_graph():
     lines = [f"L{i}: 阿里巴巴集团 与 腾讯控股 是科技公司" for i in range(1, 30)]
     from loomvec.core.pipeline.extraction import build_extraction_messages
 
-    messages = build_extraction_messages(lines, 1, 29, min_chars=10, max_chars=100)
+    messages = build_extraction_messages(
+        lines, 1, 29, min_chars=10, max_chars=100, max_line_chars=6000
+    )
     mock = MockBackend(settings)
     raw = mock.complete("\n".join(m["content"] for m in messages))
     merged = parse_merged(raw, batch_start=1, batch_end=29)

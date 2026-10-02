@@ -191,3 +191,209 @@ async def test_full_pipeline_and_retrieval(deps: PipelineDeps):
             await session.execute(sa_delete(AssetVersion).where(AssetVersion.asset_id == asset_id))
             await session.execute(sa_delete(Asset).where(Asset.id == asset_id))
             await session.execute(sa_delete(Space).where(Space.id == space_id))
+
+
+async def test_mineru_busy_defers_without_failing_asset(deps: PipelineDeps, monkeypatch):
+    # 名额满（MineruBusyError）不是失败：资产保持 processing、不留任务行，异常交任务层重入队
+    from sqlalchemy import delete as sa_delete
+    from sqlalchemy import select, text
+
+    from loomvec.core.db.models import ProcessingJob, Space, SpaceType
+    from loomvec.core.mineru_slots import MineruBusyError
+    from loomvec.core.pipeline.steps import ParseStep
+
+    async with deps.session_factory() as session, session.begin():
+        tenant_id = (
+            await session.execute(
+                text(
+                    "SELECT tenant_id FROM space WHERE id = '0198bec0-0000-7000-8000-000000000001'"
+                )
+            )
+        ).scalar_one()
+        space = Space(
+            tenant_id=tenant_id,
+            slug=f"pipeline-busy-{uuid.uuid4().hex[:12]}",
+            name="管线名额测试",
+            space_type=SpaceType.PERSONAL,
+        )
+        session.add(space)
+        await session.flush()
+        space_id = space.id
+        asset = Asset(
+            space_id=space_id, name="busy.md", mime_type="text/markdown", ext=".md", size_bytes=1
+        )
+        session.add(asset)
+        await session.flush()
+        session.add(
+            AssetVersion(
+                asset_id=asset.id,
+                version=1,
+                mime_type="text/markdown",
+                size_bytes=1,
+                inline_text="x",
+            )
+        )
+        asset_id = asset.id
+
+    async def busy(self, session, asset, version):
+        raise MineruBusyError("MinerU 解析名额已满")
+
+    monkeypatch.setattr(ParseStep, "run", busy)
+    try:
+        with pytest.raises(MineruBusyError):
+            await PipelineRunner(deps).run(asset_id)
+        async with deps.session_factory() as session:
+            row = (await session.execute(select(Asset).where(Asset.id == asset_id))).scalar_one()
+            assert row.status == AssetStatus.PROCESSING and row.status_reason is None
+            jobs = (
+                await session.execute(
+                    select(ProcessingJob).where(ProcessingJob.asset_id == asset_id)
+                )
+            ).all()
+            assert jobs == []
+    finally:
+        async with deps.session_factory() as session, session.begin():
+            await session.execute(sa_delete(AssetVersion).where(AssetVersion.asset_id == asset_id))
+            await session.execute(sa_delete(Asset).where(Asset.id == asset_id))
+            await session.execute(sa_delete(Space).where(Space.id == space_id))
+
+
+async def _make_space_and_text_asset(deps: PipelineDeps, *, suffix: str, **space_fields):
+    """建一个独立空间 + inline_text 资产（复用 SAMPLE_MD），返回 (space_id, asset_id)。"""
+    from sqlalchemy import text as sa_text
+
+    from loomvec.core.db.models import Space, SpaceType
+
+    async with deps.session_factory() as session, session.begin():
+        tenant_id = (
+            await session.execute(
+                sa_text(
+                    "SELECT tenant_id FROM space WHERE id = '0198bec0-0000-7000-8000-000000000001'"
+                )
+            )
+        ).scalar_one()
+        space = Space(
+            tenant_id=tenant_id,
+            slug=f"pipeline-{suffix}-{uuid.uuid4().hex[:12]}",
+            name=f"管线测试-{suffix}",
+            space_type=SpaceType.PERSONAL,
+            **space_fields,
+        )
+        session.add(space)
+        await session.flush()
+        space_id = space.id
+        asset = Asset(
+            space_id=space_id,
+            name=f"{suffix}.md",
+            mime_type="text/markdown",
+            ext=".md",
+            size_bytes=len(SAMPLE_MD.encode()),
+        )
+        session.add(asset)
+        await session.flush()
+        session.add(
+            AssetVersion(
+                asset_id=asset.id,
+                version=1,
+                mime_type="text/markdown",
+                size_bytes=asset.size_bytes,
+                inline_text=SAMPLE_MD,
+            )
+        )
+        asset_id = asset.id
+    return space_id, asset_id
+
+
+async def _cleanup_space_and_asset(deps: PipelineDeps, *, space_id, asset_id) -> None:
+    from sqlalchemy import delete as sa_delete
+
+    from loomvec.core.db.models import (
+        Community,
+        Entity,
+        EntityMergeLog,
+        SemanticUnit,
+        Space,
+    )
+
+    await deps.milvus.async_delete_space_units(space_id)
+    await deps.milvus.async_delete_space_entities(space_id)
+    async with deps.session_factory() as session, session.begin():
+        await session.execute(sa_delete(EntityMergeLog).where(EntityMergeLog.space_id == space_id))
+        await session.execute(sa_delete(Entity).where(Entity.space_id == space_id))
+        await session.execute(sa_delete(Community).where(Community.space_id == space_id))
+        await session.execute(sa_delete(SemanticUnit).where(SemanticUnit.space_id == space_id))
+        await session.execute(sa_delete(AssetVersion).where(AssetVersion.asset_id == asset_id))
+        await session.execute(sa_delete(Asset).where(Asset.id == asset_id))
+        await session.execute(sa_delete(Space).where(Space.id == space_id))
+
+
+async def test_chunk_strategy_structural_skips_llm_and_graph(deps: PipelineDeps, monkeypatch):
+    """空间覆盖 chunk_strategy=structural：零 LLM 调用，分片靠规则，graph_status=skipped。"""
+    from sqlalchemy import select
+
+    from loomvec.core.db.models import ChunkMethod, GraphStatus, SemanticUnit
+
+    space_id, asset_id = await _make_space_and_text_asset(
+        deps, suffix="structural", chunk_strategy="structural"
+    )
+
+    async def refuse(*_args, **_kwargs):
+        raise AssertionError("structural 策略下不应调用 LLM")
+
+    monkeypatch.setattr(deps.ai, "complete_json", refuse)
+    try:
+        results = await PipelineRunner(deps).run(asset_id)
+        assert results[-1]["indexed"] >= 1  # 仍然建出索引，只是没走 LLM
+        async with deps.session_factory() as session:
+            asset = (await session.execute(select(Asset).where(Asset.id == asset_id))).scalar_one()
+            assert asset.graph_status == GraphStatus.SKIPPED
+            units = (
+                (
+                    await session.execute(
+                        select(SemanticUnit).where(SemanticUnit.asset_id == asset_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert units and all(u.chunk_method == ChunkMethod.STRUCTURAL_FALLBACK for u in units)
+    finally:
+        await _cleanup_space_and_asset(deps, space_id=space_id, asset_id=asset_id)
+
+
+async def test_graph_extraction_off_requests_chunk_only(deps: PipelineDeps):
+    """空间覆盖 graph_extraction=off：仍走 LLM 分片，但不请求/不落地实体关系。"""
+    from sqlalchemy import select
+
+    from loomvec.core.db.models import GraphStatus
+
+    space_id, asset_id = await _make_space_and_text_asset(
+        deps, suffix="graph-off", graph_extraction="off"
+    )
+    try:
+        results = await PipelineRunner(deps).run(asset_id)
+        assert results[-1]["indexed"] >= 1
+        async with deps.session_factory() as session:
+            asset = (await session.execute(select(Asset).where(Asset.id == asset_id))).scalar_one()
+            version = (
+                await session.execute(select(AssetVersion).where(AssetVersion.asset_id == asset_id))
+            ).scalar_one()
+            assert asset.graph_status == GraphStatus.SKIPPED
+            assert version.version_meta["graph"]["status"] == "skipped"
+    finally:
+        await _cleanup_space_and_asset(deps, space_id=space_id, asset_id=asset_id)
+
+
+async def test_chunk_cache_key_changes_with_strategy_and_graph_flag():
+    from loomvec.core.config import Settings
+    from loomvec.core.pipeline.base import chunk_cache_key
+
+    settings = Settings(_env_file=None)
+    base = chunk_cache_key(settings, "sum", "m", chunk_strategy="llm", graph_extraction=True)
+    other_strategy = chunk_cache_key(
+        settings, "sum", "m", chunk_strategy="structural", graph_extraction=True
+    )
+    other_graph = chunk_cache_key(
+        settings, "sum", "m", chunk_strategy="llm", graph_extraction=False
+    )
+    assert len({base, other_strategy, other_graph}) == 3

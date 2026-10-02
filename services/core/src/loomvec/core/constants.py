@@ -112,6 +112,18 @@ CHUNK_PRESETS: dict[str, dict[str, int]] = {
 }
 DEFAULT_CHUNK_PRESET = "balanced"
 
+# 分片策略（创建/设置空间时白名单内选一；空=跟随全局 pipeline.chunk_strategy）：
+# llm 按语义边界调用 LLM 分片；structural 按标题/段落/表格规则确定性分片，不调用
+# LLM（§03 文档「分片策略」）。structural 下不产出实体关系，与 graph_extraction 互斥
+# （二选一，不支持"规则分片+仍抽图谱"组合）。
+CHUNK_STRATEGIES: tuple[str, ...] = ("llm", "structural")
+DEFAULT_CHUNK_STRATEGY = "llm"
+
+# 图谱抽取开关（创建/设置空间时白名单内选一；空=跟随全局 graph.enabled/extraction_enabled）：
+# on 分片批次合并请求实体关系；off 只请求分片，不请求实体关系（省一半输出 token，
+# 而非现在这种"请求了但不落库"）。
+GRAPH_EXTRACTION_MODES: tuple[str, ...] = ("on", "off")
+
 # 空间可选嵌入模型白名单（创建/设置空间时校验；P2 仅记录选择，实际路由随网关配置）。
 # bge-m3 为本地 Infinity 端点别名（scripts/start-models-gpu.sh，1024 维）
 EMBEDDING_MODELS: tuple[str, ...] = (

@@ -33,6 +33,7 @@ from loomvec.core.db.models import (
 )
 from loomvec.core.errors import NotFoundError, ValidationError
 from loomvec.core.events import publish_event
+from loomvec.core.mineru_slots import MineruBusyError
 from loomvec.core.pipeline.base import LAST_STEP, PIPELINE_STEPS, PipelineDeps
 from loomvec.core.pipeline.paper_meta import auto_rename_asset
 
@@ -99,6 +100,11 @@ class PipelineRunner:
             meta: dict = {}
             try:
                 meta = await step.run(session, asset, version)
+            except MineruBusyError:
+                # 名额满不是失败：撤掉本次任务行、资产保持 processing，由任务层延后重入队
+                await session.delete(job)
+                await session.commit()
+                raise
             except Exception as e:
                 detail = getattr(e, "details", None)
                 error = f"{type(e).__name__}: {e}" + (f" {detail}" if detail else "")

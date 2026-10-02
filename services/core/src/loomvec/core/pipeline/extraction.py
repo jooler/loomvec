@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from loomvec.core.ai import AiJsonError, extract_json
 from loomvec.core.constants import DEFAULT_ENTITY_TYPE, ENTITY_TYPES
 from loomvec.core.graph.ontology import canonical_type, normalize_entity_name
-from loomvec.core.pipeline.chunking import ChunkDraft, parse_markers
+from loomvec.core.pipeline.chunking import ChunkDraft, numbered_lines, parse_markers
 
 _TASK_TAG = "chunk_graph"
 
@@ -67,10 +67,16 @@ class MergedExtraction:
 
 
 def build_extraction_messages(
-    lines: list[str], start: int, end: int, *, min_chars: int, max_chars: int
+    lines: list[str],
+    start: int,
+    end: int,
+    *,
+    min_chars: int,
+    max_chars: int,
+    max_line_chars: int,
 ) -> list[dict[str, str]]:
     """合并抽取 prompt：分片契约（与 chunk-v1 相同）+ 实体/关系抽取契约。"""
-    body = "\n".join(f"L{n}: {lines[n - 1]}" for n in range(start, end + 1))
+    body = numbered_lines(lines, start, end, max_line_chars=max_line_chars)
     system = (
         "你是文档语义分片与知识图谱抽取引擎。根据给定的带行号文档行，输出 JSON，"
         "同时包含分片边界与实体关系两段结构。\n"

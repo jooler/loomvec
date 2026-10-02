@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loomvec.api.context import Identity
 from loomvec.api.services import notifications as notification_service
 from loomvec.core.config import get_settings
-from loomvec.core.constants import CHUNK_PRESETS, DEFAULT_CHUNK_PRESET, EMBEDDING_MODELS
+from loomvec.core.constants import (
+    CHUNK_PRESETS,
+    CHUNK_STRATEGIES,
+    DEFAULT_CHUNK_PRESET,
+    EMBEDDING_MODELS,
+    GRAPH_EXTRACTION_MODES,
+)
 from loomvec.core.db.models import Space, SpaceMember, SpaceRole, SpaceType, User
 from loomvec.core.db.repos import AssetRepo, SpaceMemberRepo, SpaceRepo, SpaceUsageRepo
 from loomvec.core.errors import ValidationError
@@ -31,6 +37,8 @@ async def validate_space_settings(
     *,
     embedding_model: str | None = None,
     chunk_preset: str | None = None,
+    chunk_strategy: str | None = None,
+    graph_extraction: str | None = None,
 ) -> None:
     """创建/设置空间时的白名单校验（P4 动态配置：白名单可运营调整，即时生效）。"""
     from loomvec.api.services.admin_settings import effective_value
@@ -39,10 +47,15 @@ async def validate_space_settings(
         EMBEDDING_MODELS
     )
     presets = await effective_value(session, "models.chunk_presets") or list(CHUNK_PRESETS)
-    if embedding_model is not None and embedding_model not in whitelist:
-        raise ValidationError("不支持的嵌入模型", allowed=list(whitelist), got=embedding_model)
-    if chunk_preset is not None and chunk_preset not in presets:
-        raise ValidationError("不支持的分片预设", allowed=list(presets), got=chunk_preset)
+
+    def _check(value: str | None, allowed: list[str], label: str) -> None:
+        if value is not None and value not in allowed:
+            raise ValidationError(label, allowed=allowed, got=value)
+
+    _check(embedding_model, list(whitelist), "不支持的嵌入模型")
+    _check(chunk_preset, list(presets), "不支持的分片预设")
+    _check(chunk_strategy, list(CHUNK_STRATEGIES), "不支持的分片策略")
+    _check(graph_extraction, list(GRAPH_EXTRACTION_MODES), "不支持的图谱抽取开关")
 
 
 async def _unique_slug(session: AsyncSession, name: str) -> str:
@@ -66,10 +79,20 @@ async def create_space(
     review_required: bool = False,
     embedding_model: str | None = None,
     chunk_preset: str | None = None,
+    chunk_strategy: str | None = None,
+    graph_extraction: str | None = None,
 ) -> Space:
-    """创建空间：创建者即 owner；用量行与成员行同事务建立。"""
+    """创建空间：创建者即 owner；用量行与成员行同事务建立。
+
+    chunk_strategy/graph_extraction 留空 = 跟随全局配置（不像 chunk_preset 那样落默认值），
+    这是两者的常态——多数空间不需要覆盖。
+    """
     await validate_space_settings(
-        session, embedding_model=embedding_model, chunk_preset=chunk_preset
+        session,
+        embedding_model=embedding_model,
+        chunk_preset=chunk_preset,
+        chunk_strategy=chunk_strategy,
+        graph_extraction=graph_extraction,
     )
     if not identity.user_id or identity.user_id.startswith("apikey:"):
         raise ValidationError("API Key 无法创建空间（无用户上下文）")
@@ -87,6 +110,8 @@ async def create_space(
         review_required=review_required,
         embedding_model=embedding_model,
         chunk_preset=chunk_preset or DEFAULT_CHUNK_PRESET,
+        chunk_strategy=chunk_strategy,
+        graph_extraction=graph_extraction,
     )
     session.add(space)
     await session.flush()
@@ -107,6 +132,8 @@ def space_out(space: Space, *, my_role: str | None = None, member_count: int | N
         "review_required": space.review_required,
         "embedding_model": space.embedding_model,
         "chunk_preset": space.chunk_preset,
+        "chunk_strategy": space.chunk_strategy,
+        "graph_extraction": space.graph_extraction,
         "quota_storage_bytes": space.quota_storage_bytes,
         "quota_file_count": space.quota_file_count,
         "created_at": space.created_at,
@@ -124,9 +151,14 @@ async def update_space_settings(session: AsyncSession, *, space: Space, **fields
         session,
         embedding_model=fields.get("embedding_model"),
         chunk_preset=fields.get("chunk_preset"),
+        chunk_strategy=fields.get("chunk_strategy"),
+        graph_extraction=fields.get("graph_extraction"),
     )
+    # chunk_strategy/graph_extraction 的 None 是合法终态（留空=跟随全局配置），
+    # 必须能被显式 PATCH 为 null 来清除空间覆盖，不能像其余字段那样把 None 当“未提供”跳过
+    nullable_fields = ("review_required", "chunk_strategy", "graph_extraction")
     for key, value in fields.items():
-        if value is not None or key in ("review_required",):
+        if value is not None or key in nullable_fields:
             setattr(space, key, value)
     await session.commit()
     return space

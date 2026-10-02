@@ -22,6 +22,7 @@ from loomvec.core.constants import (
     DEAD_LETTER_MAX_LEN,
     HEARTBEAT_KEY,
     HEARTBEAT_TTL_SECONDS,
+    QUEUE_PIPELINE,
     QUEUE_PIPELINE_LOW,
 )
 from loomvec.core.db.base import create_engine_and_sessionmaker
@@ -29,6 +30,7 @@ from loomvec.core.db.system_config import load_ai_overrides
 from loomvec.core.errors import UpstreamUnavailableError
 from loomvec.core.logging import get_logger
 from loomvec.core.mineru_client import MineruClient
+from loomvec.core.mineru_slots import MineruBusyError, MineruSlots
 from loomvec.core.pipeline import PipelineDeps, PipelineRunner
 from loomvec.core.retrieval import MilvusStore
 from loomvec.core.storage import ObjectStorage
@@ -48,6 +50,14 @@ async def build_deps() -> PipelineDeps:
     settings = get_settings()
     import redis.asyncio as aioredis
 
+    redis = aioredis.from_url(settings.redis.url, decode_responses=True)
+    # 名额租约 TTL 须覆盖一次完整解析（上传 + 等待 timeout_seconds + 下载），
+    # 进程被杀时到期自动释放
+    slots = MineruSlots(
+        redis,
+        capacity=settings.mineru.max_concurrency,
+        ttl_seconds=int(settings.mineru.timeout_seconds) + 900,
+    )
     engine, session_factory = create_engine_and_sessionmaker(settings.postgres)
     try:
         async with session_factory() as session:
@@ -60,9 +70,9 @@ async def build_deps() -> PipelineDeps:
         session_factory=session_factory,
         storage=ObjectStorage(settings.storage),
         ai=AiGateway(ai_settings),
-        mineru=MineruClient(settings.mineru),
+        mineru=MineruClient(settings.mineru, slots=slots),
         milvus=MilvusStore(settings.milvus, ai_settings),
-        redis=aioredis.from_url(settings.redis.url, decode_responses=True),
+        redis=redis,
         engine=engine,
     )
 
@@ -142,7 +152,16 @@ def process_asset(self, asset_id: str, from_step: str = "parse") -> dict:
             await _dispose_deps(deps)
         return {"asset_id": asset_id, "from_step": from_step, "steps": results}
 
-    return asyncio.run(_run())
+    try:
+        return asyncio.run(_run())
+    except MineruBusyError:
+        # MinerU 名额满：延后作为新任务重新入队（原队列；新任务 retries 从 0 计，
+        # 不占 autoretry 次数），本任务正常结束、释放 worker 进程
+        delay = get_settings().mineru.busy_retry_seconds
+        queue = (self.request.delivery_info or {}).get("routing_key") or QUEUE_PIPELINE
+        process_asset.apply_async(args=[asset_id, from_step], queue=queue, countdown=delay)
+        logger.info("mineru_busy_deferred", asset_id=asset_id, retry_in_seconds=delay)
+        return {"asset_id": asset_id, "from_step": from_step, "deferred": "mineru_busy"}
 
 
 async def _maybe_trigger_merge(deps: PipelineDeps, asset_id: str) -> None:

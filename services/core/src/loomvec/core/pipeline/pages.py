@@ -7,10 +7,24 @@ from typing import Any
 
 from loomvec.core.pipeline.chunking import ChunkDraft
 
+# 内嵌图片 data URI（Markdown `![alt](data:image/...)` 与 HTML `src="data:image/..."`）：
+# base64 体积可达整篇正文的数十倍，进入分片/抽取提示词即按输入 token 计费，且对语义无贡献。
+_MD_INLINE_IMAGE = re.compile(r"!\[([^\]]*)\]\(\s*data:image/[^)]*\)")
+_HTML_INLINE_IMAGE = re.compile(r"""(\bsrc\s*=\s*["'])data:image/[^"']*(["'])""", re.IGNORECASE)
+INLINE_IMAGE_PLACEHOLDER = "inline-image"
+
 
 def sanitize_text(text: str) -> str:
-    """清洗 C0 控制字符（保留 \\n \\t）：PDF 解析产物可能混入 NUL，PG text 拒绝 0x00。"""
-    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    """清洗解析/上传文本，产物写库与送 LLM 前统一经此：
+
+    - C0 控制字符（保留 \\n \\t）：PDF 解析产物可能混入 NUL，PG text 拒绝 0x00；
+    - 内嵌图片 data URI 替换为占位地址（保留 alt 与图片语法，前端照常渲染占位徽标）。
+    """
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    if "data:image/" not in text:
+        return text
+    text = _MD_INLINE_IMAGE.sub(rf"![\1]({INLINE_IMAGE_PLACEHOLDER})", text)
+    return _HTML_INLINE_IMAGE.sub(rf"\g<1>{INLINE_IMAGE_PLACEHOLDER}\g<2>", text)
 
 
 def draft_text(lines: list[str], draft: ChunkDraft) -> str:

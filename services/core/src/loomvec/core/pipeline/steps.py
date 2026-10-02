@@ -31,9 +31,18 @@ from loomvec.core.db.models import (
     UnitType,
 )
 from loomvec.core.errors import ValidationError
-from loomvec.core.pipeline.base import LAST_STEP, PIPELINE_STEPS, PipelineDeps, chunk_cache_key
+from loomvec.core.mineru_slots import MineruBusyError
+from loomvec.core.pipeline.base import (
+    LAST_STEP,
+    PIPELINE_STEPS,
+    PipelineDeps,
+    chunk_cache_key,
+    resolve_chunk_strategy,
+    resolve_graph_extraction,
+)
 from loomvec.core.pipeline.chunking import (
     ChunkDraft,
+    build_chunk_messages,
     detect_table_ranges,
     split_batches,
     strip_html,
@@ -55,6 +64,7 @@ from loomvec.core.pipeline.media_flow import chunk_media, embed_media, parse_med
 from loomvec.core.pipeline.mime import (
     is_image_mime,
     is_media_mime,
+    is_mineru_mime,
     sniff_mime,
 )
 from loomvec.core.pipeline.pages import build_line_page_map, draft_text, sanitize_text, unit_locator
@@ -97,6 +107,12 @@ class ParseStep:
                 raise ValidationError(
                     "资产既无 inline_text 也无 storage_key", asset_id=str(asset.id)
                 )
+            # 名额满时在下载原文件之前就退出：64 进程抢 1 个名额、30s 一轮重试，
+            # 若每轮都先把原文件（可达数 MB）从对象存储拉一遍，纯属浪费 I/O。
+            # 这里只按登记时的 mime_type 判断（嗅探前，略粗但足够省掉绝大多数无谓下载）；
+            # 真正的占用判定仍在 MineruClient.parse 内的 slots.acquire()。
+            if is_mineru_mime(asset.mime_type) and await deps.mineru.likely_busy():
+                raise MineruBusyError("MinerU 解析名额已满（下载前探测）")
             data = await deps.storage.get_object(
                 deps.settings.storage.bucket_raw, version.storage_key
             )
@@ -152,9 +168,14 @@ class ParseStep:
 
 
 class ChunkStep:
-    """P3-WRK-01 分片+抽取合并调用：每批一次 LLM 返回 markers+entities+relations。
+    """P3-WRK-01 分片，按分片策略（Space 覆盖 > 全局 pipeline.chunk_strategy）二选一：
 
-    独立校验互不牵连（03 文档 §3.2）：
+    - llm：每批一次 LLM 调用（按图谱抽取开关决定是否同时请求实体/关系，
+      见 _resolve_graph_extraction）；
+    - structural：按标题/段落/表格规则确定性分片，不调用 LLM，不产出实体关系
+      （与图谱抽取开关互斥，不支持"规则分片+仍抽图谱"组合）。
+
+    llm 策略下独立校验互不牵连（03 文档 §3.2）：
     - markers 有效、抽取无效 → 正常分片入库，asset.graph_status=pending_retry；
     - markers 失效、抽取有效 → 结构化兜底分片，抽取按兜底 chunk 行区间归属；
     - 抽取结果（全文行号锚定）落 version_meta['graph']['extraction']，
@@ -176,19 +197,28 @@ class ChunkStep:
         lines = markdown.split("\n")
         page_map = build_line_page_map(markdown, content_list)
 
-        key = chunk_cache_key(deps.settings, version.checksum, deps.settings.ai.llm.model)
-        existing_ids = await self._unit_ids(session, version.id)
-        if version.chunk_cache_key == key and existing_ids:
-            return {"skipped": True, "reason": "chunk_cache_key 命中（幂等跳过）"}
-
-        tables = detect_table_ranges(lines)
-        # P2-CORE-01 空间分片预设覆盖全局钳制参数
+        # P2-CORE-01 空间分片预设/策略覆盖全局参数（constants.CHUNK_PRESETS 等）
         space = (
             await session.execute(select(Space).where(Space.id == asset.space_id))
         ).scalar_one_or_none()
         preset = CHUNK_PRESETS.get(space.chunk_preset or "", None) if space else None
         min_chars = (preset or {}).get("chunk_min_chars", deps.settings.pipeline.chunk_min_chars)
         max_chars = (preset or {}).get("chunk_max_chars", deps.settings.pipeline.chunk_max_chars)
+        chunk_strategy = self._resolve_chunk_strategy(deps, space)
+        graph_on = self._resolve_graph_extraction(deps, space)
+
+        key = chunk_cache_key(
+            deps.settings,
+            version.checksum,
+            deps.settings.ai.llm.model,
+            chunk_strategy=chunk_strategy,
+            graph_extraction=graph_on,
+        )
+        existing_ids = await self._unit_ids(session, version.id)
+        if version.chunk_cache_key == key and existing_ids:
+            return {"skipped": True, "reason": "chunk_cache_key 命中（幂等跳过）"}
+
+        tables = detect_table_ranges(lines)
         batches = split_batches(lines, deps.settings.pipeline.llm_batch_chars)
         drafts: list[ChunkDraft] = []
         fallback_batches = 0
@@ -199,13 +229,30 @@ class ChunkStep:
                 t for t in tables if t.start_line >= batch_start and t.end_line <= batch_end
             ]
             merged: MergedExtraction | None = None
+            if chunk_strategy == "structural":
+                # 规则分片：不调用 LLM，按标题/段落/表格确定性分片（无实体关系产出，
+                # 与 graph_on 无关——二者互斥，不支持"规则分片+仍抽图谱"组合）
+                fallback_batches += 1
+                drafts.extend(
+                    structural_fallback(
+                        lines,
+                        batch_start=batch_start,
+                        batch_end=batch_end,
+                        tables=batch_tables,
+                        min_chars=min_chars,
+                        max_chars=max_chars,
+                    )
+                )
+                continue
             try:
-                messages = build_extraction_messages(
+                build_messages = build_extraction_messages if graph_on else build_chunk_messages
+                messages = build_messages(
                     lines,
                     batch_start,
                     batch_end,
                     min_chars=min_chars,
                     max_chars=max_chars,
+                    max_line_chars=deps.settings.pipeline.llm_batch_chars,
                 )
                 raw = await deps.ai.complete_json(messages)
                 merged = parse_merged(raw, batch_start=batch_start, batch_end=batch_end)
@@ -302,8 +349,12 @@ class ChunkStep:
         # ---- 抽取结果归属 chunk + 落 version_meta（GraphStep 消费）----
         entity_payload, relation_payload = self._extraction_payload(extraction, drafts)
         extraction_ok = extraction["entities"] is not None
-        graph_enabled = deps.settings.graph.enabled and deps.settings.graph.extraction_enabled
-        if not graph_enabled:
+        graph_enabled = deps.settings.graph.enabled and graph_on
+        if chunk_strategy == "structural":
+            # 规则分片模式二选一：无论 graph_on 取值，本就没有调用 LLM、没有抽取结果
+            asset.graph_status = GraphStatus.SKIPPED
+            graph_meta = {"status": "skipped", "reason": "chunk_strategy=structural"}
+        elif not graph_enabled:
             asset.graph_status = GraphStatus.SKIPPED
             graph_meta = {"status": "skipped"}
         elif extraction_ok:
@@ -342,6 +393,14 @@ class ChunkStep:
             "fallback_batches": fallback_batches,
             "graph_status": asset.graph_status.value if asset.graph_status else None,
         }
+
+    @staticmethod
+    def _resolve_chunk_strategy(deps: PipelineDeps, space: Space | None) -> str:
+        return resolve_chunk_strategy(deps.settings, space)
+
+    @staticmethod
+    def _resolve_graph_extraction(deps: PipelineDeps, space: Space | None) -> bool:
+        return resolve_graph_extraction(deps.settings, space)
 
     @staticmethod
     def _new_extraction_acc() -> dict[str, list | None]:

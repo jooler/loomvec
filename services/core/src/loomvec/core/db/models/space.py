@@ -49,6 +49,10 @@ class Space(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
     # 白名单内的模型/预设选择（constants.EMBEDDING_MODELS / CHUNK_PRESETS）
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     chunk_preset: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 分片策略 / 图谱抽取覆盖（constants.CHUNK_STRATEGIES / GRAPH_EXTRACTION_MODES）：
+    # NULL = 跟随全局配置（pipeline.chunk_strategy / graph.enabled+extraction_enabled）
+    chunk_strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    graph_extraction: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # P2-CORE-03 空间级配额（0 = 不限；租户级配额在 tenant 表）
     quota_storage_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     quota_file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

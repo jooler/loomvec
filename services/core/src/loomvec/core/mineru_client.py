@@ -13,14 +13,20 @@ job 状态归一化而来，供 MinerU 官方 API 兼容层消费。
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+import structlog
 
 from loomvec.core.config import MineruSettings
 from loomvec.core.errors import UpstreamUnavailableError
+from loomvec.core.mineru_slots import MineruBusyError, MineruSlots
+
+logger = structlog.get_logger("loomvec.mineru")
 
 # job 轮询节奏；大文档解析以分钟计，2s 轮询开销可忽略
 _POLL_INTERVAL_SECONDS = 2.0
@@ -34,10 +40,23 @@ class MineruResult:
 
 class MineruClient:
     def __init__(
-        self, settings: MineruSettings, transport: httpx.AsyncBaseTransport | None = None
+        self,
+        settings: MineruSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+        *,
+        slots: MineruSlots | None = None,
     ) -> None:
         self._settings = settings
         self._transport = transport  # 测试注入（httpx.MockTransport 等），生产恒 None
+        # 解析名额（worker 注入）；None = 不限流（api 兼容层 / 测试）
+        self._slots = slots
+
+    async def likely_busy(self) -> bool:
+        """名额大概率已满（非原子探测，见 MineruSlots.seems_full）。
+
+        调用方据此决定是否值得先做下载等前置工作——未配置名额限制时恒 False。
+        """
+        return self._slots is not None and await self._slots.seems_full()
 
     # ------------------------------------------------------------------
     # V1 底层操作：uploads → file_id；parse/jobs；files/{id}/content
@@ -139,6 +158,17 @@ class MineruClient:
         except httpx.HTTPError as e:
             raise UpstreamUnavailableError(upstream="mineru", reason=self._describe(e)) from e
 
+    async def _cancel_job(self, job_id: str) -> None:
+        """尽力取消（DELETE /v1/parse/jobs/{id}）：放弃等待的任务不让 MinerU 继续白跑。
+
+        失败只记日志——调用方正在抛原异常，取消失败不得将其覆盖。
+        """
+        try:
+            async with self._client(httpx.Timeout(10.0, connect=5.0)) as client:
+                await client.delete(f"{self._settings.base_url.rstrip('/')}/v1/parse/jobs/{job_id}")
+        except Exception as e:
+            logger.warning("mineru_job_cancel_failed", job_id=job_id, error=str(e))
+
     async def _download_file(self, file_id: str) -> bytes:
         try:
             async with self._client(
@@ -179,32 +209,39 @@ class MineruClient:
     # ------------------------------------------------------------------
 
     async def parse(self, filename: str, data: bytes, mime: str) -> MineruResult:
+        """入库解析。注入了名额时先取名额，全满抛 MineruBusyError（调用方延后重试）。"""
+        if self._slots is None:
+            return await self._parse(filename, data, mime)
+        lease = await self._slots.acquire()
+        if lease is None:
+            raise MineruBusyError("MinerU 解析名额已满")
+        try:
+            return await self._parse(filename, data, mime)
+        finally:
+            try:
+                await self._slots.release(lease)
+            except Exception as e:  # 释放失败不覆盖原异常；租约 TTL 到期自动回收
+                logger.warning("mineru_slot_release_failed", key=lease.key, error=str(e))
+
+    async def _parse(self, filename: str, data: bytes, mime: str) -> MineruResult:
         file_id = await self._upload_file(filename, data, mime)
-        job_id = await self._create_job(
-            file_id,
-            tier=self._settings.tier,
-            output_formats=["markdown", "structured_content"],
-        )
-        job = await self._wait_job(job_id)
+        # 只取 zip：单独的 markdown 产物把图片内嵌为 base64 data URI（体积可达正文数十倍，
+        # 下游分片/抽取按输入 token 计费）；zip 内 markdown.md 以 images/… 相对路径引用图片，
+        # structured_content.json 与单独产物同构。图片文件不落库（前端渲染为占位徽标）。
+        job_id = await self._create_job(file_id, tier=self._settings.tier, output_formats=["zip"])
+        try:
+            job = await self._wait_job(job_id)
+        except BaseException:
+            await self._cancel_job(job_id)  # 超时/取消/任务被杀：不留孤儿任务占着 MinerU
+            raise
         files = job.get("files") or []
         outputs = (files[0].get("output_files") or {}) if files else {}
-        if str(job.get("status")) not in ("completed", "partial") or not outputs.get("markdown"):
+        if str(job.get("status")) not in ("completed", "partial") or not outputs.get("zip"):
             raise UpstreamUnavailableError(
                 upstream="mineru",
                 reason=f"解析失败：{self._job_error(job) or '服务端未提供原因'}",
             )
-        markdown = (await self._download_file(outputs["markdown"]["file_id"])).decode("utf-8")
-        content_list: list[dict[str, Any]] = []
-        sc_ref = outputs.get("structured_content")
-        if sc_ref:
-            # 版面是辅助产物：下载/解码失败降级为空，不阻塞 Markdown 主产物
-            try:
-                content_list = _flatten_structured_content(
-                    json.loads((await self._download_file(sc_ref["file_id"])).decode("utf-8"))
-                )
-            except (UpstreamUnavailableError, json.JSONDecodeError, UnicodeDecodeError):
-                content_list = []
-        return MineruResult(markdown=markdown, content_list=content_list)
+        return _result_from_zip(await self._download_file(outputs["zip"]["file_id"]))
 
     def parse_sync(self, filename: str, data: bytes, mime: str) -> MineruResult:
         """同步门面（Celery 任务内经 asyncio.run 调用异步版本，此方法供测试）。"""
@@ -274,6 +311,27 @@ class MineruClient:
                 upstream="mineru", reason=f"任务产物缺少 zip：{str(job)[:300]}"
             )
         return await self._download_file(zip_ref["file_id"])
+
+
+def _result_from_zip(blob: bytes) -> MineruResult:
+    """解析产物 zip → markdown.md（主产物，缺失即失败）+ structured_content.json（版面）。"""
+    try:
+        with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+            markdown = zf.read("markdown.md").decode("utf-8")
+            try:
+                sc_raw = zf.read("structured_content.json")
+            except KeyError:
+                sc_raw = b""
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as e:
+        raise UpstreamUnavailableError(upstream="mineru", reason=f"产物 zip 无效：{e}") from e
+    content_list: list[dict[str, Any]] = []
+    if sc_raw:
+        # 版面是辅助产物：解码失败降级为空，不阻塞 Markdown 主产物
+        try:
+            content_list = _flatten_structured_content(json.loads(sc_raw.decode("utf-8")))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            content_list = []
+    return MineruResult(markdown=markdown, content_list=content_list)
 
 
 def _flatten_structured_content(sc: dict[str, Any]) -> list[dict[str, Any]]:

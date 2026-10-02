@@ -9,11 +9,13 @@ from loomvec.core.db.models import ChunkMethod
 from loomvec.core.pipeline.chunking import (
     build_chunk_messages,
     detect_table_ranges,
+    numbered_lines,
     parse_markers,
     split_batches,
     structural_fallback,
     validate_markers,
 )
+from loomvec.core.pipeline.pages import sanitize_text
 
 
 def _lines(n: int) -> list[str]:
@@ -125,7 +127,7 @@ def test_parse_markers_coerces_and_drops_invalid():
 
 def test_build_chunk_messages_contains_control_tags():
     lines = _lines(20)
-    msgs = build_chunk_messages(lines, 1, 20, min_chars=100, max_chars=800)
+    msgs = build_chunk_messages(lines, 1, 20, min_chars=100, max_chars=800, max_line_chars=6000)
     user = msgs[1]["content"]
     assert "[LOOMVEC_TASK=chunk_markers]" in user
     assert "[DOC_START_LINE=1]" in user and "[DOC_END_LINE=20]" in user
@@ -154,3 +156,30 @@ def test_draft_char_count_clamp_min_merge():
     )
     # 过小片段与相邻合并
     assert len(drafts) == 1
+
+
+def test_numbered_lines_truncates_oversized_line_keeps_numbering():
+    # split_batches 不拆行：超长单行在提示词中截断显示，行号不变
+    lines = ["短行", "x" * 50, "尾行"]
+    body = numbered_lines(lines, 1, 3, max_line_chars=10)
+    assert body.splitlines() == [
+        "L1: 短行",
+        "L2: " + "x" * 10 + "…[本行过长已截断，原 50 字]",
+        "L3: 尾行",
+    ]
+
+
+def test_sanitize_text_strips_inline_image_data_uris():
+    b64 = "data:image/jpeg;base64," + "A" * 5000
+    text = (
+        f"# 标题\x00\n![图 1]({b64})\n"
+        f'<table><tr><td><img src="{b64}" alt="t"></td></tr></table>\n'
+        "![外链](images/page_0_image_1.jpg)\n正文"
+    )
+    out = sanitize_text(text)
+    assert "data:image" not in out and "\x00" not in out
+    assert "![图 1](inline-image)" in out
+    assert '<img src="inline-image" alt="t">' in out
+    assert "![外链](images/page_0_image_1.jpg)" in out  # 路径引用原样保留
+    assert out.count("\n") == text.count("\n")  # 行结构不变（行号/页码映射稳定）
+    assert sanitize_text("普通文本\n第二行") == "普通文本\n第二行"

@@ -125,6 +125,11 @@ class MineruSettings(BaseModel):
     tier: Literal["flash", "basic", "standard", "advanced"] = "basic"
     # 是否对外暴露 MinerU 官方 API 兼容层（/api/v4，mineru.net 精准解析 API 同构）
     compat_enabled: bool = True
+    # 同时在 MinerU 上解析的入库任务上限（worker 多进程经 Redis 名额协调，见 core/mineru_slots）：
+    # 超出的资产延后重新入队，不堆进 MinerU 队列（排队会吃掉 timeout_seconds）。
+    # CPU 版逐个解析取 1；GPU 版按吞吐调大。
+    max_concurrency: int = Field(default=1, ge=1)
+    busy_retry_seconds: float = Field(default=30.0, gt=0)  # 名额满时延后重新入队的间隔
     # 部署路线（./deploy.sh 写入、./dev.sh start 依此路由，应用本身不消费）：
     # cpu=compose 容器版（镜像版本见 deploy/compose/mineru/Dockerfile，默认）；
     # gpu=宿主机脚本 scripts/start-mineru-gpu.sh（需自建 .venv-mineru，见脚本头）
@@ -198,6 +203,10 @@ class ClipSettings(AiProviderConfig):
 class LlmSettings(AiProviderConfig):
     temperature: float = 0.2
     json_retries: int = 2  # JSON 输出解析失败重试次数
+    # 单次请求提示词上限（messages content 字符合计）：超限不发请求、直接报错。
+    # 管线正常批次约 1.5 万字内（llm_batch_chars + 截断后的单行 + 系统提示），
+    # 此为兜底闸门：异常输入（如内嵌图片 base64）按输入 token 计费，宁拒勿发。
+    max_prompt_chars: int = Field(default=100_000, gt=0)
 
 
 class MockSettings(BaseModel):
@@ -285,10 +294,16 @@ class SearchSettings(BaseModel):
 class PipelineSettings(BaseModel):
     """P1 管线参数：分片钳制、LLM 分批、嵌入批处理、截断上限、可选摘要。"""
 
-    parser_version: str = "mineru-4.0.10"
+    # 解析产物版本（落 version_meta.parse、入分片缓存键）：-zip = 取 V1 zip 产物，
+    # Markdown 以路径引用图片（此前 4.0.10 取单独 markdown 产物，图片内嵌 base64）
+    parser_version: str = "mineru-4.0.10-zip"
     # P3 起分片与图谱抽取合并为单次 LLM 调用（03 文档 §3.2），prompt 版本升级；
     # 缓存键含此版本 → 升级后旧资产重跑会重新计费抽取
     prompt_version: str = "chunk-graph-v2"
+    # 分片策略全局默认（可被 Space.chunk_strategy 覆盖，见 constants.CHUNK_STRATEGIES）：
+    # llm = 语义分片（现状）；structural = 规则分片，不调用 LLM，零 token 成本，
+    # 与图谱抽取互斥（选 structural 即不产出实体关系，不看 graph.enabled）。
+    chunk_strategy: Literal["llm", "structural"] = "llm"
     chunk_min_chars: int = 120
     chunk_max_chars: int = 2000
     llm_batch_chars: int = 6000  # 单次 LLM 分片调用的最大文档字符量
