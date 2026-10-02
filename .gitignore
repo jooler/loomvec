@@ -30,6 +30,8 @@ deploy/compose/.env
 .vscode/
 # ZCode 会话本地数据（会话记录/草稿等，仅本机有效）
 .zcode/
+# Claude Code 个人设置（权限白名单等，可能含密钥；共享设置用 .claude/settings.json）
+.claude/settings.local.json
 
 # MinerU 源码不再入库：解析镜像以 PyPI 固定版本依赖安装（deploy/compose/mineru/Dockerfile）
 third_party/mineru/
