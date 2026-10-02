@@ -127,11 +127,17 @@ class AiGateway:
             self._clients[channel] = httpx.AsyncClient(timeout=cfg.timeout_seconds)
         return self._clients[channel]
 
-    async def _post(self, channel: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        cfg = self._provider(channel)
-        headers = {}
+    @staticmethod
+    def _headers(cfg: AiProviderConfig) -> dict[str, str]:
+        """通道附加头 + Bearer 鉴权（附加头不含 Authorization，由配置校验保证）。"""
+        headers = dict(cfg.headers)
         if cfg.api_key:
             headers["Authorization"] = f"Bearer {cfg.api_key}"
+        return headers
+
+    async def _post(self, channel: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        cfg = self._provider(channel)
+        headers = self._headers(cfg)
 
         @retry(
             retry=retry_if_exception(_retryable),
@@ -314,9 +320,7 @@ class AiGateway:
         if max_tokens:
             payload["max_tokens"] = max_tokens
         cfg_provider = self._provider("llm")
-        headers = {}
-        if cfg_provider.api_key:
-            headers["Authorization"] = f"Bearer {cfg_provider.api_key}"
+        headers = self._headers(cfg_provider)
         started = time.monotonic()
         try:
             async with self._http("llm").stream(

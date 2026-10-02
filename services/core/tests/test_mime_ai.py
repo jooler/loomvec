@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 
+import httpx
+import pydantic
 import pytest
 
 from loomvec.core.ai import AiGateway
-from loomvec.core.config import AiSettings, ClipSettings, EmbeddingSettings, LlmSettings
+from loomvec.core.config import (
+    AiSettings,
+    ClipSettings,
+    EmbeddingSettings,
+    LlmSettings,
+    apply_ai_overrides,
+)
 from loomvec.core.errors import ValidationError
 from loomvec.core.pipeline.mime import is_mineru_mime, sniff_mime
 
@@ -162,3 +171,67 @@ def test_clip_request_infinity_mixed_text_and_image_rejected():
     gw = _infinity_gateway()
     with pytest.raises(ValidationError):
         asyncio.run(gw._clip_request([{"text": "查询"}, {"image": "aW1n", "text": "caption"}]))
+
+
+# ---------------------------------------------------------------------------
+# 通道附加请求头（ai.<channel>.headers）
+# ---------------------------------------------------------------------------
+
+
+def _header_capture_gateway(seen: list[httpx.Headers], **llm_kwargs) -> AiGateway:
+    """真实 httpx 客户端 + MockTransport：记录每个请求的头，按 stream 返回 SSE 或整段 JSON。"""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        if json.loads(request.content).get("stream"):
+            chunk = json.dumps({"choices": [{"delta": {"content": "pong"}}]})
+            return httpx.Response(200, text=f"data: {chunk}\n\ndata: [DONE]\n\n")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "pong"}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    llm = LlmSettings(base_url="http://llm.local/v1", model="m", **llm_kwargs)
+    return AiGateway(AiSettings(llm=llm), client=client)
+
+
+async def _drain(agen) -> str:
+    return "".join([piece async for piece in agen])
+
+
+def test_provider_headers_sent_on_complete_and_stream():
+    # 附加头在非流式（_post）与流式（stream）两条路径上都随请求发出
+    seen: list[httpx.Headers] = []
+    gw = _header_capture_gateway(
+        seen,
+        api_key="sk-test",
+        headers={"User-Agent": "loomvec/1.0", "x-opencode-session": "loomvec-llm"},
+    )
+    assert asyncio.run(gw.complete([{"role": "user", "content": "ping"}])) == "pong"
+    assert asyncio.run(_drain(gw.stream([{"role": "user", "content": "ping"}]))) == "pong"
+    assert len(seen) == 2
+    for headers in seen:
+        assert headers["x-opencode-session"] == "loomvec-llm"
+        assert headers["user-agent"] == "loomvec/1.0"
+        assert headers["authorization"] == "Bearer sk-test"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"authorization": "Bearer x"},  # 鉴权只走 api_key，大小写不敏感
+        {"X Bad": "v"},  # 头名含空格
+        {"x-session": "a\r\nX-Injected: 1"},  # 头值含换行
+        {"x-session": "会话"},  # 头值非 ASCII
+    ],
+)
+def test_provider_headers_rejected_at_config_load(headers):
+    # 坏配置在加载期报错，而不是请求期被当成上游故障重试
+    with pytest.raises(pydantic.ValidationError):
+        LlmSettings(base_url="http://llm.local/v1", model="m", headers=headers)
+
+
+def test_provider_headers_survive_admin_overrides():
+    # admin 动态配置合并（model_dump → model_validate）不丢附加头
+    ai = AiSettings(llm=LlmSettings(api_key="sk-file", headers={"x-opencode-session": "s"}))
+    merged = apply_ai_overrides(ai, {"ai.llm.api_key": "sk-db"})
+    assert merged.llm.api_key == "sk-db"
+    assert merged.llm.headers == {"x-opencode-session": "s"}

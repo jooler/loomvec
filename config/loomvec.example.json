@@ -9,7 +9,8 @@
       "temperature": 0.2,
       "json_retries": 2,
       "timeout_seconds": 120.0,
-      "api_style": "openai"
+      "api_style": "openai",
+      "headers": {}
     },
     "embedding": {
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",

@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -130,6 +131,11 @@ class MineruSettings(BaseModel):
     device: Literal["cpu", "gpu"] = "cpu"
 
 
+# HTTP 头名为 RFC 9110 token；头值限可见 ASCII + 空格/制表符（httpx 默认按 ASCII 编码）。
+_HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+_HEADER_VALUE = re.compile(r"[\t\x20-\x7e]*")
+
+
 class AiProviderConfig(BaseModel):
     """单个 AI 供方端点。密钥只经环境变量注入。
 
@@ -150,6 +156,23 @@ class AiProviderConfig(BaseModel):
     model: str | None = None
     timeout_seconds: float = 120.0
     api_style: Literal["openai", "dashscope", "infinity"] = "openai"
+    # 附加请求头：随本通道每个请求发送（鉴权只走 api_key，此处不得含 Authorization）。
+    # 用于要求客户端自报身份/会话的供方，如 OpenCode Go 拒收缺 x-opencode-session 的请求：
+    # {"User-Agent": "loomvec/1.0", "x-opencode-session": "loomvec-llm"}
+    headers: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("headers")
+    @classmethod
+    def _validate_headers(cls, headers: dict[str, str]) -> dict[str, str]:
+        """加载即校验（fail-fast）：坏头名/头值不拖到请求时才报错或被当成上游故障重试。"""
+        for name, value in headers.items():
+            if name.lower() == "authorization":
+                raise ValueError("headers 不得含 Authorization：鉴权请配置 api_key")
+            if not _HEADER_NAME.fullmatch(name):
+                raise ValueError(f"headers 头名非法：{name!r}")
+            if not _HEADER_VALUE.fullmatch(value):
+                raise ValueError(f"headers[{name!r}] 头值须为可见 ASCII（不含换行）")
+        return headers
 
 
 class EmbeddingSettings(AiProviderConfig):
