@@ -15,6 +15,7 @@ export {
   type FinderMutations,
 } from './use-finder-data';
 export { STATUS_TONE } from './finder-views';
+export type { FinderSort, FinderSortDir, FinderSortKey } from './finder-sort';
 export type {
   FinderFolder,
   FinderAsset,

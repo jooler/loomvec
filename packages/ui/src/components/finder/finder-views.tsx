@@ -4,6 +4,9 @@
  */
 import { useEffect, useRef } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   ChevronRight,
   FileAudio,
   FileImage,
@@ -20,6 +23,12 @@ import { StatusBadge } from '../status-badge';
 import { ReviewStatusTag } from '../review-status-tag';
 import { ContextMenu, ContextMenuTrigger } from '../ui/context-menu';
 import { formatBytes } from '../../lib/format';
+import {
+  paperAuthors,
+  paperPublishedOnline,
+  type FinderSort,
+  type FinderSortKey,
+} from './finder-sort';
 import { FINDER_DRAG_MIME } from './types';
 import type { FinderAsset, FinderFolder } from './types';
 
@@ -59,6 +68,9 @@ export interface FinderViewProps {
   onRenameCancel: () => void;
   onDragStartItem: (e: React.DragEvent, kind: 'folder' | 'asset', id: string) => void;
   onDropOnFolder: (e: React.DragEvent, folderId: string | null) => void;
+  /** 排序状态：列表表头切换；图标/分栏无表头，条目顺序同样由 Finder 按它排好。 */
+  sort: FinderSort;
+  onSortChange: (key: FinderSortKey) => void;
 }
 
 export function FileGlyph({
@@ -92,27 +104,55 @@ function StatusBits({ asset, compact }: { asset: FinderAsset; compact?: boolean 
   );
 }
 
-/** 作者列展示：≤2 全列；更多则首两位 + et al.；兼容仅有 first_author 的旧数据。 */
+/** 作者列展示：≤2 全列；更多则首两位 + et al.。 */
 function formatAuthors(asset: FinderAsset): string {
-  const paper = asset.paper;
-  if (!paper) return '';
-  const authors =
-    paper.authors && paper.authors.length > 0
-      ? paper.authors
-      : paper.first_author
-        ? [paper.first_author]
-        : [];
-  if (authors.length === 0) return '';
+  const authors = paperAuthors(asset);
   if (authors.length <= 2) return authors.join('; ');
   return `${authors[0]}; ${authors[1]} et al.`;
 }
 
-/** 上线列：优先 Crossref published-online，否则回退年份。 */
-function formatPublishedOnline(asset: FinderAsset): string {
-  const online = asset.paper?.published_online?.trim();
-  if (online) return online;
-  const year = asset.paper?.year;
-  return year != null ? String(year) : '';
+/** 可排序表头：当前列显示升降箭头，其余列悬停露出双向箭头。 */
+function SortableTh({
+  label,
+  columnKey,
+  sort,
+  onSortChange,
+  className,
+}: {
+  label: string;
+  columnKey: FinderSortKey;
+  sort: FinderSort;
+  onSortChange: (key: FinderSortKey) => void;
+  className?: string;
+}) {
+  const active = sort.key === columnKey;
+  const ariaSort = active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+  return (
+    <th className={cn('px-3 py-2 font-medium', className)} aria-sort={ariaSort}>
+      <button
+        type="button"
+        className={cn(
+          'group inline-flex max-w-full items-center gap-1 rounded-sm text-left hover:text-foreground',
+          active && 'text-foreground',
+        )}
+        onClick={() => onSortChange(columnKey)}
+      >
+        <span className="truncate">{label}</span>
+        {active ? (
+          sort.dir === 'asc' ? (
+            <ArrowUp className="size-3 shrink-0" aria-hidden />
+          ) : (
+            <ArrowDown className="size-3 shrink-0" aria-hidden />
+          )
+        ) : (
+          <ArrowUpDown
+            className="size-3 shrink-0 opacity-0 group-hover:opacity-50 group-focus-visible:opacity-50"
+            aria-hidden
+          />
+        )}
+      </button>
+    </th>
+  );
 }
 
 /** 行内重命名输入框（回车提交 / Esc 取消 / 失焦提交）。 */
@@ -295,7 +335,7 @@ export function FinderListView(props: FinderViewProps) {
     const selected = props.selectedAssets.has(a.id);
     const isRenaming = props.renaming?.kind === 'asset' && props.renaming.id === a.id;
     const authors = formatAuthors(a);
-    const online = formatPublishedOnline(a);
+    const online = paperPublishedOnline(a);
     rows.push(
       <WithMenu key={a.id} menu={props.menuFor('asset', a.id)}>
         <tr
@@ -351,13 +391,48 @@ export function FinderListView(props: FinderViewProps) {
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
           <tr className="text-left text-xs text-muted-foreground">
-            <th className="px-3 py-2 font-medium">{t('finder.colName')}</th>
-            <th className="w-28 px-3 py-2 font-medium">{t('finder.colOnline')}</th>
-            <th className="w-44 px-3 py-2 font-medium">{t('finder.colAuthors')}</th>
-            <th className="w-36 px-3 py-2 font-medium">{t('finder.colJournal')}</th>
-            <th className="w-24 px-3 py-2 font-medium">{t('finder.colSize')}</th>
+            <SortableTh
+              label={t('finder.colName')}
+              columnKey="name"
+              sort={props.sort}
+              onSortChange={props.onSortChange}
+            />
+            <SortableTh
+              className="w-28"
+              label={t('finder.colOnline')}
+              columnKey="online"
+              sort={props.sort}
+              onSortChange={props.onSortChange}
+            />
+            <SortableTh
+              className="w-44"
+              label={t('finder.colAuthors')}
+              columnKey="authors"
+              sort={props.sort}
+              onSortChange={props.onSortChange}
+            />
+            <SortableTh
+              className="w-36"
+              label={t('finder.colJournal')}
+              columnKey="journal"
+              sort={props.sort}
+              onSortChange={props.onSortChange}
+            />
+            <SortableTh
+              className="w-24"
+              label={t('finder.colSize')}
+              columnKey="size"
+              sort={props.sort}
+              onSortChange={props.onSortChange}
+            />
             <th className="w-28 px-3 py-2 font-medium">{t('finder.colStatus')}</th>
-            <th className="w-40 px-3 py-2 font-medium">{t('finder.colModified')}</th>
+            <SortableTh
+              className="w-40"
+              label={t('finder.colModified')}
+              columnKey="modified"
+              sort={props.sort}
+              onSortChange={props.onSortChange}
+            />
           </tr>
         </thead>
         <tbody>{rows}</tbody>

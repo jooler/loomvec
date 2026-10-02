@@ -59,11 +59,22 @@ import {
   DialogTitle,
 } from '../ui/dialog';
 import { FinderColumnsView, FinderGalleryView, FinderListView } from './finder-views';
+import {
+  DEFAULT_FINDER_SORT,
+  compareFinderNames,
+  nextFinderSort,
+  parseFinderSort,
+  sortFinderAssets,
+  sortFinderFolders,
+  type FinderSort,
+  type FinderSortKey,
+} from './finder-sort';
 import { FINDER_DRAG_MIME } from './types';
 import type { FinderActions, FinderAsset, FinderClipboard, FinderFolder, FinderViewMode } from './types';
 
 const DRAG_MIME = FINDER_DRAG_MIME;
 const VIEW_STORAGE_KEY = 'loomvec.finder.view-mode';
+const SORT_STORAGE_KEY = 'loomvec.finder.sort';
 
 /** mutation 失败已在数据层 toast；此处吞掉 rejection 避免未处理异常。 */
 function runQuietly(p: Promise<unknown>) {
@@ -115,12 +126,18 @@ function loadViewMode(): FinderViewMode {
   return v === 'gallery' || v === 'columns' ? v : 'list';
 }
 
+function loadSort(): FinderSort {
+  if (typeof localStorage === 'undefined') return DEFAULT_FINDER_SORT;
+  return parseFinderSort(localStorage.getItem(SORT_STORAGE_KEY));
+}
+
 export function Finder(props: FinderProps) {
   const { folders, assets, actions, canWrite } = props;
   const { t } = useTranslation();
   // 键盘快捷键仅在焦点位于 Finder 容器内时生效（可聚焦根，点击容器即聚焦）
   const rootRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<FinderViewMode>(loadViewMode);
+  const [sort, setSort] = useState<FinderSort>(loadSort);
   const [selectedFolders, setSelectedFolders] = useState<Set<string>>(new Set());
   const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
   const [clipboard, setClipboard] = useState<FinderClipboard | null>(null);
@@ -206,19 +223,31 @@ export function Finder(props: FinderProps) {
     [folders],
   );
 
-  const sortedChildren = useCallback(
-    (folderId: string | null) => {
-      const childFolders = folders
-        .filter((f) => f.parent_id === folderId)
-        .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
-      const childAssets = [...assets].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
-      return { folders: childFolders, assets: childAssets };
+  /** folderId 的子文件夹（按当前排序；三视图共用，分栏每列各取一次）。 */
+  const sortedFoldersOf = useCallback(
+    (folderId: string | null) =>
+      sortFinderFolders(
+        folders.filter((f) => f.parent_id === folderId),
+        sort,
+      ),
+    [folders, sort],
+  );
+
+  const onSortChange = useCallback(
+    (key: FinderSortKey) => {
+      const next = nextFinderSort(sort, key);
+      setSort(next);
+      if (typeof localStorage !== 'undefined')
+        localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(next));
     },
-    [folders, assets],
+    [sort],
   );
 
   // 列表/图标视图渲染当前文件夹；分栏视图按列链渲染
-  const currentChildren = useMemo(() => sortedChildren(currentFolderId), [sortedChildren, currentFolderId]);
+  const currentChildren = useMemo(
+    () => ({ folders: sortedFoldersOf(currentFolderId), assets: sortFinderAssets(assets, sort) }),
+    [sortedFoldersOf, currentFolderId, assets, sort],
+  );
 
   const thumbFor = props.thumbFor ?? (() => null);
   const columnsAssetsOf = props.columnsAssetsOf;
@@ -664,6 +693,8 @@ export function Finder(props: FinderProps) {
     onRenameCancel: () => setRenaming(null),
     onDragStartItem,
     onDropOnFolder,
+    sort,
+    onSortChange,
   };
 
   const total = currentChildren.folders.length + currentChildren.assets.length;
@@ -784,12 +815,14 @@ export function Finder(props: FinderProps) {
           <FinderColumnsView
             {...viewProps}
             path={path}
-            foldersOf={(fid) =>
-              folders
-                .filter((f) => f.parent_id === fid)
-                .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+            foldersOf={sortedFoldersOf}
+            assetsOf={(fid) =>
+              columnsAssetsOf
+                ? sortFinderAssets(columnsAssetsOf(fid), sort)
+                : fid === currentFolderId
+                  ? currentChildren.assets
+                  : []
             }
-            assetsOf={props.columnsAssetsOf ?? ((fid) => (fid === currentFolderId ? currentChildren.assets : []))}
             onDescend={(depth, folderId) => {
               // 第 depth 列点击：截断到 depth 后下钻（depth 0 = 根列）
               setNavPath([...path.slice(0, depth), folderId]);
@@ -995,7 +1028,7 @@ function RelocateDialog({
     const out: Array<{ folder: FinderFolder; depth: number }> = [];
     const walk = (parent: string | null, depth: number) => {
       for (const f of (byParent.get(parent) ?? []).sort((a, b) =>
-        a.name.localeCompare(b.name, 'zh'),
+        compareFinderNames(a.name, b.name),
       )) {
         out.push({ folder: f, depth });
         walk(f.id, depth + 1);
