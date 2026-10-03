@@ -1,0 +1,12 @@
+# Milvus 用户覆盖配置：仅覆盖需要调整的项，启动时与内置 milvus.yaml 合并。
+#
+# flushRate.collection.max 默认 0.1 qps（每 10 秒才允许 1 次 flush），是官方给大规模
+# 多 collection 集群的保守默认值。loomvec 的索引步骤每篇资产写入后都会同步调用一次
+# flush（见 services/core/src/loomvec/core/retrieval/store.py MilvusStore.upsert_units/
+# upsert_entities），批量入库时很容易把这个默认值打爆，导致 index 步骤反复报
+# "rate limit exceeded[rate=0.1]" 失败。调到 10 qps，在我们单 collection、
+# 单机 standalone 的规模下足够宽松，不会引发过多小 segment 的副作用。
+quotaAndLimits:
+  flushRate:
+    collection:
+      max: 10

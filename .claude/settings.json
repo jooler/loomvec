@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"CHUNK_PRESETS\" -A 10 services/core/src/loomvec/core/pipeline/*.py | head -20 *)",
+      "Bash(.venv/bin/ruff check *)",
+      "Bash(.venv/bin/python -c \"import loomvec.core.pipeline.steps, loomvec.core.pipeline.graph_flow, loomvec.core.config, loomvec.core.constants, loomvec.core.db.models.space, loomvec.api.init_db; print\\('imports ok'\\)\")",
+      "Bash(.venv/bin/python -m pytest services/core/tests/test_p3_graph.py services/core/tests/test_chunking.py services/core/tests/test_core.py -q -p no:cacheprovider)",
+      "Bash(.venv/bin/python -m pytest services/worker/tests -q -p no:cacheprovider)",
+      "Bash(.venv/bin/python -m pytest services/api/tests/ -q -p no:cacheprovider -k \"space\")",
+      "Bash(.venv/bin/ruff format *)",
+      "Bash(.venv/bin/python -m pytest services/worker/tests/test_pipeline_integration.py -q -p no:cacheprovider -k \"structural or graph_extraction_off or cache_key_changes\")",
+      "Bash(.venv/bin/python -m pytest services/core/tests/test_chunk_strategy_resolution.py -q -p no:cacheprovider)",
+      "Bash(LOOMVEC_APP_CONFIG=config/loomvec.example.json .venv/bin/python -c \"from loomvec.core.config import get_settings as g; s=g\\(\\); print\\(s.pipeline.chunk_strategy\\)\")",
+      "Bash(.venv/bin/python -m pytest services/core/tests services/worker/tests -q -p no:cacheprovider)",
+      "Bash(.venv/bin/python -m pytest services/api/tests/test_api.py::test_openapi_snapshot_matches -q -p no:cacheprovider)",
+      "Bash(.venv/bin/python scripts/export_openapi.py)",
+      "Bash(grep -rln \"type FinderActions\\\\|interface FinderActions\" --include=\"*.tsx\" --include=\"*.ts\" src)",
+      "Bash(find . -iname \"*Finder*\" -not -path \"*/node_modules/*\")"
+    ]
+  }
+}

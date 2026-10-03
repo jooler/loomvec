@@ -193,8 +193,18 @@ async def test_full_pipeline_and_retrieval(deps: PipelineDeps):
             await session.execute(sa_delete(Space).where(Space.id == space_id))
 
 
-async def test_mineru_busy_defers_without_failing_asset(deps: PipelineDeps, monkeypatch):
-    # 名额满（MineruBusyError）不是失败：资产保持 processing、不留任务行，异常交任务层重入队
+@pytest.mark.parametrize(
+    ("initial_status", "initial_status_reason"),
+    [
+        (AssetStatus.PENDING, None),
+        (AssetStatus.READY, None),
+        (AssetStatus.FAILED, "之前的失败原因"),
+    ],
+)
+async def test_mineru_busy_preserves_asset_status(
+    deps: PipelineDeps, monkeypatch, initial_status, initial_status_reason
+):
+    # 名额满不应制造失败/任务行，也不能让迟到的 parse 重试把 ready 改回 processing。
     from sqlalchemy import delete as sa_delete
     from sqlalchemy import select, text
 
@@ -220,7 +230,13 @@ async def test_mineru_busy_defers_without_failing_asset(deps: PipelineDeps, monk
         await session.flush()
         space_id = space.id
         asset = Asset(
-            space_id=space_id, name="busy.md", mime_type="text/markdown", ext=".md", size_bytes=1
+            space_id=space_id,
+            name="busy.md",
+            mime_type="text/markdown",
+            ext=".md",
+            size_bytes=1,
+            status=initial_status,
+            status_reason=initial_status_reason,
         )
         session.add(asset)
         await session.flush()
@@ -244,7 +260,8 @@ async def test_mineru_busy_defers_without_failing_asset(deps: PipelineDeps, monk
             await PipelineRunner(deps).run(asset_id)
         async with deps.session_factory() as session:
             row = (await session.execute(select(Asset).where(Asset.id == asset_id))).scalar_one()
-            assert row.status == AssetStatus.PROCESSING and row.status_reason is None
+            assert row.status == initial_status
+            assert row.status_reason == initial_status_reason
             jobs = (
                 await session.execute(
                     select(ProcessingJob).where(ProcessingJob.asset_id == asset_id)

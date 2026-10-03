@@ -100,6 +100,11 @@ class PipelineRunner:
                     .limit(1)
                 )
             ).scalar_one()
+            # MinerU 名额满会撤掉本次 job 并把任务延后重入队。保留进入步骤前的
+            # 资产状态，避免一条迟到的 parse 重试把已经 ready 的资产永久改回
+            # processing（下一次重试又会重复同样的状态污染）。
+            previous_status = asset.status
+            previous_status_reason = asset.status_reason
             if asset.status != AssetStatus.PROCESSING:
                 asset.status = AssetStatus.PROCESSING
                 asset.status_reason = None
@@ -120,8 +125,12 @@ class PipelineRunner:
             try:
                 meta = await step.run(session, asset, version, **(step_kwargs or {}))
             except MineruBusyError:
-                # 名额满不是失败：撤掉本次任务行、资产保持 processing，由任务层延后重入队
+                # 名额满不是失败：撤掉本次任务行，由任务层延后重入队。若任务是
+                # 迟到的重试，恢复它启动前的状态；新上传/手动重试仍保持 pending，
+                # 已在处理的资产则继续是 processing。
                 await session.delete(job)
+                asset.status = previous_status
+                asset.status_reason = previous_status_reason
                 await session.commit()
                 raise
             except Exception as e:
