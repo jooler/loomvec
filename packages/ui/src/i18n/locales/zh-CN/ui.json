@@ -106,6 +106,7 @@
     "tabOriginal": "原始文件",
     "tabParsed": "解析结果（MinerU）",
     "tabChunks": "分片",
+    "parsePending": "正在通过 MinerU 解析文档…",
     "noParseHint": "该类型不走文档解析（图片/音视频/纯文本），内容见原始文件。"
   },
   "originalViewer": {

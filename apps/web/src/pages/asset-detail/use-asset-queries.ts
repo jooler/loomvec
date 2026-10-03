@@ -36,7 +36,7 @@ export function useAssetJobs(assetId?: string) {
   });
 }
 
-export function useAssetPreview(assetId?: string) {
+export function useAssetPreview(assetId?: string, refreshWhileProcessing = false) {
   return useQuery({
     queryKey: ['asset-preview', assetId],
     enabled: !!assetId,
@@ -47,6 +47,8 @@ export function useAssetPreview(assetId?: string) {
       if (error) throw new Error(extractApiError(error, t('ui:viewer.loadPreviewFailed')));
       return data;
     },
+    // MinerU 产物写入后自动取得 parsed_url，无需用户手动刷新页面。
+    refetchInterval: refreshWhileProcessing ? 3000 : false,
   });
 }
 

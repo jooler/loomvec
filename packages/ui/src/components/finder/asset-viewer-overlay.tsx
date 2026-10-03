@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { AssetChunksPanel } from '../asset-chunks-panel';
 import { MarkdownView } from '../markdown-view';
 import { OriginalFileViewer, resolveAssetUrl } from '../original-file-viewer';
+import { isMineruParsePending } from '../../lib/asset-preview';
 import { STATUS_TONE } from './finder-views';
 
 interface PreviewData {
@@ -59,6 +60,8 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
       if (error) throw new Error(extractApiError(error, t('viewer.loadAssetFailed')));
       return data;
     },
+    refetchInterval: (query) =>
+      query.state.data && ['pending', 'processing'].includes(query.state.data.status) ? 3000 : false,
   });
 
   const preview = useQuery({
@@ -71,6 +74,9 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
       if (error) throw new Error(extractApiError(error, t('viewer.loadPreviewFailed')));
       return data as unknown as PreviewData;
     },
+    // MinerU 写入 Markdown 前没有 parsed_url；随资产状态轮询，产物就绪后自动刷新预览。
+    refetchInterval: () =>
+      detail.data && ['pending', 'processing'].includes(detail.data.status) ? 3000 : false,
   });
 
   // MinerU 产物拉取：markdown 模式（content 或 presigned URL）+ PDF 的解析产物
@@ -78,12 +84,28 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
     setMarkdown(null);
     const p = preview.data;
     if (!assetId || !p) return;
+    let cancelled = false;
+    const load = (url: string) =>
+      fetch(resolveAssetUrl(url))
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.text();
+        })
+        .then((text) => {
+          if (!cancelled) setMarkdown(text);
+        })
+        .catch(() => {
+          if (!cancelled) setMarkdown(null);
+        });
     if (p.mode === 'markdown') {
       if (p.content) setMarkdown(p.content);
-      else if (p.url) void fetch(resolveAssetUrl(p.url)).then((r) => r.text()).then(setMarkdown);
+      else if (p.url) void load(p.url);
     } else if (p.mode === 'pdf' && p.parsed_url) {
-      void fetch(resolveAssetUrl(p.parsed_url)).then((r) => r.text()).then(setMarkdown);
+      void load(p.parsed_url);
     }
+    return () => {
+      cancelled = true;
+    };
   }, [assetId, preview.data]);
 
   // Esc 关闭 / ←→ 导航（依赖收窄到具体回调，避免每渲染重挂监听）
@@ -124,6 +146,7 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
     preview.data?.content ||
     (preview.data?.mode === 'markdown' && preview.data?.url)
   );
+  const mineruParsePending = isMineruParsePending(a?.mime_type, a?.status);
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col gap-0 rounded-lg border bg-background shadow-lg">
@@ -205,9 +228,12 @@ export function AssetViewerOverlay(props: AssetViewerOverlayProps) {
                   content={markdown}
                   className="h-full overflow-auto rounded-md border p-4"
                 />
-              ) : hasParsedPayload ? (
-                <div className="grid h-full place-items-center">
+              ) : hasParsedPayload || mineruParsePending ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2">
                   <Spinner className="size-5 text-muted-foreground" />
+                  {mineruParsePending && (
+                    <p className="text-sm text-muted-foreground">{t('viewer.parsePending')}</p>
+                  )}
                 </div>
               ) : (
                 <p className="grid h-full place-items-center text-sm text-muted-foreground">

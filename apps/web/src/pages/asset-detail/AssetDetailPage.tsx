@@ -6,6 +6,7 @@ import { RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
 import { useMe, useSpace, useSpaceCategories } from '@/hooks';
+import { t as translate } from '@/i18n';
 import { extractApiError } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -18,6 +19,7 @@ import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { AssetChunksPanel } from '@loomvec/ui/components/asset-chunks-panel';
 import { MarkdownView } from '@loomvec/ui/components/markdown-view';
 import { OriginalFileViewer, resolveAssetUrl } from '@loomvec/ui/components/original-file-viewer';
+import { isMineruParsePending } from '@loomvec/ui/lib/asset-preview';
 import { MediaPlayer } from '@/components/media-player';
 import { ReviewStatusTag } from '@/components/review-status-tag';
 import { StepTimeline } from './StepTimeline';
@@ -53,7 +55,10 @@ export function AssetDetailPage() {
 
   const asset = useAssetDetail(assetId);
   const jobs = useAssetJobs(assetId);
-  const preview = useAssetPreview(assetId);
+  const preview = useAssetPreview(
+    assetId,
+    ['pending', 'processing'].includes(asset.data?.status ?? ''),
+  );
   const me = useMe();
 
   const spaceId = asset.data?.space_id ?? undefined;
@@ -75,6 +80,7 @@ export function AssetDetailPage() {
   // MinerU 产物拉取：markdown 模式（content 或 presigned URL）+ PDF 的解析产物；
   // cancelled 标志防跨资产竞态（旧请求晚返回覆盖新资产内容），失败置 null 给出占位
   useEffect(() => {
+    setMarkdown(null);
     const p = preview.data;
     if (!p) return;
     let cancelled = false;
@@ -182,6 +188,7 @@ export function AssetDetailPage() {
     preview.data?.content ||
     (preview.data?.mode === 'markdown' && preview.data?.url)
   );
+  const mineruParsePending = isMineruParsePending(a.mime_type, a.status);
 
   // 任务列表按 created_at 倒序：每种 job_type 的首个即最新一次
   const latestByStep = new Map<string, AssetJob>();
@@ -330,9 +337,14 @@ export function AssetDetailPage() {
                     content={markdown}
                     className="max-h-[640px] overflow-auto rounded-md border p-4"
                   />
-                ) : hasParsedPayload ? (
-                  <div className="grid place-items-center py-10">
+                ) : hasParsedPayload || mineruParsePending ? (
+                  <div className="flex flex-col items-center justify-center gap-2 py-10">
                     <Spinner className="size-5 text-muted-foreground" />
+                    {mineruParsePending && (
+                      <p className="text-sm text-muted-foreground">
+                        {translate('ui:viewer.parsePending')}
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <p className="py-6 text-center text-sm text-muted-foreground">{t('noParseHint')}</p>

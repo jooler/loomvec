@@ -16,6 +16,9 @@ export default defineConfig({
   server: {
     // 端口单源 LOOMVEC_ADMIN_PORT（.env，默认 35174）；API 代理目标单源 LOOMVEC_API_PORT
     port: loomvecPort('LOOMVEC_ADMIN_PORT', 35174),
+    // 监听所有接口，便于开发容器/远程环境的端口转发访问。
+    host: '0.0.0.0',
+    allowedHosts: true, // 允许开发容器/隧道的转发 Host
     proxy: {
       ...devProxy,
       '/metrics': { target: apiTarget, changeOrigin: true },
