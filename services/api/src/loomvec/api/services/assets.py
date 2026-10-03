@@ -326,9 +326,19 @@ async def delete_asset_cascade(session: AsyncSession, *, milvus, asset_id: uuid.
 
 
 async def retry_asset(
-    session: AsyncSession, *, celery, asset_id: uuid.UUID, step: str | None
+    session: AsyncSession,
+    *,
+    celery,
+    asset_id: uuid.UUID,
+    step: str | None,
+    chunk_strategy: str | None = None,
+    graph_extraction: str | None = None,
 ) -> Asset:
-    """单步重跑：默认从首个失败步骤起跑（退出标准：失败可见原因 + 单步重试）。"""
+    """单步重跑：默认从首个失败步骤起跑（退出标准：失败可见原因 + 单步重试）。
+
+    chunk_strategy/graph_extraction 为本次运行覆盖（不落库），随任务 kwargs 透传到
+    chunk 步；只在从 parse/chunk 起跑时有意义，起跑步骤在 chunk 之后则拒绝。
+    """
     asset = await AssetRepo(session).get_live(asset_id)
     if asset is None:
         raise NotFoundError(resource="asset", id=str(asset_id))
@@ -339,6 +349,13 @@ async def retry_asset(
         step = failed.job_type.value if failed else "parse"
     if step not in PIPELINE_STEPS:
         raise ValidationError(f"未知步骤：{step}", steps=PIPELINE_STEPS)
+    overrides = {
+        k: v
+        for k, v in {"chunk_strategy": chunk_strategy, "graph_extraction": graph_extraction}.items()
+        if v is not None
+    }
+    if overrides and PIPELINE_STEPS.index(step) > PIPELINE_STEPS.index("chunk"):
+        raise ValidationError("分片策略/图谱抽取覆盖只在从 parse 或 chunk 起跑时生效", step=step)
 
     await ProcessingJobRepo(session).create(
         asset_id=asset_id,
@@ -351,7 +368,10 @@ async def retry_asset(
     await session.commit()
 
     celery.send_task(
-        "pipeline.process_asset", args=[str(asset_id), step], queue=QUEUE_PIPELINE_HIGH
+        "pipeline.process_asset",
+        args=[str(asset_id), step],
+        kwargs=overrides,
+        queue=QUEUE_PIPELINE_HIGH,
     )
     return asset
 

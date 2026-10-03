@@ -137,15 +137,26 @@ class PipelineTask(Task):
     retry_jitter=True,
     max_retries=3,
 )
-def process_asset(self, asset_id: str, from_step: str = "parse") -> dict:
-    """执行资产管线；from_step 支持单步重跑（retry 入口）。"""
+def process_asset(
+    self,
+    asset_id: str,
+    from_step: str = "parse",
+    chunk_strategy: str | None = None,
+    graph_extraction: str | None = None,
+) -> dict:
+    """执行资产管线；from_step 支持单步重跑（retry 入口）。
+
+    chunk_strategy/graph_extraction：本次运行覆盖（retry 请求带入，不落库），
+    透传 PipelineRunner.run，由 chunk 步消费。
+    """
+    overrides = {"chunk_strategy": chunk_strategy, "graph_extraction": graph_extraction}
 
     async def _run() -> dict:
         deps = await build_deps()
         try:
             # attempts 观测口径：随 celery autoretry 递增（P4 已知限制修复）
             results = await PipelineRunner(deps).run(
-                uuid.UUID(asset_id), from_step, attempt=self.request.retries + 1
+                uuid.UUID(asset_id), from_step, attempt=self.request.retries + 1, **overrides
             )
             await _maybe_trigger_merge(deps, asset_id)
         finally:
@@ -159,7 +170,9 @@ def process_asset(self, asset_id: str, from_step: str = "parse") -> dict:
         # 不占 autoretry 次数），本任务正常结束、释放 worker 进程
         delay = get_settings().mineru.busy_retry_seconds
         queue = (self.request.delivery_info or {}).get("routing_key") or QUEUE_PIPELINE
-        process_asset.apply_async(args=[asset_id, from_step], queue=queue, countdown=delay)
+        process_asset.apply_async(
+            args=[asset_id, from_step], kwargs=overrides, queue=queue, countdown=delay
+        )
         logger.info("mineru_busy_deferred", asset_id=asset_id, retry_in_seconds=delay)
         return {"asset_id": asset_id, "from_step": from_step, "deferred": "mineru_busy"}
 

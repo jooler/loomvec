@@ -168,7 +168,8 @@ class ParseStep:
 
 
 class ChunkStep:
-    """P3-WRK-01 分片，按分片策略（Space 覆盖 > 全局 pipeline.chunk_strategy）二选一：
+    """P3-WRK-01 分片，按分片策略（本次运行覆盖 > Space 覆盖 > 全局 pipeline.chunk_strategy）
+    二选一：
 
     - llm：每批一次 LLM 调用（按图谱抽取开关决定是否同时请求实体/关系，
       见 _resolve_graph_extraction）；
@@ -185,7 +186,17 @@ class ChunkStep:
     name = "chunk"
     _deps: PipelineDeps
 
-    async def run(self, session: AsyncSession, asset: Asset, version: AssetVersion) -> dict:
+    async def run(
+        self,
+        session: AsyncSession,
+        asset: Asset,
+        version: AssetVersion,
+        *,
+        chunk_strategy: str | None = None,
+        graph_extraction: str | None = None,
+    ) -> dict:
+        """chunk_strategy/graph_extraction：本次运行覆盖值（llm/structural、on/off），
+        None = 按空间/全局解析；不落库，只影响这一次运行。"""
         deps = self._deps
         if is_image_mime(asset.mime_type):
             asset.graph_status = GraphStatus.SKIPPED
@@ -204,14 +215,14 @@ class ChunkStep:
         preset = CHUNK_PRESETS.get(space.chunk_preset or "", None) if space else None
         min_chars = (preset or {}).get("chunk_min_chars", deps.settings.pipeline.chunk_min_chars)
         max_chars = (preset or {}).get("chunk_max_chars", deps.settings.pipeline.chunk_max_chars)
-        chunk_strategy = self._resolve_chunk_strategy(deps, space)
-        graph_on = self._resolve_graph_extraction(deps, space)
+        strategy = self._resolve_chunk_strategy(deps, space, chunk_strategy)
+        graph_on = self._resolve_graph_extraction(deps, space, graph_extraction)
 
         key = chunk_cache_key(
             deps.settings,
             version.checksum,
             deps.settings.ai.llm.model,
-            chunk_strategy=chunk_strategy,
+            chunk_strategy=strategy,
             graph_extraction=graph_on,
         )
         existing_ids = await self._unit_ids(session, version.id)
@@ -229,7 +240,7 @@ class ChunkStep:
                 t for t in tables if t.start_line >= batch_start and t.end_line <= batch_end
             ]
             merged: MergedExtraction | None = None
-            if chunk_strategy == "structural":
+            if strategy == "structural":
                 # 规则分片：不调用 LLM，按标题/段落/表格确定性分片（无实体关系产出，
                 # 与 graph_on 无关——二者互斥，不支持"规则分片+仍抽图谱"组合）
                 fallback_batches += 1
@@ -350,7 +361,7 @@ class ChunkStep:
         entity_payload, relation_payload = self._extraction_payload(extraction, drafts)
         extraction_ok = extraction["entities"] is not None
         graph_enabled = deps.settings.graph.enabled and graph_on
-        if chunk_strategy == "structural":
+        if strategy == "structural":
             # 规则分片模式二选一：无论 graph_on 取值，本就没有调用 LLM、没有抽取结果
             asset.graph_status = GraphStatus.SKIPPED
             graph_meta = {"status": "skipped", "reason": "chunk_strategy=structural"}
@@ -395,12 +406,16 @@ class ChunkStep:
         }
 
     @staticmethod
-    def _resolve_chunk_strategy(deps: PipelineDeps, space: Space | None) -> str:
-        return resolve_chunk_strategy(deps.settings, space)
+    def _resolve_chunk_strategy(
+        deps: PipelineDeps, space: Space | None, override: str | None = None
+    ) -> str:
+        return resolve_chunk_strategy(deps.settings, space, override)
 
     @staticmethod
-    def _resolve_graph_extraction(deps: PipelineDeps, space: Space | None) -> bool:
-        return resolve_graph_extraction(deps.settings, space)
+    def _resolve_graph_extraction(
+        deps: PipelineDeps, space: Space | None, override: str | None = None
+    ) -> bool:
+        return resolve_graph_extraction(deps.settings, space, override)
 
     @staticmethod
     def _new_extraction_acc() -> dict[str, list | None]:

@@ -66,4 +66,9 @@ export interface FinderActions {
   retryAssets(assetIds: string[]): Promise<void>;
   /** 按论文元数据强制重命名（仅 PDF；支持多选）。 */
   autoRenameAssets(assetIds: string[]): Promise<void>;
+  /**
+   * LLM重建：从 parse 步全量重建，本次运行强制 LLM 分片 + 抽取实体（不改空间配置）。
+   * 可选：app 未注入时 Finder 不显示该菜单项。
+   */
+  llmRebuildAssets?(assetIds: string[]): Promise<void>;
 }

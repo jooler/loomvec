@@ -367,8 +367,9 @@ async def test_graph_extraction_off_requests_chunk_only(deps: PipelineDeps):
 
     from loomvec.core.db.models import GraphStatus
 
+    # 显式 llm：全局默认是 structural，不设则测不到"LLM 分片 + 关抽取"这条路径
     space_id, asset_id = await _make_space_and_text_asset(
-        deps, suffix="graph-off", graph_extraction="off"
+        deps, suffix="graph-off", chunk_strategy="llm", graph_extraction="off"
     )
     try:
         results = await PipelineRunner(deps).run(asset_id)

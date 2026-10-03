@@ -112,12 +112,12 @@ CHUNK_PRESETS: dict[str, dict[str, int]] = {
 }
 DEFAULT_CHUNK_PRESET = "balanced"
 
-# 分片策略（创建/设置空间时白名单内选一；空=跟随全局 pipeline.chunk_strategy）：
-# llm 按语义边界调用 LLM 分片；structural 按标题/段落/表格规则确定性分片，不调用
-# LLM（§03 文档「分片策略」）。structural 下不产出实体关系，与 graph_extraction 互斥
-# （二选一，不支持"规则分片+仍抽图谱"组合）。
+# 分片策略（创建/设置空间时白名单内选一；空=跟随全局 pipeline.chunk_strategy，
+# 内置默认 structural）：llm 按语义边界调用 LLM 分片；structural 按标题/段落/表格规则
+# 确定性分片，不调用 LLM（§03 文档「分片策略」）。structural 下不产出实体关系，与
+# graph_extraction 互斥（二选一，不支持"规则分片+仍抽图谱"组合）。
 CHUNK_STRATEGIES: tuple[str, ...] = ("llm", "structural")
-DEFAULT_CHUNK_STRATEGY = "llm"
+DEFAULT_CHUNK_STRATEGY = "structural"
 
 # 图谱抽取开关（创建/设置空间时白名单内选一；空=跟随全局 graph.enabled/extraction_enabled）：
 # on 分片批次合并请求实体关系；off 只请求分片，不请求实体关系（省一半输出 token，

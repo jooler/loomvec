@@ -63,14 +63,17 @@ SAMPLE = """# 企业关系说明（图谱集成测试）
 
 
 @pytest.fixture
-def deps() -> PipelineDeps:
+def deps(monkeypatch) -> PipelineDeps:
     settings = Settings(_env_file=None)  # 不继承仓库根 .env（测试确定性）
     settings.env = settings.env.__class__.TEST
     settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:35433/loomvec"
     settings.ai.mock = True
     settings.graph.entity_link_threshold = -1.0  # mock 向量无语义：强制链接走通全链路
-    settings.graph.extraction_enabled = True  # 本测试断言 graph_status=ready，显式开（不依赖
-    # config/loomvec.json 当前值——pipeline/graph 段是应用参数，_env_file=None 不隔离这层）
+    # 本文件断言 graph_status=ready：显式走 LLM 分片 + 开抽取（内置默认是 structural/关，
+    # 也不依赖 config/loomvec.json 当前值——pipeline/graph 段是进程级单例，_env_file=None
+    # 不隔离这层，故用 monkeypatch 改并在测试后复原）
+    monkeypatch.setattr(settings.pipeline, "chunk_strategy", "llm")
+    monkeypatch.setattr(settings.graph, "extraction_enabled", True)
     settings.search.graph_enabled = True
     from loomvec.core.ai import AiGateway
     from loomvec.core.db.base import create_engine_and_sessionmaker
@@ -302,3 +305,165 @@ async def _run_consistency(deps: PipelineDeps, space_id: uuid.UUID):
     async with deps.session_factory() as session:
         edges_after = await age.load_space_edges(session, str(space_id))
         assert all(str(asset_id) not in (e.asset_ids or []) for e in edges_after)
+
+
+async def test_retry_override_rebuilds_structural_asset_with_llm_and_graph(
+    deps: PipelineDeps, space_id, monkeypatch
+):
+    """「LLM重建」链路：未设覆盖的空间按内置默认走 structural（graph_status=skipped）；
+    /retry 带 chunk_strategy=llm + graph_extraction=on → 旧单元删除重建为 LLM 分片、
+    图谱写入，且覆盖值不落到空间配置。"""
+    from loomvec.api.schemas.assets import RetryRequest
+    from loomvec.api.services import assets as asset_service
+    from loomvec.core.config import GraphSettings, PipelineSettings
+    from loomvec.core.db.models import ChunkMethod, GraphStatus
+
+    # 按内置默认运行：不受 config/loomvec.json 或本文件 deps fixture 改写单例的影响
+    monkeypatch.setattr(deps.settings.pipeline, "chunk_strategy", PipelineSettings().chunk_strategy)
+    monkeypatch.setattr(
+        deps.settings.graph, "extraction_enabled", GraphSettings().extraction_enabled
+    )
+    monkeypatch.setattr(deps.settings.graph, "enabled", True)
+
+    await create_space(deps, space_id)
+    try:
+        asset_id = await _add_text_asset(deps, space_id, "LLM重建集成测试.md")
+
+        # ---- 默认处理：structural，不抽实体 ----
+        await PipelineRunner(deps).run(asset_id)
+        async with deps.session_factory() as session:
+            asset = (await session.execute(select(Asset).where(Asset.id == asset_id))).scalar_one()
+            assert asset.graph_status == GraphStatus.SKIPPED
+            old_units = (
+                (
+                    await session.execute(
+                        select(SemanticUnit).where(SemanticUnit.asset_id == asset_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert old_units
+            assert all(u.chunk_method == ChunkMethod.STRUCTURAL_FALLBACK for u in old_units)
+            old_ids = {u.id for u in old_units}
+
+        # ---- /retry 带一次性覆盖：服务层把覆盖值随任务 kwargs 投递 ----
+        class _Celery:
+            def __init__(self) -> None:
+                self.sent: list[tuple] = []
+
+            def send_task(self, name, args=None, kwargs=None, **_opts):
+                self.sent.append((name, args, kwargs))
+
+        celery = _Celery()
+        body = RetryRequest.model_validate(
+            {"step": "parse", "chunk_strategy": "llm", "graph_extraction": "on"}
+        )
+        async with deps.session_factory() as session:
+            await asset_service.retry_asset(
+                session,
+                celery=celery,
+                asset_id=asset_id,
+                step=body.step,
+                chunk_strategy=body.chunk_strategy,
+                graph_extraction=body.graph_extraction,
+            )
+        [(task_name, args, kwargs)] = celery.sent
+        assert task_name == "pipeline.process_asset"
+        assert args == [str(asset_id), "parse"]
+        assert kwargs == {"chunk_strategy": "llm", "graph_extraction": "on"}
+
+        # 模拟 worker 执行（process_asset 把 kwargs 原样透传 PipelineRunner.run）
+        await PipelineRunner(deps).run(uuid.UUID(args[0]), args[1], **kwargs)
+
+        # ---- 删旧建新：单元全部换新且来自 LLM 分片，图谱写入 ----
+        async with deps.session_factory() as session:
+            asset = (await session.execute(select(Asset).where(Asset.id == asset_id))).scalar_one()
+            assert asset.graph_status == GraphStatus.READY
+            new_units = (
+                (
+                    await session.execute(
+                        select(SemanticUnit).where(SemanticUnit.asset_id == asset_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert new_units
+            assert not old_ids & {u.id for u in new_units}, "旧单元未删除"
+            assert any(u.chunk_method == ChunkMethod.LLM_MARKERS for u in new_units)
+            entities = (
+                (await session.execute(select(Entity).where(Entity.space_id == space_id)))
+                .scalars()
+                .all()
+            )
+            assert entities, "LLM 重建后实体未入库"
+            space = (await session.execute(select(Space).where(Space.id == space_id))).scalar_one()
+            assert space.chunk_strategy is None and space.graph_extraction is None
+    finally:
+        await cleanup_space(deps, space_id)
+
+
+async def test_retry_override_downgrade_keeps_graph_skipped(deps: PipelineDeps, space_id):
+    """覆盖反向使用（llm+抽取 空间里本次 structural）：chunk 步写 skipped，graph 步按同一组
+    覆盖复核仍跳过，不因空间配置是 llm+on 而误改判为 pending_retry。"""
+    from loomvec.core.db.models import ChunkMethod, GraphStatus
+
+    async with deps.session_factory() as session, session.begin():
+        session.add(
+            Space(
+                id=space_id,
+                tenant_id=uuid.UUID(SEED_TENANT_ID),
+                slug=f"graph-it-{space_id.hex[:12]}",
+                name="图谱集成测试-覆盖降级",
+                chunk_strategy="llm",
+                graph_extraction="on",
+            )
+        )
+    try:
+        asset_id = await _add_text_asset(deps, space_id, "覆盖降级集成测试.md")
+        await PipelineRunner(deps).run(asset_id, chunk_strategy="structural")
+        async with deps.session_factory() as session:
+            asset = (await session.execute(select(Asset).where(Asset.id == asset_id))).scalar_one()
+            assert asset.graph_status == GraphStatus.SKIPPED
+            units = (
+                (
+                    await session.execute(
+                        select(SemanticUnit).where(SemanticUnit.asset_id == asset_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert units and all(u.chunk_method == ChunkMethod.STRUCTURAL_FALLBACK for u in units)
+    finally:
+        await cleanup_space(deps, space_id)
+
+
+async def _add_text_asset(deps: PipelineDeps, sid: uuid.UUID, name: str) -> uuid.UUID:
+    """在空间内登记一个 inline_text 资产（正文复用 SAMPLE），返回 asset_id。"""
+    async with deps.session_factory() as session:
+        try:
+            await session.execute(text("SELECT 1 FROM entity LIMIT 1"))
+        except Exception as e:
+            pytest.skip(f"迁移未执行（先 make migrate）：{e}")
+    async with deps.session_factory() as session, session.begin():
+        asset = Asset(
+            space_id=sid,
+            name=name,
+            mime_type="text/markdown",
+            ext=".md",
+            size_bytes=len(SAMPLE.encode()),
+        )
+        session.add(asset)
+        await session.flush()
+        session.add(
+            AssetVersion(
+                asset_id=asset.id,
+                version=1,
+                mime_type=asset.mime_type,
+                size_bytes=asset.size_bytes,
+                inline_text=SAMPLE,
+            )
+        )
+        return asset.id

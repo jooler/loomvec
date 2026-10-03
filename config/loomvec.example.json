@@ -71,7 +71,7 @@
   "pipeline": {
     "parser_version": "mineru-4.0.10-zip",
     "prompt_version": "chunk-graph-v2",
-    "chunk_strategy": "llm",
+    "chunk_strategy": "structural",
     "chunk_min_chars": 120,
     "chunk_max_chars": 2000,
     "llm_batch_chars": 6000,
@@ -134,7 +134,7 @@
   },
   "graph": {
     "enabled": true,
-    "extraction_enabled": true,
+    "extraction_enabled": false,
     "entity_link_threshold": 0.9,
     "merge_threshold": 0.94,
     "merge_name_distance": 2,

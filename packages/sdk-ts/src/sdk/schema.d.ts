@@ -1086,6 +1086,7 @@ export interface paths {
          * @description 资产列表：指定空间（成员校验）或聚合我的全部空间（viewer 可见性过滤）。
          *
          *     Finder 目录浏览经 folder_id 过滤（根目录用 'root' 哨兵）。
+         *     q 为名称 ILIKE 包含过滤（% _ \ 按字面匹配），不传时行为与旧版一致。
          */
         get: operations["list_assets_api_v1_assets_get"];
         put?: never;
@@ -3545,6 +3546,16 @@ export interface components {
         /** RetryRequest */
         RetryRequest: {
             /**
+             * Chunk Strategy
+             * @description 本次运行的分片策略覆盖（优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效
+             */
+            chunk_strategy?: ("llm" | "structural") | null;
+            /**
+             * Graph Extraction
+             * @description 本次运行的图谱抽取开关覆盖（优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效
+             */
+            graph_extraction?: ("on" | "off") | null;
+            /**
              * Step
              * @description parse/chunk/embed/index；默认从首个失败步骤重跑
              */
@@ -3703,6 +3714,11 @@ export interface components {
              * @description 白名单：['balanced', 'fine', 'long']
              */
             chunk_preset?: string | null;
+            /**
+             * Chunk Strategy
+             * @description 留空跟随全局配置；白名单：['llm', 'structural']
+             */
+            chunk_strategy?: string | null;
             /** Description */
             description?: string | null;
             /**
@@ -3710,6 +3726,11 @@ export interface components {
              * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'mock']
              */
             embedding_model?: string | null;
+            /**
+             * Graph Extraction
+             * @description 留空跟随全局配置；白名单：['on', 'off']
+             */
+            graph_extraction?: string | null;
             /** Name */
             name: string;
             /**
@@ -3744,6 +3765,8 @@ export interface components {
         SpaceOut: {
             /** Chunk Preset */
             chunk_preset: string | null;
+            /** Chunk Strategy */
+            chunk_strategy: string | null;
             /**
              * Created At
              * Format: date-time
@@ -3753,6 +3776,8 @@ export interface components {
             description: string | null;
             /** Embedding Model */
             embedding_model: string | null;
+            /** Graph Extraction */
+            graph_extraction: string | null;
             /**
              * Id
              * Format: uuid
@@ -3801,10 +3826,14 @@ export interface components {
         SpaceUpdateRequest: {
             /** Chunk Preset */
             chunk_preset?: string | null;
+            /** Chunk Strategy */
+            chunk_strategy?: string | null;
             /** Description */
             description?: string | null;
             /** Embedding Model */
             embedding_model?: string | null;
+            /** Graph Extraction */
+            graph_extraction?: string | null;
             /** Name */
             name?: string | null;
             /** Quota File Count */
@@ -6862,6 +6891,8 @@ export interface operations {
                 space_id?: string | null;
                 /** @description 目录浏览过滤：'root' 仅根目录；uuid 仅该文件夹内；缺省不过滤 */
                 folder_id?: string | null;
+                /** @description 名称过滤（大小写不敏感包含；与 folder_id 可组合） */
+                q?: string | null;
             };
             header?: {
                 "X-API-Key"?: string | null;

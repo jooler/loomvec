@@ -301,9 +301,11 @@ class PipelineSettings(BaseModel):
     # 缓存键含此版本 → 升级后旧资产重跑会重新计费抽取
     prompt_version: str = "chunk-graph-v2"
     # 分片策略全局默认（可被 Space.chunk_strategy 覆盖，见 constants.CHUNK_STRATEGIES）：
-    # llm = 语义分片（现状）；structural = 规则分片，不调用 LLM，零 token 成本，
+    # llm = 语义分片；structural = 规则分片，不调用 LLM，零 token 成本，
     # 与图谱抽取互斥（选 structural 即不产出实体关系，不看 graph.enabled）。
-    chunk_strategy: Literal["llm", "structural"] = "llm"
+    # 默认 structural：入库默认不调用 LLM 分片/抽实体；需要时在空间级设 llm，
+    # 或对单个资产经 retry 一次性覆盖（Finder「LLM重建」，见 pipeline.base）。
+    chunk_strategy: Literal["llm", "structural"] = "structural"
     chunk_min_chars: int = 120
     chunk_max_chars: int = 2000
     llm_batch_chars: int = 6000  # 单次 LLM 分片调用的最大文档字符量
@@ -411,7 +413,9 @@ class GraphSettings(BaseModel):
     """
 
     enabled: bool = True  # 图谱总开关（写入与 L3/L4 召回联动；关闭即纯 L1/L2）
-    extraction_enabled: bool = True  # 合并抽取开关（关闭后新资产不再产出实体，存量保留）
+    # 合并抽取开关，默认关（新资产不产出实体，存量保留）；可被 Space.graph_extraction
+    # 或单次 retry 覆盖（graph_extraction=on）打开
+    extraction_enabled: bool = False
     entity_link_threshold: float = 0.90  # 阶段一内联链接：Milvus entities top-1 相似度阈值
     merge_threshold: float = 0.94  # 阶段二空间合并：向量近邻判定阈值（高于链接阈值）
     merge_name_distance: int = 2  # 阶段二规范名编辑距离候选阈值（归一化后）

@@ -195,6 +195,16 @@ class RetryRequest(BaseModel):
     step: str | None = Field(
         default=None, description="parse/chunk/embed/index；默认从首个失败步骤重跑"
     )
+    chunk_strategy: Literal["llm", "structural"] | None = Field(
+        default=None,
+        description="本次运行的分片策略覆盖（优先于空间配置与全局默认，不落库）；"
+        "仅从 parse/chunk 起跑时生效",
+    )
+    graph_extraction: Literal["on", "off"] | None = Field(
+        default=None,
+        description="本次运行的图谱抽取开关覆盖（优先于空间配置与全局默认，不落库）；"
+        "仅从 parse/chunk 起跑时生效",
+    )
 
 
 class PreviewOut(BaseModel):

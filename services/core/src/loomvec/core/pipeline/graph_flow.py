@@ -450,7 +450,17 @@ class GraphStep:
     name = "graph"
     _deps: PipelineDeps
 
-    async def run(self, session: AsyncSession, asset: Asset, version: AssetVersion) -> dict:
+    async def run(
+        self,
+        session: AsyncSession,
+        asset: Asset,
+        version: AssetVersion,
+        *,
+        chunk_strategy: str | None = None,
+        graph_extraction: str | None = None,
+    ) -> dict:
+        """chunk_strategy/graph_extraction：本次运行覆盖（与 ChunkStep 同一组值），
+        只用于下面 skipped 复核，保证复核口径与本次 chunk 步一致。"""
         deps = self._deps
         if not deps.settings.graph.enabled:
             asset.graph_status = GraphStatus.SKIPPED
@@ -466,8 +476,10 @@ class GraphStep:
                 await session.execute(select(Space).where(Space.id == asset.space_id))
             ).scalar_one_or_none()
             still_skipped = resolve_chunk_strategy(
-                deps.settings, space
-            ) == "structural" or not resolve_graph_extraction(deps.settings, space)
+                deps.settings, space, chunk_strategy
+            ) == "structural" or not resolve_graph_extraction(
+                deps.settings, space, graph_extraction
+            )
             if still_skipped:
                 return {"skipped": True, "reason": "chunk_step_skipped"}
 

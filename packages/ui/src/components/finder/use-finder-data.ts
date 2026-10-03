@@ -23,6 +23,18 @@ export interface FinderAssetFilters {
 
 const ASSET_PAGE_LIMIT = 100;
 
+/** retry 请求体（与 API RetryRequest 对齐）：step 起跑步骤，其余为一次性运行覆盖（不落库）。 */
+interface RetryBody {
+  step?: string;
+  chunk_strategy?: 'llm' | 'structural';
+  graph_extraction?: 'on' | 'off';
+}
+
+/** 带 chunk_strategy=llm 覆盖的重试即「LLM重建」（提示文案与普通重试区分）。 */
+function isLlmRebuild(input: string | { body: RetryBody }): boolean {
+  return typeof input !== 'string' && input.body.chunk_strategy === 'llm';
+}
+
 function folderKey(folderId: string | null): string {
   return folderId ?? 'root';
 }
@@ -272,19 +284,33 @@ export function useColumnsFolderAssets(
     onError: (e) => fail(e, t('ui:finderData.deleteFailed')),
   });
 
+  // 入参：仅 assetId = 普通重试（从首个失败步骤起跑）；带 body = 指定起跑步骤 +
+  // 一次性运行覆盖（见 RetryBody）
   const retryAsset = useMutation({
-    mutationFn: async (assetId: string) => {
+    mutationFn: async (input: string | { assetId: string; body: RetryBody }) => {
+      const { assetId, body } = typeof input === 'string' ? { assetId: input, body: {} } : input;
       const { error } = await client.POST('/api/v1/assets/{asset_id}/retry', {
         params: { path: { asset_id: assetId } },
-        body: {},
+        body,
       });
-      if (error) throw new Error(extractApiError(error, t('ui:finderData.retryFailed')));
+      if (error) {
+        const fallback = isLlmRebuild(input)
+          ? t('ui:finderData.llmRebuildFailed')
+          : t('ui:finderData.retryFailed');
+        throw new Error(extractApiError(error, fallback));
+      }
     },
-    onSuccess: () => {
-      toast.success(t('ui:finderData.requeued'));
+    onSuccess: (_data, input) => {
+      toast.success(
+        isLlmRebuild(input) ? t('ui:finderData.llmRebuildQueued') : t('ui:finderData.requeued'),
+      );
       invalidateAll();
     },
-    onError: (e) => fail(e, t('ui:finderData.retryFailed')),
+    onError: (e, input) =>
+      fail(
+        e,
+        isLlmRebuild(input) ? t('ui:finderData.llmRebuildFailed') : t('ui:finderData.retryFailed'),
+      ),
   });
 
   const autoRenameAssets = useMutation({

@@ -48,23 +48,33 @@ class PipelineDeps:
 IMAGE_UNIT_MODEL_PREFIX = "clip:"
 
 
-def resolve_chunk_strategy(settings: Settings, space: Space | None) -> str:
-    """分片策略：空间覆盖优先，白名单外的脏数据按未设置处理（防御，不中断管线）。
+def resolve_chunk_strategy(
+    settings: Settings, space: Space | None, override: str | None = None
+) -> str:
+    """分片策略：本次运行覆盖 > 空间覆盖 > 全局默认；白名单外的值按未设置处理
+    （防御，不中断管线）。
 
+    override 为单次运行参数（/retry 请求带入，见 PipelineRunner.run），不落库。
     ChunkStep 与 GraphStep 共用：后者需要用它判断某资产的 graph_status=skipped
     是否仍与当前生效配置一致，而不是盲目信任写入时的旧判定。
     """
-    override = space.chunk_strategy if space else None
     if override in CHUNK_STRATEGIES:
         return override
+    space_value = space.chunk_strategy if space else None
+    if space_value in CHUNK_STRATEGIES:
+        return space_value
     return settings.pipeline.chunk_strategy
 
 
-def resolve_graph_extraction(settings: Settings, space: Space | None) -> bool:
-    """图谱抽取开关：空间覆盖优先（on/off），否则回落全局 extraction_enabled。"""
-    override = space.graph_extraction if space else None
+def resolve_graph_extraction(
+    settings: Settings, space: Space | None, override: str | None = None
+) -> bool:
+    """图谱抽取开关：本次运行覆盖 > 空间覆盖（on/off）> 全局 extraction_enabled。"""
     if override in GRAPH_EXTRACTION_MODES:
         return override == "on"
+    space_value = space.graph_extraction if space else None
+    if space_value in GRAPH_EXTRACTION_MODES:
+        return space_value == "on"
     return settings.graph.extraction_enabled
 
 
@@ -78,7 +88,7 @@ def chunk_cache_key(
 ) -> str:
     """幂等缓存键 = (checksum, 解析器版本, 模型, prompt 版本, 分片策略, 图谱抽取开关)。
 
-    chunk_strategy/graph_extraction 为本次生效值（已按空间覆盖解析，见 ChunkStep）：
+    chunk_strategy/graph_extraction 为本次生效值（已按运行覆盖/空间覆盖解析，见 ChunkStep）：
     纳入缓存键是为了让切换这两项设置后重跑能绕过旧缓存，而不是"设置改了但命中
     旧分片结果不重跑"（03 文档 §二.5）。
     """

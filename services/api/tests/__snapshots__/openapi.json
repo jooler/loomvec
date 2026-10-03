@@ -3604,6 +3604,38 @@
       },
       "RetryRequest": {
         "properties": {
+          "chunk_strategy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "llm",
+                  "structural"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "本次运行的分片策略覆盖（优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效",
+            "title": "Chunk Strategy"
+          },
+          "graph_extraction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "on",
+                  "off"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "本次运行的图谱抽取开关覆盖（优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效",
+            "title": "Graph Extraction"
+          },
           "step": {
             "anyOf": [
               {

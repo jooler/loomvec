@@ -62,7 +62,14 @@ async def retry_asset(
     _require_asset_manager(
         access, asset, user_uuid(identity) if not identity.user_id.startswith("apikey:") else None
     )
-    await asset_service.retry_asset(session, celery=celery, asset_id=asset_id, step=body.step)
+    await asset_service.retry_asset(
+        session,
+        celery=celery,
+        asset_id=asset_id,
+        step=body.step,
+        chunk_strategy=body.chunk_strategy,
+        graph_extraction=body.graph_extraction,
+    )
     latest = (await ProcessingJobRepo(session).recent_for_asset(asset_id, limit=1))[0]
     return JobOut(
         id=latest.id,

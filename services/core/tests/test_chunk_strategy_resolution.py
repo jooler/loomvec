@@ -1,12 +1,15 @@
-"""ChunkStep 分片策略/图谱抽取开关的解析：空间覆盖 > 全局配置，脏数据防御性回落。
+"""ChunkStep 分片策略/图谱抽取开关的解析：本次运行覆盖 > 空间覆盖 > 全局配置，
+脏数据防御性回落。
 
 不经 DB/LLM——纯函数级测试，整条管线的端到端行为见
-services/worker/tests/test_pipeline_integration.py。
+services/worker/tests/test_pipeline_integration.py 与
+services/api/tests/test_integration_p3.py（retry 覆盖重建）。
 """
 
 from __future__ import annotations
 
-from loomvec.core.config import Settings
+from loomvec.core.config import GraphSettings, PipelineSettings, Settings
+from loomvec.core.constants import DEFAULT_CHUNK_STRATEGY
 from loomvec.core.db.models import Space, SpaceType
 from loomvec.core.pipeline.base import PipelineDeps
 from loomvec.core.pipeline.steps import ChunkStep
@@ -67,3 +70,31 @@ def test_graph_extraction_space_override_wins():
 def test_graph_extraction_invalid_space_value_falls_back_to_global():
     deps = _deps(graph_extraction_enabled=True)
     assert ChunkStep._resolve_graph_extraction(deps, _space(graph_extraction="maybe")) is True
+
+
+def test_builtin_defaults_are_structural_and_extraction_off():
+    # 内置默认（无 config/loomvec.json 覆盖时）：规则分片、不抽实体
+    assert PipelineSettings().chunk_strategy == "structural"
+    assert GraphSettings().extraction_enabled is False
+    assert PipelineSettings().chunk_strategy == DEFAULT_CHUNK_STRATEGY
+
+
+def test_run_override_beats_space_and_global():
+    deps = _deps(chunk_strategy="structural", graph_extraction_enabled=False)
+    space = _space(chunk_strategy="structural", graph_extraction="off")
+    assert ChunkStep._resolve_chunk_strategy(deps, space, "llm") == "llm"
+    assert ChunkStep._resolve_graph_extraction(deps, space, "on") is True
+
+    deps = _deps(chunk_strategy="llm", graph_extraction_enabled=True)
+    space = _space(chunk_strategy="llm", graph_extraction="on")
+    assert ChunkStep._resolve_chunk_strategy(deps, space, "structural") == "structural"
+    assert ChunkStep._resolve_graph_extraction(deps, space, "off") is False
+
+
+def test_run_override_none_or_invalid_falls_through_to_space():
+    deps = _deps(chunk_strategy="llm", graph_extraction_enabled=True)
+    space = _space(chunk_strategy="structural", graph_extraction="off")
+    assert ChunkStep._resolve_chunk_strategy(deps, space, None) == "structural"
+    assert ChunkStep._resolve_chunk_strategy(deps, space, "bogus") == "structural"
+    assert ChunkStep._resolve_graph_extraction(deps, space, None) is False
+    assert ChunkStep._resolve_graph_extraction(deps, space, "maybe") is False

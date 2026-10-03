@@ -2,7 +2,7 @@
  * Finder 主容器：macOS Finder 式空间资产管理（web/ops 共用）。
  *
  * - 三视图（列表/图标预览/分栏）+ 面包屑导航；
- * - 右键菜单（打开/重命名/按论文元数据重命名/拷贝/剪切/粘贴/移到/复制到/删除/重试）；
+ * - 右键菜单（打开/重命名/按论文元数据重命名/拷贝/剪切/粘贴/移到/复制到/删除/重试/LLM重建）；
  * - 拖拽移动（条目 → 文件夹/列/面包屑）与拖拽上传（文件 → 当前文件夹）；
  * - 键盘：⌘C/⌘X/⌘V 剪贴板、Delete 删除、Enter 打开；
  * - 查看覆盖层（viewer 插槽）占满本容器上层。
@@ -24,6 +24,7 @@ import {
   Upload,
   Eye,
   RotateCcw,
+  Sparkles,
   WandSparkles,
 } from 'lucide-react';
 import { cn } from 'cn';
@@ -150,6 +151,8 @@ export function Finder(props: FinderProps) {
     folderIds: string[];
     assetIds: string[];
   } | null>(null);
+  /** LLM重建二次确认：待重建的资产 id（null 关闭）。 */
+  const [llmRebuildTarget, setLlmRebuildTarget] = useState<string[] | null>(null);
   /** 移动/复制对话框：null 关闭；mode 区分移动与复制。 */
   const [relocate, setRelocate] = useState<{
     mode: 'move' | 'copy';
@@ -592,6 +595,10 @@ export function Finder(props: FinderProps) {
                   .filter((a): a is FinderAsset => !!a);
                 const showAutoRename = selected.some(isPdfAsset);
                 const showRetry = selected.some((a) => a.status === 'failed');
+                // 已处理完或失败的可升级重建；排队/处理中的不显示。图片不走 LLM 分片/抽取，排除
+                const canLlmRebuild = (a: FinderAsset) =>
+                  !a.is_image && (a.status === 'ready' || a.status === 'failed');
+                const showLlmRebuild = !!actions.llmRebuildAssets && selected.some(canLlmRebuild);
                 return (
                   <>
                     {showAutoRename && (
@@ -622,6 +629,19 @@ export function Finder(props: FinderProps) {
                         <RotateCcw /> {t('finder.retry')}
                       </ContextMenuItem>
                     ) : null}
+                    {showLlmRebuild && (
+                      <ContextMenuItem
+                        onClick={() => {
+                          const ids = selectionSnapshot(kind, id).assetIds.filter((aid) => {
+                            const a = findAssetById(aid);
+                            return a ? canLlmRebuild(a) : true;
+                          });
+                          if (ids.length > 0) setLlmRebuildTarget(ids);
+                        }}
+                      >
+                        <Sparkles /> {t('finder.llmRebuild')}
+                      </ContextMenuItem>
+                    )}
                   </>
                 );
               })()}
@@ -909,6 +929,33 @@ export function Finder(props: FinderProps) {
               }}
             >
               {t('action.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* LLM重建确认（调用 LLM 产生费用；只影响本次运行，不改空间配置） */}
+      <AlertDialog
+        open={llmRebuildTarget !== null}
+        onOpenChange={(o) => !o && setLlmRebuildTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('finder.llmRebuildTitle', { count: llmRebuildTarget?.length ?? 0 })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t('finder.llmRebuildDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('action.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const ids = llmRebuildTarget;
+                setLlmRebuildTarget(null);
+                if (ids && actions.llmRebuildAssets) runQuietly(actions.llmRebuildAssets(ids));
+              }}
+            >
+              {t('finder.llmRebuildConfirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

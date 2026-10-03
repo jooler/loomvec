@@ -142,6 +142,19 @@ export function AssetsPage() {
       autoRenameAssets: async (assetIds) => {
         await m.autoRenameAssets.mutateAsync(assetIds);
       },
+      llmRebuildAssets: async (assetIds) => {
+        // 从 parse 全量重建：失败资产可能没有解析产物，若固定从 chunk 起跑会必然失败。
+        // 限并发 3、单条失败不中断整批（逐条成功/失败提示由 retryAsset 负责）
+        const body = { step: 'parse', chunk_strategy: 'llm', graph_extraction: 'on' } as const;
+        const CONCURRENCY = 3;
+        for (let i = 0; i < assetIds.length; i += CONCURRENCY) {
+          await Promise.allSettled(
+            assetIds
+              .slice(i, i + CONCURRENCY)
+              .map((assetId) => m.retryAsset.mutateAsync({ assetId, body })),
+          );
+        }
+      },
     }),
     [m, t],
   );

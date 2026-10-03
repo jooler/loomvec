@@ -47,19 +47,38 @@ class PipelineRunner:
         self.deps = deps
 
     async def run(
-        self, asset_id: uuid.UUID, from_step: str = "parse", attempt: int = 1
+        self,
+        asset_id: uuid.UUID,
+        from_step: str = "parse",
+        attempt: int = 1,
+        *,
+        chunk_strategy: str | None = None,
+        graph_extraction: str | None = None,
     ) -> list[dict]:
+        """chunk_strategy/graph_extraction：本次运行覆盖（不落库），优先级高于 Space 覆盖
+        与全局默认（见 pipeline.base.resolve_chunk_strategy）。chunk 步据此分片/抽取，
+        graph 步据此复核 skipped，两步口径一致。"""
         if from_step not in PIPELINE_STEPS:
             raise ValidationError(f"未知步骤：{from_step}", steps=PIPELINE_STEPS)
+        overrides = {"chunk_strategy": chunk_strategy, "graph_extraction": graph_extraction}
         results: list[dict] = []
         for name in PIPELINE_STEPS[PIPELINE_STEPS.index(from_step) :]:
-            results.append(await self._run_step(asset_id, name, attempt=attempt))
+            step_kwargs = overrides if name in ("chunk", "graph") else {}
+            results.append(
+                await self._run_step(asset_id, name, attempt=attempt, step_kwargs=step_kwargs)
+            )
             if name == "chunk":
                 # 须在 LAST_STEP 置 ready 之前：前端列表只在 processing 期间轮询
                 await auto_rename_asset(self.deps, asset_id)
         return results
 
-    async def _run_step(self, asset_id: uuid.UUID, step_name: str, attempt: int = 1) -> dict:
+    async def _run_step(
+        self,
+        asset_id: uuid.UUID,
+        step_name: str,
+        attempt: int = 1,
+        step_kwargs: dict[str, Any] | None = None,
+    ) -> dict:
         deps = self.deps
         step = _step_instance(step_name, deps)
         now = datetime.now(UTC)
@@ -99,7 +118,7 @@ class PipelineRunner:
             job_id = job.id
             meta: dict = {}
             try:
-                meta = await step.run(session, asset, version)
+                meta = await step.run(session, asset, version, **(step_kwargs or {}))
             except MineruBusyError:
                 # 名额满不是失败：撤掉本次任务行、资产保持 processing，由任务层延后重入队
                 await session.delete(job)
