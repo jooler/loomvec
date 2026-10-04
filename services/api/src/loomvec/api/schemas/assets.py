@@ -83,6 +83,7 @@ class AssetListOut(BaseModel):
 class TagOut(BaseModel):
     id: uuid.UUID
     name: str
+    parent_id: uuid.UUID | None = None
 
 
 class RenditionOut(BaseModel):

@@ -20,7 +20,7 @@ from loomvec.api.deps import (
     require_space,
 )
 from loomvec.api.services import spaces as space_service
-from loomvec.core.authz import SpaceAccess
+from loomvec.core.authz import SpaceAccess, visible_tag_ids
 from loomvec.core.constants import (
     CHUNK_PRESETS,
     CHUNK_STRATEGIES,
@@ -115,6 +115,7 @@ class CategoryOut(BaseModel):
 class TagOut(BaseModel):
     id: uuid.UUID
     name: str
+    parent_id: uuid.UUID | None = None
 
 
 def _out(s, my_role: str | None = None, member_count: int | None = None) -> SpaceOut:
@@ -299,5 +300,12 @@ async def list_space_tags(
         .scalars()
         .all()
     )
+    if access.role == SpaceRole.VIEWER:
+        if access.member is None:
+            used = []
+        else:
+            used = [tag_id for tag_id in used if tag_id in await visible_tag_ids(
+                session, user_id=access.member.user_id
+            )]
     rows = await TagRepo(session).list_by_ids(list(used))
-    return [TagOut(id=t.id, name=t.name) for t in rows]
+    return [TagOut(id=t.id, name=t.name, parent_id=t.parent_id) for t in rows]

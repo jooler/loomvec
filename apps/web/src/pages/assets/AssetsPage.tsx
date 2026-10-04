@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { ExternalLink } from 'lucide-react';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
-import { useSpace, useSpaceCategories, useSpaceTags } from '@/hooks';
+import { useKnowledgeBases, useSpace, useSpaceCategories, useSpaceTags } from '@/hooks';
+import { KnowledgeBaseTree } from '@/components/knowledge-base-tree';
 import {
   AssetViewerOverlay,
   Finder,
@@ -40,6 +41,7 @@ export function AssetsPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const { t } = useTranslation('assets');
   const [filters, setFilters] = useState<AssetFilters>(EMPTY_FILTERS);
+  const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<string | null>(null);
   // 目录链受控（app 持有：当前文件夹取数 + 分栏每列取数都依赖它）
   const [path, setPath] = useState<string[]>([]);
   const currentFolderId = path.length > 0 ? path[path.length - 1] : null;
@@ -58,7 +60,15 @@ export function AssetsPage() {
   const canWrite = space?.my_role === 'owner' || space?.my_role === 'editor';
 
   const tags = useSpaceTags(spaceId);
+  const knowledgeBases = useKnowledgeBases(spaceId);
   const categories = useSpaceCategories(spaceId);
+
+  useEffect(() => {
+    setSelectedKnowledgeBaseId(null);
+    setFilters(EMPTY_FILTERS);
+    setPath([]);
+    setViewingId(null);
+  }, [spaceId]);
 
   const folders = useFinderFolders(api, spaceId);
   const assets = useFinderAssets(api, spaceId, currentFolderId, {
@@ -69,18 +79,13 @@ export function AssetsPage() {
     categoryId: filters.categoryId,
   });
   // 分栏视图：列链上每级文件夹（含根）各一份资产查询（缓存与列表视图互通）
-  const columnsAssetsOf = useColumnsFolderAssets(
-    api,
-    spaceId,
-    [null, ...path],
-    {
-      ext: filters.ext,
-      status: filters.status,
-      review_status: filters.review_status,
-      tagIds: filters.tagIds,
-      categoryId: filters.categoryId,
-    },
-  );
+  const columnsAssetsOf = useColumnsFolderAssets(api, spaceId, [null, ...path], {
+    ext: filters.ext,
+    status: filters.status,
+    review_status: filters.review_status,
+    tagIds: filters.tagIds,
+    categoryId: filters.categoryId,
+  });
   const thumbFor = useFinderThumbs(api, assets.data?.items ?? []);
   const m = useFinderMutations(api, spaceId);
 
@@ -183,67 +188,79 @@ export function AssetsPage() {
       {/* Finder 高度上下文：视口减去 Finder 之外的页头（p-6 上 24 + 标题行 32（含返回按钮）
           + 间距 32 + 页签 37 + 底部 p-6 24 ≈ 149px），工具栏/筛选/内容区都在容器内 */}
       <div className="flex h-[calc(100dvh-149px)] min-h-96 flex-col">
-        <Finder
-        key={spaceId}
-        spaceName={space?.name}
-        folders={folders.data ?? []}
-        assets={assets.data?.items ?? []}
-        path={path}
-        onPathChange={setPath}
-        columnsAssetsOf={columnsAssetsOf}
-        loading={folders.isLoading || assets.isLoading}
-        error={
-          folders.isError
-            ? (folders.error as Error).message
-            : assets.isError
-              ? (assets.error as Error).message
-              : null
-        }
-        canWrite={canWrite}
-        actions={actions}
-        onUploadFiles={(files) => void onUploadFiles(files)}
-        onRefresh={() => {
-          void folders.refetch();
-          void assets.refetch();
-        }}
-        thumbFor={thumbFor}
-        onOpenAsset={(id) => setViewingId(id)}
-        toolbarExtra={
-          <>
-            <AssetsFiltersBar
-              spaceId={spaceId}
-              filters={filters}
-              onFilterChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
-              tags={tags.data ?? []}
-              tagsLoading={tags.isLoading}
-              categories={categories.data ?? []}
-              onRefresh={() => void assets.refetch()}
-            />
-            {uploading && <Progress value={progress} className="w-full max-w-md" />}
-          </>
-        }
-        viewer={
-          <AssetViewerOverlay
-            client={api}
-            assetId={viewingId}
-            onClose={() => setViewingId(null)}
-            hasPrev={viewIndex > 0}
-            hasNext={viewIndex >= 0 && viewIndex < viewList.length - 1}
-            onPrev={() => setViewingId(viewList[viewIndex - 1]?.id ?? null)}
-            onNext={() => setViewingId(viewList[viewIndex + 1]?.id ?? null)}
-            renderMedia={(assetId) => (
-              <p className="text-right">
-                <Link
-                  to={`/a/${assetId}`}
-                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline"
-                >
-                  <ExternalLink className="size-3" /> {t('openDetail')}
-                </Link>
-              </p>
-            )}
+        <div className="flex min-h-0 flex-1 gap-3">
+          <KnowledgeBaseTree
+            nodes={knowledgeBases.data ?? []}
+            selectedId={selectedKnowledgeBaseId}
+            onSelect={(id) => {
+              setSelectedKnowledgeBaseId(id);
+              setFilters((current) => ({ ...current, tagIds: id ? [id] : [] }));
+            }}
           />
-        }
-      />
+          <div className="min-w-0 flex-1">
+            <Finder
+              key={spaceId}
+              spaceName={space?.name}
+              folders={folders.data ?? []}
+              assets={assets.data?.items ?? []}
+              path={path}
+              onPathChange={setPath}
+              columnsAssetsOf={columnsAssetsOf}
+              loading={folders.isLoading || assets.isLoading}
+              error={
+                folders.isError
+                  ? (folders.error as Error).message
+                  : assets.isError
+                    ? (assets.error as Error).message
+                    : null
+              }
+              canWrite={canWrite}
+              actions={actions}
+              onUploadFiles={(files) => void onUploadFiles(files)}
+              onRefresh={() => {
+                void folders.refetch();
+                void assets.refetch();
+              }}
+              thumbFor={thumbFor}
+              onOpenAsset={(id) => setViewingId(id)}
+              toolbarExtra={
+                <>
+                  <AssetsFiltersBar
+                    spaceId={spaceId}
+                    filters={filters}
+                    onFilterChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
+                    tags={tags.data ?? []}
+                    tagsLoading={tags.isLoading}
+                    categories={categories.data ?? []}
+                    onRefresh={() => void assets.refetch()}
+                  />
+                  {uploading && <Progress value={progress} className="w-full max-w-md" />}
+                </>
+              }
+              viewer={
+                <AssetViewerOverlay
+                  client={api}
+                  assetId={viewingId}
+                  onClose={() => setViewingId(null)}
+                  hasPrev={viewIndex > 0}
+                  hasNext={viewIndex >= 0 && viewIndex < viewList.length - 1}
+                  onPrev={() => setViewingId(viewList[viewIndex - 1]?.id ?? null)}
+                  onNext={() => setViewingId(viewList[viewIndex + 1]?.id ?? null)}
+                  renderMedia={(assetId) => (
+                    <p className="text-right">
+                      <Link
+                        to={`/a/${assetId}`}
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline"
+                      >
+                        <ExternalLink className="size-3" /> {t('openDetail')}
+                      </Link>
+                    </p>
+                  )}
+                />
+              }
+            />
+          </div>
+        </div>
       </div>
 
       {/* 去重确认：仍要上传 / 放弃 */}

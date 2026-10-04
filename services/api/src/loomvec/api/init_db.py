@@ -57,11 +57,36 @@ _ADDITIVE_COLUMNS: list[tuple[str, str]] = [
     # 分片策略 / 图谱抽取空间级覆盖（constants.CHUNK_STRATEGIES / GRAPH_EXTRACTION_MODES）
     ("space", "ADD COLUMN IF NOT EXISTS chunk_strategy VARCHAR(32)"),
     ("space", "ADD COLUMN IF NOT EXISTS graph_extraction VARCHAR(32)"),
+    # 层级知识库：Tag 仍兼容旧标签，只增加父节点关系
+    ("tag", "ADD COLUMN IF NOT EXISTS parent_id UUID"),
+    ("tag", "ADD COLUMN IF NOT EXISTS space_id UUID"),
+    ("asset_tag", "ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'manual'"),
+    ("asset_tag", "ADD COLUMN IF NOT EXISTS confidence FLOAT"),
 ]
 
 # 既有库的增量补索引（幂等；须在对应补列之后执行）
 _ADDITIVE_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS ix_api_key_user_id ON api_key (user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_tag_parent_id ON tag (parent_id)",
+    "CREATE INDEX IF NOT EXISTS ix_tag_space_id ON tag (space_id)",
+]
+
+# 新建知识库按空间隔离名称；存量库原约束是租户级名称唯一。
+# DO 块同时兼容已由 create_all 建好新约束的全新库和仍保留旧约束的存量库。
+_ADDITIVE_CONSTRAINTS: list[str] = [
+    "ALTER TABLE tag DROP CONSTRAINT IF EXISTS uq_tag_tenant_name",
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'tag'::regclass AND conname = 'uq_tag_space_name'
+        ) THEN
+            ALTER TABLE tag
+                ADD CONSTRAINT uq_tag_space_name UNIQUE (tenant_id, space_id, name);
+        END IF;
+    END $$
+    """,
 ]
 
 
@@ -70,6 +95,8 @@ async def _ensure_additive_columns(engine: AsyncEngine) -> None:
         for table, ddl in _ADDITIVE_COLUMNS:
             await conn.exec_driver_sql(f"ALTER TABLE {table} {ddl}")
         for ddl in _ADDITIVE_INDEXES:
+            await conn.exec_driver_sql(ddl)
+        for ddl in _ADDITIVE_CONSTRAINTS:
             await conn.exec_driver_sql(ddl)
 
 

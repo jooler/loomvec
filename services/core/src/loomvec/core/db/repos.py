@@ -35,6 +35,7 @@ from loomvec.core.db.models import (
     SpaceMember,
     SpaceUsage,
     Tag,
+    TagMember,
     User,
 )
 from loomvec.core.db.repository import Repository
@@ -156,6 +157,8 @@ class AssetRepo(Repository[Asset]):
         include_unreviewed: bool = False,
         strict_review: bool = False,
         tag_ids: list[uuid.UUID] | None = None,
+        visible_tag_ids: set[uuid.UUID] | None = None,
+        unrestricted_space_ids: set[uuid.UUID] | None = None,
         category_id: uuid.UUID | None = None,
         review_status: str | None = None,
         folder_id: str | None = None,
@@ -197,6 +200,19 @@ class AssetRepo(Repository[Asset]):
             stmt = stmt.where(
                 Asset.id.in_(select(AssetTag.asset_id).where(AssetTag.tag_id.in_(tag_ids)))
             )
+        if visible_tag_ids is not None or unrestricted_space_ids is not None:
+            visibility_conditions = []
+            if unrestricted_space_ids:
+                visibility_conditions.append(Asset.space_id.in_(unrestricted_space_ids))
+            if visible_tag_ids:
+                visibility_conditions.append(
+                    Asset.id.in_(
+                        select(AssetTag.asset_id).where(AssetTag.tag_id.in_(visible_tag_ids))
+                    )
+                )
+            if not visibility_conditions:
+                return []
+            stmt = stmt.where(or_(*visibility_conditions))
         if cursor_created_at is not None and cursor_id is not None:
             from loomvec.core.db.pagination import Cursor, apply_cursor
 
@@ -215,6 +231,8 @@ class AssetRepo(Repository[Asset]):
         include_unreviewed: bool = False,
         strict_review: bool = False,
         tag_ids: list[uuid.UUID] | None = None,
+        visible_tag_ids: set[uuid.UUID] | None = None,
+        unrestricted_space_ids: set[uuid.UUID] | None = None,
         category_id: uuid.UUID | None = None,
         review_status: str | None = None,
         folder_id: str | None = None,
@@ -230,6 +248,8 @@ class AssetRepo(Repository[Asset]):
             include_unreviewed=include_unreviewed,
             strict_review=strict_review,
             tag_ids=tag_ids,
+            visible_tag_ids=visible_tag_ids,
+            unrestricted_space_ids=unrestricted_space_ids,
             category_id=category_id,
             review_status=review_status,
             folder_id=folder_id,
@@ -303,14 +323,23 @@ class TagRepo(Repository[Tag]):
     model = Tag
 
     async def get_or_create(
-        self, *, tenant_id: uuid.UUID | None, name: str, created_by: uuid.UUID | None = None
+        self,
+        *,
+        tenant_id: uuid.UUID | None,
+        name: str,
+        space_id: uuid.UUID | None = None,
+        created_by: uuid.UUID | None = None,
     ) -> Tag:
         stmt = self._base_select(name=name)
         if tenant_id is not None:
             stmt = stmt.where(Tag.tenant_id == tenant_id)
+        if space_id is not None:
+            stmt = stmt.where((Tag.space_id == space_id) | Tag.space_id.is_(None))
         tag = (await self.session.execute(stmt)).scalar_one_or_none()
         if tag is None:
-            tag = await self.create(tenant_id=tenant_id, name=name, created_by=created_by)
+            tag = await self.create(
+                tenant_id=tenant_id, space_id=space_id, name=name, created_by=created_by
+            )
         return tag
 
     async def list_by_ids(self, ids: list[uuid.UUID]) -> list[Tag]:
@@ -318,6 +347,81 @@ class TagRepo(Repository[Tag]):
             return []
         stmt = self._base_select().where(Tag.id.in_(ids)).order_by(Tag.name.asc())
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_for_tenant(
+        self, tenant_id: uuid.UUID | None, *, space_id: uuid.UUID | None = None
+    ) -> list[Tag]:
+        stmt = self._base_select(tenant_id=tenant_id)
+        if space_id is not None:
+            stmt = stmt.where((Tag.space_id == space_id) | Tag.space_id.is_(None))
+        stmt = stmt.order_by(Tag.name.asc(), Tag.id.asc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def descendant_ids(self, tag_id: uuid.UUID) -> list[uuid.UUID]:
+        """返回节点自身及全部后代；层级关系数量通常很小，统一在服务层展开。"""
+        rows = await self.session.execute(
+            select(Tag.id, Tag.parent_id).where(Tag.deleted_at.is_(None))
+        )
+        children: dict[uuid.UUID | None, list[uuid.UUID]] = {}
+        for child_id, parent_id in rows:
+            children.setdefault(parent_id, []).append(child_id)
+        result = [tag_id]
+        queue = [tag_id]
+        while queue:
+            for child_id in children.get(queue.pop(), []):
+                result.append(child_id)
+                queue.append(child_id)
+        return result
+
+    async def ancestor_ids(self, tag_id: uuid.UUID) -> list[uuid.UUID]:
+        rows = await self.session.execute(
+            select(Tag.id, Tag.parent_id).where(Tag.deleted_at.is_(None))
+        )
+        parents = {tag_id_: parent_id for tag_id_, parent_id in rows}
+        result: list[uuid.UUID] = []
+        current = tag_id
+        while current in parents:
+            parent = parents[current]
+            if parent is None:
+                break
+            if parent in result:
+                break
+            result.append(parent)
+            current = parent
+        return result
+
+    async def member_for(self, tag_id: uuid.UUID, user_id: uuid.UUID) -> TagMember | None:
+        stmt = select(TagMember).where(TagMember.tag_id == tag_id, TagMember.user_id == user_id)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def members_for(self, tag_id: uuid.UUID) -> list[TagMember]:
+        stmt = (
+            select(TagMember).where(TagMember.tag_id == tag_id).order_by(TagMember.created_at.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def set_member(self, *, tag_id: uuid.UUID, user_id: uuid.UUID, role) -> TagMember:
+        member = await self.member_for(tag_id, user_id)
+        if member is None:
+            member = TagMember(
+                tag_id=tag_id,
+                user_id=user_id,
+                role=role,
+                tenant_id=(await self.session.get(Tag, tag_id)).tenant_id,
+            )
+            self.session.add(member)
+        else:
+            member.role = role
+        await self.session.flush()
+        return member
+
+    async def remove_member(self, *, tag_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        member = await self.member_for(tag_id, user_id)
+        if member is None:
+            return False
+        await self.session.delete(member)
+        await self.session.flush()
+        return True
 
     async def tags_for_asset(self, asset_id: uuid.UUID) -> list[Tag]:
         stmt = (
@@ -329,16 +433,26 @@ class TagRepo(Repository[Tag]):
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def set_asset_tags(self, asset: Asset, tags: list[Tag]) -> None:
-        """整体替换资产的标签关联。"""
+        """替换人工标签，保留管线自动归类的关联。"""
         existing = (
             (await self.session.execute(select(AssetTag).where(AssetTag.asset_id == asset.id)))
             .scalars()
             .all()
         )
         for row in existing:
-            await self.session.delete(row)
+            if row.source != "auto":
+                await self.session.delete(row)
+        automatic_ids = {row.tag_id for row in existing if row.source == "auto"}
         for tag in tags:
-            self.session.add(AssetTag(asset_id=asset.id, tag_id=tag.id, tenant_id=asset.tenant_id))
+            if tag.id not in automatic_ids:
+                self.session.add(
+                    AssetTag(
+                        asset_id=asset.id,
+                        tag_id=tag.id,
+                        tenant_id=asset.tenant_id,
+                        source="manual",
+                    )
+                )
         await self.session.flush()
 
 

@@ -282,7 +282,10 @@ async def update_asset(
                 raise ValidationError("标签名不能为空")
             tags.append(
                 await tag_repo.get_or_create(
-                    tenant_id=asset.tenant_id, name=norm, created_by=asset.created_by
+                    tenant_id=asset.tenant_id,
+                    space_id=asset.space_id,
+                    name=norm,
+                    created_by=asset.created_by,
                 )
             )
         await tag_repo.set_asset_tags(asset, tags)

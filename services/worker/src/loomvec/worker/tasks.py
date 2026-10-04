@@ -158,6 +158,7 @@ def process_asset(
             results = await PipelineRunner(deps).run(
                 uuid.UUID(asset_id), from_step, attempt=self.request.retries + 1, **overrides
             )
+            await _auto_assign_knowledge_bases(deps, asset_id)
             await _maybe_trigger_merge(deps, asset_id)
         finally:
             await _dispose_deps(deps)
@@ -199,6 +200,131 @@ async def _maybe_trigger_merge(deps: PipelineDeps, asset_id: str) -> None:
                 )
     except Exception as e:
         logger.warning("merge_trigger_check_failed", asset_id=asset_id, error=str(e))
+
+
+async def _auto_assign_knowledge_bases(deps: PipelineDeps, asset_id: str) -> None:
+    """管线完成后按标题/摘要/正文给文献挂一个或多个知识库节点。
+
+    自动分类失败不影响已完成的解析和向量化；规则命中作为 LLM 不可用时的确定性兜底。
+    只写直接命中的节点，父级通过知识库树查询自动包含。
+    """
+    from sqlalchemy import select
+
+    from loomvec.core.db.models import Asset, AssetTag, AssetVersion, Tag
+
+    try:
+        async with deps.session_factory() as session:
+            asset = (
+                await session.execute(
+                    select(Asset).where(Asset.id == uuid.UUID(asset_id), Asset.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if asset is None:
+                return
+            tags = list(
+                (
+                    await session.execute(
+                        select(Tag).where(
+                            Tag.deleted_at.is_(None),
+                            Tag.tenant_id == asset.tenant_id,
+                            (Tag.space_id == asset.space_id) | Tag.space_id.is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not tags:
+                return
+            version = (
+                await session.execute(
+                    select(AssetVersion)
+                    .where(AssetVersion.asset_id == asset.id)
+                    .order_by(AssetVersion.version.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            text_parts = [asset.name]
+            pdf_info = asset.asset_meta.get("pdf_info") or {}
+            text_parts.extend(str(pdf_info.get(k) or "") for k in ("title", "subject", "author"))
+            if version is not None:
+                parse_meta = (version.version_meta or {}).get("parse") or {}
+                md_key = parse_meta.get("md_key")
+                if md_key:
+                    text_parts.append(
+                        (
+                            await deps.storage.get_object(
+                                deps.settings.storage.bucket_derived,
+                                md_key,
+                            )
+                        ).decode("utf-8", errors="ignore")[:24000]
+                    )
+            corpus = "\n".join(text_parts)
+            chosen: dict[uuid.UUID, float] = {}
+            if deps.ai.llm_available():
+                catalog = "\n".join(f"{tag.id}\t{tag.name}" for tag in tags)
+                try:
+                    result = await deps.ai.complete_json(
+                        [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "你是文献知识库分类器。只从给定知识库中选择直接相关的节点，"
+                                    "输出 JSON，仅返回 tags 数组，每项包含 id 和 confidence。"
+                                    "不要选择仅因词面偶然出现的节点。"
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": f"知识库目录：\n{catalog}\n\n文献内容：\n{corpus}",
+                            },
+                        ],
+                        temperature=0,
+                        max_tokens=1000,
+                    )
+                    for item in result.get("tags") or []:
+                        try:
+                            tag_id = uuid.UUID(str(item.get("id")))
+                            confidence = float(item.get("confidence", 0))
+                        except (TypeError, ValueError):
+                            continue
+                        if tag_id in {tag.id for tag in tags} and confidence >= 0.75:
+                            chosen[tag_id] = confidence
+                except Exception as e:
+                    logger.info(
+                        "knowledge_base_llm_classification_fallback",
+                        asset_id=asset_id,
+                        error=str(e),
+                    )
+            if not chosen:
+                folded = corpus.casefold()
+                chosen = {
+                    tag.id: 1.0
+                    for tag in tags
+                    if tag.name.strip() and tag.name.casefold() in folded
+                }
+            existing = {
+                row.tag_id
+                for row in (
+                    await session.execute(select(AssetTag).where(AssetTag.asset_id == asset.id))
+                )
+                .scalars()
+                .all()
+            }
+            for tag_id, confidence in chosen.items():
+                if tag_id not in existing:
+                    session.add(
+                        AssetTag(
+                            tenant_id=asset.tenant_id,
+                            asset_id=asset.id,
+                            tag_id=tag_id,
+                            source="auto",
+                            confidence=confidence,
+                        )
+                    )
+            await session.commit()
+    except Exception as e:
+        logger.warning("knowledge_base_auto_classification_failed", asset_id=asset_id, error=str(e))
 
 
 @celery_app.task(name="worker.ping")

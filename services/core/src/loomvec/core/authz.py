@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.core.db.models import (
+    AssetTag,
     ReviewStatus,
     Space,
     SpaceGroupVisibility,
@@ -33,6 +34,8 @@ from loomvec.core.db.models import (
     SpaceMember,
     SpaceRole,
     SpaceType,
+    Tag,
+    TagMember,
     UserGroup,
     UserGroupMember,
 )
@@ -43,6 +46,70 @@ ROLE_RANK: dict[SpaceRole, int] = {
     SpaceRole.EDITOR: 1,
     SpaceRole.OWNER: 2,
 }
+
+
+async def visible_tag_ids(session: AsyncSession, *, user_id: uuid.UUID) -> set[uuid.UUID]:
+    """用户可见的知识库节点：直接授权向下继承到全部子节点。"""
+    rows = await session.execute(select(Tag.id, Tag.parent_id).where(Tag.deleted_at.is_(None)))
+    children: dict[uuid.UUID | None, list[uuid.UUID]] = {}
+    for tag_id, parent_id in rows:
+        children.setdefault(parent_id, []).append(tag_id)
+    roots = await session.execute(
+        select(TagMember.tag_id)
+        .join(Tag, Tag.id == TagMember.tag_id)
+        .where(TagMember.user_id == user_id, Tag.deleted_at.is_(None))
+    )
+    result: set[uuid.UUID] = set()
+    queue = list(roots.scalars().all())
+    while queue:
+        tag_id = queue.pop()
+        if tag_id in result:
+            continue
+        result.add(tag_id)
+        queue.extend(children.get(tag_id, []))
+    return result
+
+
+async def tag_role(
+    session: AsyncSession, *, tag_id: uuid.UUID, user_id: uuid.UUID
+) -> SpaceRole | None:
+    """返回知识库节点的有效角色；父节点授权向下继承，取最高角色。"""
+    tags = {
+        t.id: t
+        for t in (await session.execute(select(Tag).where(Tag.deleted_at.is_(None))))
+        .scalars()
+        .all()
+    }
+    memberships = {
+        m.tag_id: m.role
+        for m in (await session.execute(select(TagMember).where(TagMember.user_id == user_id)))
+        .scalars()
+        .all()
+    }
+    current = tag_id
+    best: SpaceRole | None = None
+    while current in tags:
+        role = memberships.get(current)
+        if role is not None and (best is None or at_least(role, best)):
+            best = role
+        parent = tags[current].parent_id
+        if parent is None or parent == current:
+            break
+        current = parent
+    return best
+
+
+async def asset_visible_via_tags(
+    session: AsyncSession, *, asset_id: uuid.UUID, user_id: uuid.UUID
+) -> bool:
+    """文献是否至少挂在一个用户有权限的知识库节点上。"""
+    allowed = await visible_tag_ids(session, user_id=user_id)
+    if not allowed:
+        return False
+    stmt = select(AssetTag.asset_id).where(
+        AssetTag.asset_id == asset_id, AssetTag.tag_id.in_(allowed)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
 
 
 def at_least(role: SpaceRole | str, min_role: SpaceRole | str) -> bool:

@@ -125,11 +125,12 @@ DEFAULT_CHUNK_STRATEGY = "structural"
 GRAPH_EXTRACTION_MODES: tuple[str, ...] = ("on", "off")
 
 # 空间可选嵌入模型白名单（创建/设置空间时校验；P2 仅记录选择，实际路由随网关配置）。
-# bge-m3 为本地 Infinity 端点别名（scripts/start-models-gpu.sh，1024 维）
+# bge-m3 / qwen3-embedding-0.6b 为本地向量端点别名（1024 维）
 EMBEDDING_MODELS: tuple[str, ...] = (
     "text-embedding-v4",
     "multimodal-embedding-v1",
     "bge-m3",
+    "qwen3-embedding-0.6b",
     "mock",
 )
 

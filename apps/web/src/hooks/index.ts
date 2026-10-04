@@ -109,7 +109,11 @@ export function useAgentStatus() {
     queryFn: async () => {
       const { data } = await api.GET('/api/v1/agent/status', {});
       // 查询失败（agent 服务未部署）按禁用展示，不阻塞页面
-      return (data ?? {}) as unknown as { enabled?: boolean; runtime_ok?: boolean; reason?: string | null };
+      return (data ?? {}) as unknown as {
+        enabled?: boolean;
+        runtime_ok?: boolean;
+        reason?: string | null;
+      };
     },
     staleTime: 60_000,
     retry: false,
@@ -242,6 +246,29 @@ export function useSpaceTags(spaceId?: string | null) {
       });
       if (r.error) throw new Error(extractApiError(r.error, t('assets:loadTagsFailed')));
       return r.data.map((t) => ({ id: t.id, name: t.name }));
+    },
+    staleTime: 60_000,
+  });
+}
+
+/** 层级知识库树：节点权限由后端按当前用户裁剪，返回平面节点供前端组树。 */
+export interface KnowledgeBaseNode {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  role?: string | null;
+}
+
+export function useKnowledgeBases(spaceId?: string | null) {
+  return useQuery({
+    queryKey: ['knowledge-bases', spaceId],
+    enabled: !!spaceId,
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/spaces/{space_id}/knowledge-bases', {
+        params: { path: { space_id: spaceId! } },
+      });
+      if (error) throw new Error(extractApiError(error, t('assets:loadKnowledgeBasesFailed')));
+      return data.items as KnowledgeBaseNode[];
     },
     staleTime: 60_000,
   });

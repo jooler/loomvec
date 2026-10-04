@@ -22,7 +22,7 @@
 #   cpu（默认）= compose 容器版随 compose 拉起；gpu = 宿主机 GPU 版（scripts/start-mineru-gpu.sh），
 #   start 时把容器版 mineru 移出 compose 服务集（tmp/compose-mineru-gpu.yaml，幂等生成不入库）；
 #   compose.override.yaml 手工以 profile 隔离 mineru 的旧用法继续兼容（叠加时以并集为准）；
-# - 本地模型服务（scripts/start-models-gpu.sh：vLLM/Infinity）按配置派生：ai.llm/embedding/
+# - 本地模型服务（scripts/start-models-gpu.sh 或 scripts/start-qwen-models-gpu.sh）按配置派生：ai.llm/embedding/
 #   rerank/clip 的 base_url 指向本地推理端口（127.0.0.1:MODELS_LLM_PORT/MODELS_INFINITY_PORT，
 #   缺省 38010/38011）的通道自动后台拉起（只加载所选通道）；由本脚本拉起的随 stop 一并停止；
 # - MinerU / 本地模型首次启动需下载权重（1~2GB / 约 13GB），未就绪只告警不阻塞（相应功能暂不可用）。
@@ -49,10 +49,14 @@ print("MINERU_DEVICE\t" + str(mineru.get("device") or "cpu"))
 for name, channel in (("LLM_URL", "llm"), ("EMB_URL", "embedding"), ("RR_URL", "rerank"), ("CLIP_URL", "clip")):
     v = (ai.get(channel) or {}).get("base_url")
     print(f"{name}\t{v if isinstance(v, str) else ''}")
+for name, channel in (("EMB_MODEL", "embedding"), ("RR_MODEL", "rerank")):
+    v = (ai.get(channel) or {}).get("model")
+    print(f"{name}\t{v if isinstance(v, str) else ''}")
 PY
 )"
 MINERU_DEVICE="cpu"
 LLM_BASE_URL=""; EMB_BASE_URL=""; RR_BASE_URL=""; CLIP_BASE_URL=""
+EMB_MODEL=""; RR_MODEL=""
 while IFS=$'\t' read -r k v; do
   case "$k" in
     MINERU_DEVICE) MINERU_DEVICE="${v:-cpu}" ;;
@@ -60,6 +64,8 @@ while IFS=$'\t' read -r k v; do
     EMB_URL)  EMB_BASE_URL="$v" ;;
     RR_URL)   RR_BASE_URL="$v" ;;
     CLIP_URL) CLIP_BASE_URL="$v" ;;
+    EMB_MODEL) EMB_MODEL="$v" ;;
+    RR_MODEL) RR_MODEL="$v" ;;
   esac
 done <<< "$CFG_VALUES"
 
@@ -80,6 +86,10 @@ LOAD_LLM=0; LOAD_EMBEDDING=0; LOAD_RERANK=0; LOAD_CLIP=0
 [ -n "$CLIP_BASE_URL" ] && is_local_base "$CLIP_BASE_URL" "$MODELS_INFINITY_PORT" && LOAD_CLIP=1
 USE_LOCAL_MODELS=0
 [ "$LOAD_LLM" = 1 -o "$LOAD_EMBEDDING" = 1 -o "$LOAD_RERANK" = 1 -o "$LOAD_CLIP" = 1 ] && USE_LOCAL_MODELS=1
+MODEL_SCRIPT="scripts/start-models-gpu.sh"
+if [[ "$EMB_MODEL" =~ ^qwen3- || "$RR_MODEL" =~ ^qwen3- ]]; then
+  MODEL_SCRIPT="scripts/start-qwen-models-gpu.sh"
+fi
 
 # compose.override.yaml 不入库（本机开发定制，如用 profile 关掉容器版 MinerU 改走宿主机 GPU）：
 # 存在才并入；缺失时新环境按纯 compose.yaml 跑（MinerU 随容器启动）
@@ -163,8 +173,8 @@ do_stop() {
   fi
   # 本地模型服务：仅停由本脚本拉起的（标记文件）；外部手动 start 的不动（同 MinerU GPU 语义）
   if [ -f "$LOG_DIR/dev-models.started" ]; then
-    step "停止本地模型服务（scripts/start-models-gpu.sh）"
-    bash scripts/start-models-gpu.sh stop || warn "模型服务停止失败"
+    step "停止本地模型服务（$MODEL_SCRIPT）"
+    bash "$MODEL_SCRIPT" stop || warn "模型服务停止失败"
     rm -f "$LOG_DIR/dev-models.started"
   fi
   step "停止基础设施 + 监控容器"
@@ -185,7 +195,7 @@ do_status() {
   else fail "worker"; fi
   # 本地模型服务：启动过（models.pids 在）才探测，纯云端环境不显示噪音
   if [ -f "$LOG_DIR/models.pids" ]; then
-    bash scripts/start-models-gpu.sh status
+    bash "$MODEL_SCRIPT" status
   fi
 }
 
@@ -323,25 +333,25 @@ fi
 # 调用会失败并按既有重试/降级路径处理；就绪探测只等 30s，未就绪转后台继续。
 if [ "$USE_LOCAL_MODELS" = 1 ]; then
   step "本地模型服务（LLM=$LOAD_LLM 嵌入=$LOAD_EMBEDDING 重排=$LOAD_RERANK CLIP=$LOAD_CLIP）"
-  if [ -x scripts/start-models-gpu.sh ]; then
+  if [ -x "$MODEL_SCRIPT" ]; then
     if alive models_boot; then
       ok "本地模型 bootstrap 进行中（pid $(sed -n 's/^models_boot=//p' "$PID_FILE" | head -1)），跳过"
     else
       nohup env MODELS_LOAD_LLM="$LOAD_LLM" MODELS_LOAD_EMBEDDING="$LOAD_EMBEDDING" \
         MODELS_LOAD_RERANK="$LOAD_RERANK" MODELS_LOAD_CLIP="$LOAD_CLIP" \
-        bash scripts/start-models-gpu.sh start >"$LOG_DIR/dev-models.log" 2>&1 &
+        bash "$MODEL_SCRIPT" start >"$LOG_DIR/dev-models.log" 2>&1 &
       save_pid models_boot $!
       touch "$LOG_DIR/dev-models.started"  # stop 标记：只停由本脚本拉起的模型服务
-      ok "已后台拉起（日志 tmp/dev-models.log；./scripts/start-models-gpu.sh status 看就绪）"
+      ok "已后台拉起（日志 tmp/dev-models.log；$MODEL_SCRIPT status 看就绪）"
     fi
     if [ "$LOAD_LLM" = 1 ]; then
       wait_http "vLLM (:${MODELS_LLM_PORT})" "http://127.0.0.1:${MODELS_LLM_PORT}/health" 0 30
     fi
     if [ "$LOAD_EMBEDDING" = 1 ] || [ "$LOAD_RERANK" = 1 ] || [ "$LOAD_CLIP" = 1 ]; then
-      wait_http "Infinity (:${MODELS_INFINITY_PORT})" "http://127.0.0.1:${MODELS_INFINITY_PORT}/health" 0 30
+      wait_http "本地向量/重排 (:${MODELS_INFINITY_PORT})" "http://127.0.0.1:${MODELS_INFINITY_PORT}/health" 0 30
     fi
   else
-    warn "scripts/start-models-gpu.sh 缺失：指向本地端点的 ai 通道暂不可用"
+    warn "$MODEL_SCRIPT 缺失：指向本地端点的 ai 通道暂不可用"
   fi
 fi
 
@@ -428,7 +438,7 @@ echo "  Grafana    http://localhost:33002 （admin，密码见 deploy/compose/.e
 echo "  Prometheus http://localhost:39090"
 echo "  日志       tmp/dev-{api,agent,worker,web,admin,ops,mineru}.log（MinerU 容器版时在 docker；本地模型 tmp/dev-{models,vllm,infinity}.log）"
 if [ "$USE_LOCAL_MODELS" = 1 ]; then
-  echo "  本地模型   ./scripts/start-models-gpu.sh status（vLLM :$MODELS_LLM_PORT / Infinity :$MODELS_INFINITY_PORT，按配置只载所选通道）"
+  echo "  本地模型   $MODEL_SCRIPT status（vLLM :$MODELS_LLM_PORT / 向量重排 :$MODELS_INFINITY_PORT，按配置只载所选通道）"
 fi
 echo "  停止全部   ./dev.sh stop（应用进程 + 基础设施/监控容器 + 本脚本拉起的本地模型服务；数据卷保留）"
 

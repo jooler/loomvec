@@ -80,7 +80,7 @@ class Retriever:
         expr = _in_expr("space_id", [str(s) for s in space_ids])
         if tenant_id is not None:
             expr += f' and tenant_id == "{tenant_id}"'
-        if asset_ids:
+        if asset_ids is not None:
             expr += " and " + _in_expr("asset_id", [str(a) for a in asset_ids])
         if unit_types:
             expr += " and " + _in_expr("unit_type", unit_types)
@@ -102,6 +102,8 @@ class Retriever:
     ) -> list[SemanticHit]:
         settings = self._settings
         top_k = min(top_k or settings.default_top_k, settings.max_top_k)
+        if asset_ids == []:
+            return []
         use_rerank = settings.rerank_enabled if rerank is None else rerank
         limit = settings.rerank_candidates if use_rerank else max(top_k, settings.dense_top_k)
 
@@ -123,7 +125,7 @@ class Retriever:
         rows: list[dict[str, Any]] = []
         qvec: list[float] | None = None
         if want_text:
-            qvec = (await self._ai.embed([query]))[0]
+            qvec = (await self._ai.embed([query], input_type="query"))[0]
             rows = await asyncio.to_thread(
                 self._milvus.guarded,
                 lambda: self._milvus.hybrid_search(
@@ -216,6 +218,19 @@ class Retriever:
                     by_id.setdefault(r["id"], r)
                     channel_ids.setdefault("adjacency", set()).add(r["id"])
                     fused[r["id"]] = fused.get(r["id"], 0.0) + 1.0 / (settings.rrf_k + rank)
+
+        if asset_ids is not None:
+            allowed_asset_ids = {str(asset_id) for asset_id in asset_ids}
+            allowed_unit_ids = {
+                unit_id
+                for unit_id, row in by_id.items()
+                if row.get("entity", {}).get("asset_id") in allowed_asset_ids
+            }
+            by_id = {unit_id: row for unit_id, row in by_id.items() if unit_id in allowed_unit_ids}
+            fused = {
+                unit_id: score for unit_id, score in fused.items() if unit_id in allowed_unit_ids
+            }
+            channel_ids = {name: ids & allowed_unit_ids for name, ids in channel_ids.items()}
 
         results = sorted(by_id.values(), key=lambda r: -fused.get(r["id"], 0.0))
         if not results:

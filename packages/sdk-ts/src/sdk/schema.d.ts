@@ -2095,6 +2095,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/spaces/{space_id}/knowledge-bases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Knowledge Bases */
+        get: operations["list_knowledge_bases_api_v1_spaces__space_id__knowledge_bases_get"];
+        put?: never;
+        /** Create Knowledge Base */
+        post: operations["create_knowledge_base_api_v1_spaces__space_id__knowledge_bases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Knowledge Base */
+        delete: operations["delete_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Knowledge Base */
+        patch: operations["update_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Knowledge Base Members */
+        get: operations["list_knowledge_base_members_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members_get"];
+        /** Set Knowledge Base Member */
+        put: operations["set_knowledge_base_member_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Knowledge Base Member */
+        delete: operations["remove_knowledge_base_member_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members__user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/spaces/{space_id}/members": {
         parameters: {
             query?: never;
@@ -3099,6 +3170,65 @@ export interface components {
             /** Url */
             url: string | null;
         };
+        /** KnowledgeBaseCreateRequest */
+        KnowledgeBaseCreateRequest: {
+            /** Name */
+            name: string;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
+        /** KnowledgeBaseListOut */
+        KnowledgeBaseListOut: {
+            /** Items */
+            items: components["schemas"]["KnowledgeBaseOut"][];
+        };
+        /** KnowledgeBaseMemberListOut */
+        KnowledgeBaseMemberListOut: {
+            /** Items */
+            items: components["schemas"]["KnowledgeBaseMemberOut"][];
+        };
+        /** KnowledgeBaseMemberOut */
+        KnowledgeBaseMemberOut: {
+            /** Display Name */
+            display_name: string | null;
+            /** Role */
+            role: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Username */
+            username: string | null;
+        };
+        /** KnowledgeBaseMemberRequest */
+        KnowledgeBaseMemberRequest: {
+            /** @default viewer */
+            role: components["schemas"]["SpaceRole"];
+            /** Username */
+            username: string;
+        };
+        /** KnowledgeBaseOut */
+        KnowledgeBaseOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Parent Id */
+            parent_id: string | null;
+            /** Role */
+            role?: string | null;
+        };
+        /** KnowledgeBaseUpdateRequest */
+        KnowledgeBaseUpdateRequest: {
+            /** Name */
+            name?: string | null;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
         /** MemberAddRequest */
         MemberAddRequest: {
             /** @default viewer */
@@ -3309,7 +3439,7 @@ export interface components {
             description?: string | null;
             /**
              * Embedding Model
-             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'mock']
+             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'qwen3-embedding-0.6b', 'mock']
              */
             embedding_model?: string | null;
             /** Name */
@@ -3723,7 +3853,7 @@ export interface components {
             description?: string | null;
             /**
              * Embedding Model
-             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'mock']
+             * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'qwen3-embedding-0.6b', 'mock']
              */
             embedding_model?: string | null;
             /**
@@ -3908,6 +4038,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Parent Id */
+            parent_id?: string | null;
         };
         /** TakedownRequest */
         TakedownRequest: {
@@ -9189,6 +9321,251 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_knowledge_bases_api_v1_spaces__space_id__knowledge_bases_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_knowledge_base_api_v1_spaces__space_id__knowledge_bases_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                knowledge_base_id: string;
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                knowledge_base_id: string;
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_knowledge_base_members_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                knowledge_base_id: string;
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseMemberListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_knowledge_base_member_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                knowledge_base_id: string;
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseMemberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_knowledge_base_member_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members__user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                knowledge_base_id: string;
+                user_id: string;
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -1,7 +1,8 @@
-"""本地模型推理（vLLM/Infinity）运行状态探测与每通道建议配置。
+"""本地模型推理（vLLM/Infinity/Qwen3 适配器）运行状态探测与每通道建议配置。
 
-服务由 scripts/start-models-gpu.sh 在宿主机起（docs/16-本地模型推理.md），端口
-单源为其 env 约定（MODELS_LLM_PORT / MODELS_INFINITY_PORT，缺省 38010/38011）。
+服务由 scripts/start-models-gpu.sh 或 scripts/start-qwen-models-gpu.sh 在宿主机起
+（docs/16-本地模型推理.md），端口单源为其 env 约定（MODELS_LLM_PORT /
+MODELS_INFINITY_PORT，缺省 38010/38011）。
 探测只认 127.0.0.1——本地推理与 api 同机是该方案的部署前提；纯云端部署的
 ai.* 不指向本地端口，system status 的 local_models 段 enabled=false，前端不展示。
 
@@ -26,11 +27,15 @@ INFINITY_PORT_ENV = "MODELS_INFINITY_PORT"
 LLM_PORT_DEFAULT = 38010
 INFINITY_PORT_DEFAULT = 38011
 
-# Infinity 侧固定 served 名（scripts/start-models-gpu.sh 单源）
-INFINITY_CHANNEL_MODELS: dict[str, str] = {
-    "embedding": "bge-m3",
-    "rerank": "bge-reranker-v2-m3",
-    "clip": "jina-clip-v2",
+# 本地向量/重排服务的候选 served 名。BGE 保持默认，Qwen3 适配器启用时
+# 根据 /models 返回值自动选择 Qwen 名称，避免前端把「本地」写成错误模型。
+INFINITY_CHANNEL_MODEL_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "embedding": ("bge-m3", "qwen3-embedding-0.6b"),
+    "rerank": ("bge-reranker-v2-m3", "qwen3-reranker-0.6b"),
+    "clip": ("jina-clip-v2",),
+}
+INFINITY_CHANNEL_MODELS = {
+    channel: candidates[0] for channel, candidates in INFINITY_CHANNEL_MODEL_CANDIDATES.items()
 }
 # vLLM 的 deepseek-chat 是 agent/dsh 兼容别名，不作为 ai.llm.model 推荐
 LLM_ALIAS_EXCLUDE = ("deepseek-chat",)
@@ -128,7 +133,9 @@ def channel_status(ai: AiSettings, probe: dict[str, Any]) -> dict[str, dict[str,
         else:
             out[channel] = {
                 "configured_local": is_local_base_url(base_url, inf_port),
-                "available": INFINITY_CHANNEL_MODELS[channel] in inf_models,
+                "available": bool(
+                    inf_models.intersection(INFINITY_CHANNEL_MODEL_CANDIDATES[channel])
+                ),
             }
     return out
 
@@ -149,9 +156,11 @@ def channel_suggestions(probe: dict[str, Any]) -> dict[str, dict[str, Any]]:
         },
         "vlm": {"available": False},  # VLM 未本地化（docs/16），表单不提供本地档
     }
-    for channel, model in INFINITY_CHANNEL_MODELS.items():
+    inf_models = set(inf.get("models") or [])
+    for channel, candidates in INFINITY_CHANNEL_MODEL_CANDIDATES.items():
+        model = next((candidate for candidate in candidates if candidate in inf_models), candidates[0])
         suggestion: dict[str, Any] = {
-            "available": bool(inf.get("ok")) and model in set(inf.get("models") or []),
+            "available": bool(inf.get("ok")) and model in inf_models,
             "base_url": f"http://127.0.0.1:{inf_port}",
             "model": model,
             "api_key": "local",

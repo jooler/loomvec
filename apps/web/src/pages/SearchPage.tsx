@@ -1,16 +1,35 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
 import { ChevronDown, ChevronRight, Waypoints } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
-import { useMySpaces, useSpace, useSpaceCategories, useSpaceTags } from '@/hooks';
+import {
+  useKnowledgeBases,
+  useMySpaces,
+  useSpace,
+  useSpaceCategories,
+  useSpaceTags,
+} from '@/hooks';
+import { KnowledgeBaseTree } from '@/components/knowledge-base-tree';
 import { extractApiError, formatClock } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loomvec/ui/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@loomvec/ui/components/ui/select';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import { Switch } from '@loomvec/ui/components/ui/switch';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
@@ -117,7 +136,13 @@ export function SearchPage() {
   const spaces = useMySpaces();
   const currentSpace = useSpace(spaceId);
   const tags = useSpaceTags(spaceId);
+  const knowledgeBases = useKnowledgeBases(spaceId);
   const categories = useSpaceCategories(spaceId);
+
+  useEffect(() => {
+    setTagIds([]);
+    setCategoryId(undefined);
+  }, [spaceId]);
 
   const spaceNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -163,104 +188,115 @@ export function SearchPage() {
     <div className="space-y-4">
       <Card className="gap-3 py-4">
         <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={spaceId ?? ALL_SPACES} onValueChange={switchSpace}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder={t('spacePlaceholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_SPACES}>{t('allSpaces')}</SelectItem>
-                {(spaces.data ?? []).map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <MultiSelect
-              className="w-[200px]"
-              placeholder={t('unitTypePlaceholder')}
-              value={unitTypes}
-              options={[
-                { value: 'text', label: t('chunks.typeText') },
-                { value: 'table', label: t('chunks.typeTable') },
-                { value: 'image', label: t('chunks.typeImage') },
-              ]}
-              onChange={setUnitTypes}
-            />
+          <div className="flex gap-3">
             {spaceId && (
-              <MultiSelect
-                className="min-w-40"
-                placeholder={t('tagPlaceholder')}
-                loading={tags.isLoading}
-                value={tagIds}
-                options={(tags.data ?? []).map((tag) => ({ value: tag.id, label: tag.name }))}
-                onChange={setTagIds}
+              <KnowledgeBaseTree
+                nodes={knowledgeBases.data ?? []}
+                selectedId={tagIds.length === 1 ? tagIds[0] : null}
+                onSelect={(id) => setTagIds(id ? [id] : [])}
               />
             )}
-            {spaceId && (
-              <Select
-                value={categoryId ?? ALL}
-                onValueChange={(v) => setCategoryId(v === ALL ? undefined : v)}
-              >
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder={t('categoryPlaceholder')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('action.all')}</SelectItem>
-                  {(categories.data ?? []).map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <span className="flex items-center gap-2 text-sm">
-              {t('imageSearchLabel')}
-              <Switch
-                checked={imageSearch === true}
-                onCheckedChange={(v) => setImageSearch(v || undefined)}
-              />
-            </span>
-            <span className="flex items-center gap-2 text-sm">
-              {t('graphRecallLabel')}
-              <Switch checked={useGraph} onCheckedChange={setUseGraph} />
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="h-10 pl-9"
-                placeholder={
-                  spaceId
-                    ? t('inSpacePlaceholder', {
-                        name: spaceNameById.get(spaceId) ?? t('thisSpace'),
-                      })
-                    : t('globalPlaceholder')
-                }
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') runSearch();
-                }}
-              />
+            <div className="min-w-0 flex-1 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={spaceId ?? ALL_SPACES} onValueChange={switchSpace}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder={t('spacePlaceholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_SPACES}>{t('allSpaces')}</SelectItem>
+                    {(spaces.data ?? []).map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <MultiSelect
+                  className="w-[200px]"
+                  placeholder={t('unitTypePlaceholder')}
+                  value={unitTypes}
+                  options={[
+                    { value: 'text', label: t('chunks.typeText') },
+                    { value: 'table', label: t('chunks.typeTable') },
+                    { value: 'image', label: t('chunks.typeImage') },
+                  ]}
+                  onChange={setUnitTypes}
+                />
+                {spaceId && (
+                  <MultiSelect
+                    className="min-w-40"
+                    placeholder={t('tagPlaceholder')}
+                    loading={tags.isLoading}
+                    value={tagIds}
+                    options={(tags.data ?? []).map((tag) => ({ value: tag.id, label: tag.name }))}
+                    onChange={setTagIds}
+                  />
+                )}
+                {spaceId && (
+                  <Select
+                    value={categoryId ?? ALL}
+                    onValueChange={(v) => setCategoryId(v === ALL ? undefined : v)}
+                  >
+                    <SelectTrigger className="w-36">
+                      <SelectValue placeholder={t('categoryPlaceholder')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>{t('action.all')}</SelectItem>
+                      {(categories.data ?? []).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <span className="flex items-center gap-2 text-sm">
+                  {t('imageSearchLabel')}
+                  <Switch
+                    checked={imageSearch === true}
+                    onCheckedChange={(v) => setImageSearch(v || undefined)}
+                  />
+                </span>
+                <span className="flex items-center gap-2 text-sm">
+                  {t('graphRecallLabel')}
+                  <Switch checked={useGraph} onCheckedChange={setUseGraph} />
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="h-10 pl-9"
+                    placeholder={
+                      spaceId
+                        ? t('inSpacePlaceholder', {
+                            name: spaceNameById.get(spaceId) ?? t('thisSpace'),
+                          })
+                        : t('globalPlaceholder')
+                    }
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') runSearch();
+                    }}
+                  />
+                </div>
+                <Button size="lg" disabled={search.isPending} onClick={runSearch}>
+                  {t('searchButton')}
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {t('recallDesc')}
+                <button
+                  type="button"
+                  className="ml-3 text-primary hover:underline"
+                  onClick={() => setRerank(rerank === false ? undefined : false)}
+                >
+                  {rerank === false ? t('rerankOff') : t('rerankToggle')}
+                </button>
+              </p>
             </div>
-            <Button size="lg" disabled={search.isPending} onClick={runSearch}>
-              {t('searchButton')}
-            </Button>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {t('recallDesc')}
-            <button
-              type="button"
-              className="ml-3 text-primary hover:underline"
-              onClick={() => setRerank(rerank === false ? undefined : false)}
-            >
-              {rerank === false ? t('rerankOff') : t('rerankToggle')}
-            </button>
-          </p>
         </CardContent>
       </Card>
 
@@ -308,7 +344,9 @@ export function SearchPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{hit.title || t('untitledHit')}</span>
                       {unitMeta && (
-                        <StatusBadge tone={unitMeta.tone}>{t(`chunks.${unitMeta.key}`)}</StatusBadge>
+                        <StatusBadge tone={unitMeta.tone}>
+                          {t(`chunks.${unitMeta.key}`)}
+                        </StatusBadge>
                       )}
                       {!spaceId && hit.space_name && (
                         <StatusBadge tone="blue">{hit.space_name}</StatusBadge>
@@ -335,7 +373,9 @@ export function SearchPage() {
                           end: locator.end_line ?? '',
                         })}`}
                     </p>
-                    <EvidencePanel evidence={(hit.graph_evidence ?? []) as unknown as EvidencePath[]} />
+                    <EvidencePanel
+                      evidence={(hit.graph_evidence ?? []) as unknown as EvidencePath[]}
+                    />
                   </div>
                 );
               })}

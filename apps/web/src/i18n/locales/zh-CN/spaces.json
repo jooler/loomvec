@@ -41,7 +41,8 @@
   "ok": "确定",
   "embeddingModel": {
     "mock": "mock（测试用确定性向量）",
-    "bge-m3": "bge-m3"
+    "bge-m3": "bge-m3",
+    "qwen3-embedding-0.6b": "Qwen3-Embedding-0.6B"
   },
   "chunkPreset": {
     "balanced": "balanced（均衡）",

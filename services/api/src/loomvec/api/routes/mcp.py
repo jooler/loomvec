@@ -34,8 +34,16 @@ from loomvec.api.services.agent_tokens import (
     decode_agent_token,
     is_token_revoked,
 )
-from loomvec.core.authz import SpaceRole, linked_public_space_ids, visible_space_ids
+from loomvec.core.authz import (
+    SpaceRole,
+    asset_visible_via_tags,
+    decide_asset_visibility,
+    linked_public_space_ids,
+    visible_space_ids,
+    visible_tag_ids,
+)
 from loomvec.core.config import Settings
+from loomvec.core.db.repos import AssetRepo
 from loomvec.core.retrieval import Retriever
 
 # 每请求 agent 身份（ASGI 包裹层写入，工具闭包读取）
@@ -113,11 +121,32 @@ async def _search_once(
         )
         if not space_ids:
             return {"batch_id": "", "ref_items": [], "graph_evidence": [], "note": "无可检索空间"}
+        unrestricted_space_ids = {
+            selected_space_id
+            for selected_space_id in space_ids
+            if roles.get(selected_space_id) in (SpaceRole.EDITOR, SpaceRole.OWNER)
+        }
+        allowed_tags = (
+            None
+            if unrestricted_space_ids == set(space_ids)
+            else await visible_tag_ids(session, user_id=uuid.UUID(claims.user_id))
+        )
+        visible_assets = await AssetRepo(session).list_in_spaces(
+            space_ids,
+            limit=ctx.settings.search.filter_scan_limit,
+            include_unreviewed=True,
+            visible_tag_ids=allowed_tags,
+            unrestricted_space_ids=unrestricted_space_ids,
+        )
+        asset_ids = [asset.id for asset in visible_assets]
+        if not asset_ids:
+            return {"batch_id": "", "ref_items": [], "graph_evidence": [], "note": "无可检索文献"}
         hits = await ctx.retriever.search(
             space_ids=space_ids,
             tenant_id=tenant_id,
             query=query,
             top_k=top_k,
+            asset_ids=asset_ids,
             use_graph=use_graph,
             session=session,
         )
@@ -217,7 +246,7 @@ async def tool_list_my_spaces(ctx: McpAppState) -> list[dict[str, Any]]:
 
 async def tool_read_unit(ctx: McpAppState, unit_id: str, asset_id: str) -> dict[str, Any]:
     """深读某条检索命中：单元全文 + 父块上下文（越权命中返回 not_found）。"""
-    from loomvec.core.db.models import Asset, SemanticUnit
+    from loomvec.core.db.models import Asset, SemanticUnit, Space
 
     claims = _claims()
     try:
@@ -226,7 +255,7 @@ async def tool_read_unit(ctx: McpAppState, unit_id: str, asset_id: str) -> dict[
     except ValueError:
         return {"error": "not_found"}
     async with ctx.session_factory() as session, session.begin():
-        space_ids, _, _ = await _effective_scope(session, uuid.UUID(claims.user_id), None)
+        space_ids, _, roles = await _effective_scope(session, uuid.UUID(claims.user_id), None)
         unit = await session.get(SemanticUnit, unit_uuid)
         if unit is None:
             return {"error": "not_found"}
@@ -236,6 +265,18 @@ async def tool_read_unit(ctx: McpAppState, unit_id: str, asset_id: str) -> dict[
             or asset.deleted_at is not None
             or asset.id != asset_uuid
             or asset.space_id not in space_ids
+        ):
+            return {"error": "not_found"}
+        space = await session.get(Space, asset.space_id)
+        role = roles.get(asset.space_id, SpaceRole.VIEWER)
+        if space is None or not decide_asset_visibility(
+            review_required=space.review_required,
+            review_status=asset.review_status,
+            role=role,
+        ):
+            return {"error": "not_found"}
+        if role == SpaceRole.VIEWER and not await asset_visible_via_tags(
+            session, asset_id=asset.id, user_id=uuid.UUID(claims.user_id)
         ):
             return {"error": "not_found"}
         parent = None

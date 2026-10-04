@@ -26,7 +26,7 @@ class MockBackend:
 
     # ---------- embedding ----------
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], *, input_type: str = "document") -> list[list[float]]:
         dim = self._settings.embedding.dim
         vectors: list[list[float]] = []
         for text in texts:

@@ -33,13 +33,21 @@ from loomvec.api.schemas.assets import (
 from loomvec.api.services import assets as asset_service
 from loomvec.core.authz import (
     SpaceAccess,
+    asset_visible_via_tags,
     can_manage_asset,
     decide_asset_visibility,
     visible_space_ids,
+    visible_tag_ids,
 )
 from loomvec.core.config import Settings
 from loomvec.core.db.models import SpaceRole
-from loomvec.core.db.repos import AssetRenditionRepo, AssetRepo, AssetVersionRepo, TagRepo
+from loomvec.core.db.repos import (
+    AssetRenditionRepo,
+    AssetRepo,
+    AssetVersionRepo,
+    SpaceMemberRepo,
+    TagRepo,
+)
 from loomvec.core.errors import NotFoundError, PermissionDeniedError, ValidationError
 from loomvec.core.storage import ObjectStorage
 
@@ -84,18 +92,46 @@ async def list_assets(
     tag_id_list = (
         [uuid.UUID(t.strip()) for t in tag_ids.split(",") if t.strip()] if tag_ids else None
     )
+    if tag_id_list:
+        tag_repo = TagRepo(session)
+        expanded: set[uuid.UUID] = set()
+        for tag_id in tag_id_list:
+            expanded.update(await tag_repo.descendant_ids(tag_id))
+        tag_id_list = sorted(expanded)
     include_unreviewed = False
     strict_review = False
+    unrestricted_space_ids: set[uuid.UUID] | None = None
 
     if space_id is not None:
         access = await resolve_space_access(session, identity, space_id, min_role=SpaceRole.VIEWER)
         space_ids = [space_id]
         if access.role in (SpaceRole.EDITOR, SpaceRole.OWNER):
             include_unreviewed = True
+            unrestricted_space_ids = {space_id}
         else:
             strict_review = access.space.review_required
+        visible_tags = (
+            None
+            if unrestricted_space_ids
+            else await visible_tag_ids(session, user_id=user_uuid(identity))
+        )
     else:
         space_ids = await _visible_space_ids(session, identity)
+        if identity.user_id.startswith("apikey:"):
+            visible_tags = None
+        else:
+            members = await SpaceMemberRepo(session).list_for_user(user_uuid(identity))
+            unrestricted_space_ids = {
+                member.space_id
+                for member in members
+                if member.space_id in space_ids
+                and member.role in (SpaceRole.EDITOR, SpaceRole.OWNER)
+            }
+            visible_tags = (
+                None
+                if unrestricted_space_ids == set(space_ids)
+                else await visible_tag_ids(session, user_id=user_uuid(identity))
+            )
 
     name_like = q.strip() if q and q.strip() else None
     rows = await AssetRepo(session).list_in_spaces(
@@ -108,6 +144,8 @@ async def list_assets(
         include_unreviewed=include_unreviewed,
         strict_review=strict_review,
         tag_ids=tag_id_list,
+        visible_tag_ids=visible_tags,
+        unrestricted_space_ids=unrestricted_space_ids,
         category_id=category_id,
         review_status=review_status,
         folder_id=folder_id,
@@ -134,6 +172,11 @@ async def _load_asset_detail(
         role=access.role,
     ):
         raise NotFoundError(resource="asset", id=str(asset_id))
+    if access.role == SpaceRole.VIEWER and (
+        identity.user_id.startswith("apikey:")
+        or not await asset_visible_via_tags(session, asset_id=asset.id, user_id=user_uuid(identity))
+    ):
+        raise NotFoundError(resource="asset", id=str(asset_id))
     return access, asset
 
 
@@ -142,9 +185,12 @@ async def _build_detail(
     asset,
     settings: Settings,
     storage: ObjectStorage,
+    visible_tags: set[uuid.UUID] | None = None,
 ) -> AssetDetailOut:
     version = await AssetVersionRepo(session).latest_for(asset.id)
     tags = await TagRepo(session).tags_for_asset(asset.id)
+    if visible_tags is not None:
+        tags = [tag for tag in tags if tag.id in visible_tags]
     renditions = await AssetRenditionRepo(session).for_asset(asset.id)
     rendition_out = []
     for r in renditions:
@@ -167,7 +213,7 @@ async def _build_detail(
         chunk_method=asset.asset_meta.get("chunk_method"),
         version_meta=version.version_meta if version else {},
         asset_meta=asset.asset_meta,
-        tags=[TagOut(id=t.id, name=t.name) for t in tags],
+        tags=[TagOut(id=t.id, name=t.name, parent_id=t.parent_id) for t in tags],
         category_id=asset.category_id,
         metadata=asset.user_meta,
         review_reason=asset.review_reason,
@@ -183,9 +229,13 @@ async def get_asset(
     settings: Settings = Depends(service_settings),
     storage: ObjectStorage = Depends(get_storage),
 ) -> AssetDetailOut:
-    _access, asset = await _load_asset_detail(session, asset_id, identity)
-    del _access
-    return await _build_detail(session, asset, settings, storage)
+    access, asset = await _load_asset_detail(session, asset_id, identity)
+    visible_tags = (
+        None
+        if access.role in (SpaceRole.EDITOR, SpaceRole.OWNER)
+        else await visible_tag_ids(session, user_id=user_uuid(identity))
+    )
+    return await _build_detail(session, asset, settings, storage, visible_tags)
 
 
 @router.patch("/assets/{asset_id}", response_model=AssetDetailOut)
@@ -213,7 +263,12 @@ async def patch_asset(
         folder_id=body.folder_id,
         unset_folder=body.unset_folder,
     )
-    return await _build_detail(session, asset, settings, storage)
+    visible_tags = (
+        None
+        if access.role in (SpaceRole.EDITOR, SpaceRole.OWNER)
+        else await visible_tag_ids(session, user_id=user_uuid(identity))
+    )
+    return await _build_detail(session, asset, settings, storage, visible_tags)
 
 
 @router.post("/assets/{asset_id}/auto-rename", response_model=AutoRenameOut)

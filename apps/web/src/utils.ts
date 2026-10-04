@@ -24,7 +24,7 @@ export const ROLE_TONE: Record<string, BadgeTone> = {
 };
 
 /** 空间可选嵌入模型（创建空间 / 空间设置共用）；文案走 i18n embeddingModel.*。 */
-export const EMBEDDING_MODELS = ['mock', 'bge-m3'] as const;
+export const EMBEDDING_MODELS = ['mock', 'bge-m3', 'qwen3-embedding-0.6b'] as const;
 
 /** 空间可选分片预设（创建空间 / 空间设置共用）；文案走 i18n chunkPreset.*。 */
 export const CHUNK_PRESETS = ['balanced', 'fine', 'long'] as const;

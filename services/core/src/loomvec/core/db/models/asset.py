@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from loomvec.core.db.base import Base, SoftDeleteMixin, TenantMixin, TimestampMixin, UuidPkMixin
 from loomvec.core.db.models._common import enum_values
+from loomvec.core.db.models.space import SpaceRole
 
 
 class ReviewStatus(enum.StrEnum):
@@ -136,7 +137,7 @@ class Asset(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
 
 
 class AssetTag(UuidPkMixin, TenantMixin, TimestampMixin, Base):
-    """资产↔标签关联（多对多）。"""
+    """资产↔知识库关联（多对多）。"""
 
     __tablename__ = "asset_tag"
     __table_args__ = (UniqueConstraint("asset_id", "tag_id", name="uq_asset_tag_pair"),)
@@ -147,16 +148,43 @@ class AssetTag(UuidPkMixin, TenantMixin, TimestampMixin, Base):
     tag_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tag.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Tag(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """标签：租户级共享命名空间（空间内使用）。"""
+    """知识库节点：空间级命名空间中的可嵌套标签。"""
 
     __tablename__ = "tag"
-    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_tag_tenant_name"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "space_id", "name", name="uq_tag_space_name"),)
 
     name: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 新建知识库按空间隔离；NULL 兼容早期租户级标签
+    space_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("space.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tag.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+
+class TagMember(UuidPkMixin, TenantMixin, TimestampMixin, Base):
+    """知识库成员：权限从节点向下继承，文献只需关联到直接节点。"""
+
+    __tablename__ = "tag_member"
+    __table_args__ = (UniqueConstraint("tag_id", "user_id", name="uq_tag_member_pair"),)
+
+    tag_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tag.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[SpaceRole] = mapped_column(
+        Enum(SpaceRole, name="space_role", values_callable=enum_values, create_type=False),
+        nullable=False,
+    )
 
 
 class Category(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):

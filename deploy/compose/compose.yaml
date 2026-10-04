@@ -134,6 +134,11 @@ services:
     environment:
       MINERU_MODEL_SOURCE: modelscope
       MINERU_HOME: /models
+      # Keep this aligned with config/loomvec.json → mineru.max_concurrency.
+      # CPU deployments start conservatively; size it from measured headroom.
+      MINERU_CONCURRENCY: ${MINERU_CONCURRENCY:-1}
+      # ONNX intra-op threads used by each active MinerU parse job.
+      MINERU_INTRA_OP_NUM_THREADS: ${MINERU_INTRA_OP_NUM_THREADS:-4}
     ports:
       - "127.0.0.1:${MINERU_PORT:-38000}:8000"
     volumes:

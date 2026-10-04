@@ -180,8 +180,8 @@ class AiGateway:
 
     # ---------- 通道实现 ----------
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """批量向量化：内部按 embedding.batch_size 分批；空输入返回空。"""
+    async def embed(self, texts: list[str], *, input_type: str = "document") -> list[list[float]]:
+        """批量向量化；Qwen 查询向量可通过 input_type 使用查询指令。"""
         if not texts:
             return []
         if self._mock is not None:
@@ -197,9 +197,10 @@ class AiGateway:
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
             started = time.monotonic()
-            resp = await self._post(
-                "embedding", "/embeddings", {"model": cfg.model, "input": batch, **payload_extra}
-            )
+            payload = {"model": cfg.model, "input": batch, **payload_extra}
+            if input_type != "document" and cfg.model == "qwen3-embedding-0.6b":
+                payload["input_type"] = input_type
+            resp = await self._post("embedding", "/embeddings", payload)
             self._usage("embedding", cfg, started, resp)
             data = sorted(resp.get("data", []), key=lambda d: d.get("index", 0))
             if len(data) != len(batch):

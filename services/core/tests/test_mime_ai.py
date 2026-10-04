@@ -86,6 +86,24 @@ def test_mock_embed_deterministic_and_normalized(mock_gateway: AiGateway):
     assert empty == []
 
 
+def test_qwen_query_embedding_marks_input_type(monkeypatch):
+    gw = AiGateway(
+        AiSettings(
+            embedding=EmbeddingSettings(
+                base_url="http://qwen.local",
+                model="qwen3-embedding-0.6b",
+                batch_size=8,
+            )
+        )
+    )
+    captured: list[dict] = []
+    monkeypatch.setattr(gw, "_post", _stub_capture_post(captured))
+
+    asyncio.run(gw.embed(["查询文本"], input_type="query"))
+
+    assert captured[0]["payload"]["input_type"] == "query"
+
+
 def test_mock_rerank_orders_by_relevance(mock_gateway: AiGateway):
     ranked = asyncio.run(mock_gateway.rerank("季度营收", ["营收分析报告", "天气预报"]))
     assert ranked[0]["index"] == 0

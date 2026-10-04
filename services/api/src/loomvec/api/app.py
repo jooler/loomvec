@@ -34,6 +34,7 @@ from loomvec.api.routes.auth_oidc import router as oidc_router
 from loomvec.api.routes.folders import router as folders_router
 from loomvec.api.routes.health import router as health_router
 from loomvec.api.routes.jobs import router as jobs_router
+from loomvec.api.routes.knowledge_bases import router as knowledge_bases_router
 from loomvec.api.routes.me import router as me_router
 from loomvec.api.routes.members import router as members_router
 from loomvec.api.routes.notifications import router as notifications_router
@@ -186,6 +187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(folders_router)  # Finder 文件夹域（目录树/移动/复制/级联删除）
     app.include_router(units_router)  # chunk 管理（查看/新增/编辑/批删，即时向量化）
     app.include_router(jobs_router)
+    app.include_router(knowledge_bases_router)
     app.include_router(review_router)
     app.include_router(search_router)
     app.include_router(agent_routes.router)  # P5 智能体对话（dsh 全量接管，SSE）

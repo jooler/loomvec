@@ -28,6 +28,7 @@ from loomvec.core.db.models.asset import (
     ReviewStatus,
     SemanticUnit,
     Tag,
+    TagMember,
     UnitType,
 )
 from loomvec.core.db.models.enterprise import (
@@ -124,6 +125,7 @@ __all__ = [
     "SpaceUsage",
     "SystemConfig",
     "Tag",
+    "TagMember",
     "Tenant",
     "TenantOidcBinding",
     "TenantStatus",
