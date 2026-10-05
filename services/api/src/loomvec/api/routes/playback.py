@@ -67,12 +67,7 @@ async def _load_media_asset(
     session: AsyncSession, asset_id: uuid.UUID, identity: Identity
 ) -> tuple[Asset, AssetVersion]:
     from loomvec.api.deps import resolve_space_access
-    from loomvec.api.identity import user_uuid
-    from loomvec.core.authz import (
-        SpaceRole,
-        asset_visible_via_tags,
-        decide_asset_visibility,
-    )
+    from loomvec.core.authz import SpaceRole, decide_asset_visibility
 
     asset = (
         await session.execute(select(Asset).where(Asset.id == asset_id, Asset.deleted_at.is_(None)))
@@ -84,11 +79,6 @@ async def _load_media_asset(
         review_required=access.space.review_required,
         review_status=asset.review_status,
         role=access.role,
-    ):
-        raise NotFoundError(resource="asset", id=str(asset_id))
-    if access.role == SpaceRole.VIEWER and (
-        identity.user_id.startswith("apikey:")
-        or not await asset_visible_via_tags(session, asset_id=asset.id, user_id=user_uuid(identity))
     ):
         raise NotFoundError(resource="asset", id=str(asset_id))
     version = await AssetVersionRepo(session).latest_for(asset.id)

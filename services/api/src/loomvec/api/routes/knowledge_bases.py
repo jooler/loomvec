@@ -13,7 +13,7 @@ from loomvec.api.context import Identity
 from loomvec.api.deps import get_session, require_scope, require_space
 from loomvec.api.services import knowledge_bases as knowledge_base_service
 from loomvec.api.services import spaces as space_service
-from loomvec.core.authz import SpaceAccess, at_least, tag_role, visible_tag_ids
+from loomvec.core.authz import SpaceAccess, tag_role
 from loomvec.core.db.models import SpaceRole, Tag, TagStatus, User
 from loomvec.core.db.repos import TagRepo
 
@@ -77,24 +77,38 @@ async def _node_out(session: AsyncSession, tag: Tag, identity: Identity) -> Know
 async def _nodes_for_access(
     session: AsyncSession, access: SpaceAccess, status: TagStatus | None = None
 ) -> list[KnowledgeBaseOut]:
+    # 有空间访问权限（含 viewer、含公共空间虚拟 viewer）即可见该空间内全部知识库节点；
+    # 知识库 tag_member 只决定节点上的管理角色（见 tag_role），不再作为树可见性的闸门。
+    from sqlalchemy import distinct
+
+    from loomvec.core.db.models import Asset, AssetTag
+
     rows = await TagRepo(session).list_for_tenant(access.space.tenant_id, space_id=access.space.id)
-    if at_least(access.role, SpaceRole.EDITOR):
-        allowed = {tag.id for tag in rows}
-    elif access.member is None:
-        allowed = set()
-    else:
-        allowed = await visible_tag_ids(session, user_id=access.member.user_id)
-        by_id = {tag.id: tag for tag in rows}
-        for tag_id in list(allowed):
-            current = by_id.get(tag_id)
-            while current is not None and current.parent_id is not None:
-                allowed.add(current.parent_id)
-                current = by_id.get(current.parent_id)
+    by_id = {tag.id: tag for tag in rows}
+    # list_for_tenant 对 space_id IS NULL 的早期租户级标签不做空间收敛，会带出其它
+    # 空间用过的历史标签名；这里只保留本空间原生节点 + 本空间资产实际用过的租户级
+    # 标签及其祖先，避免把跨空间的标签名暴露给只对本空间有权限的用户。
+    allowed = {tag.id for tag in rows if tag.space_id == access.space.id}
+    used = (
+        (
+            await session.execute(
+                select(distinct(AssetTag.tag_id)).where(
+                    AssetTag.asset_id.in_(select(Asset.id).where(Asset.space_id == access.space.id))
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for tag_id in used:
+        current = by_id.get(tag_id)
+        while current is not None and current.id not in allowed:
+            allowed.add(current.id)
+            current = by_id.get(current.parent_id)
 
     user_id = access.member.user_id if access.member is not None else None
     items: list[KnowledgeBaseOut] = []
     for tag in rows:
-        # 状态过滤只作用于输出：可见性的祖先补全仍基于全部节点
         if tag.id not in allowed or (status is not None and tag.status != status):
             continue
         role = await tag_role(session, tag_id=tag.id, user_id=user_id) if user_id else None

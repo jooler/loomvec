@@ -27,10 +27,10 @@ from loomvec.api.deps import (
 )
 from loomvec.api.identity import user_uuid
 from loomvec.api.services.search import enrich_hits
-from loomvec.core.authz import SpaceRole, visible_space_ids, visible_tag_ids
+from loomvec.core.authz import SpaceRole, visible_space_ids
 from loomvec.core.config import SearchSettings
 from loomvec.core.db.models import Space
-from loomvec.core.db.repos import AssetRepo, SpaceMemberRepo, TagRepo
+from loomvec.core.db.repos import AssetRepo, TagRepo
 from loomvec.core.errors import NotFoundError, ValidationError
 from loomvec.core.retrieval import Retriever, SemanticHit
 
@@ -112,7 +112,8 @@ async def search(
     if not space_ids:
         return SearchResponse(items=[], total=0)
 
-    # 知识库权限与标签过滤：PG 侧先收敛 asset_ids；向量库只接收已授权资产。
+    # 标签/分类过滤：显式传了 tag_ids 或 category_id 时，PG 侧先按条件收敛 asset_ids；
+    # 未传时不做任何额外收窄——space_ids 本身已经是访问权限过滤后的结果。
     asset_ids = body.asset_ids
     tag_filter: list[uuid.UUID] | None = None
     if body.tag_ids:
@@ -121,31 +122,12 @@ async def search(
         for tag_id in body.tag_ids:
             expanded.update(await tag_repo.descendant_ids(tag_id))
         tag_filter = sorted(expanded)
-    unrestricted_space_ids: set[uuid.UUID] | None = None
-    if identity.user_id.startswith("apikey:"):
-        allowed_tags = None
-    else:
-        if body.space_id is None:
-            members = await SpaceMemberRepo(session).list_for_user(user_uuid(identity))
-            roles = {member.space_id: member.role for member in members}
-        unrestricted_space_ids = {
-            selected_space_id
-            for selected_space_id in space_ids
-            if roles.get(selected_space_id) in (SpaceRole.EDITOR, SpaceRole.OWNER)
-        }
-        allowed_tags = (
-            None
-            if unrestricted_space_ids == set(space_ids)
-            else await visible_tag_ids(session, user_id=user_uuid(identity))
-        )
-    if tag_filter or body.category_id or allowed_tags is not None:
+    if tag_filter or body.category_id:
         rows = await AssetRepo(session).list_in_spaces(
             space_ids,
             limit=get_retriever_settings(request).filter_scan_limit,
             include_unreviewed=True,
             tag_ids=tag_filter,
-            visible_tag_ids=allowed_tags,
-            unrestricted_space_ids=unrestricted_space_ids,
             category_id=body.category_id,
         )
         filtered = {a.id for a in rows}

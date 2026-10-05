@@ -36,14 +36,11 @@ from loomvec.api.services.agent_tokens import (
 )
 from loomvec.core.authz import (
     SpaceRole,
-    asset_visible_via_tags,
     decide_asset_visibility,
     linked_public_space_ids,
     visible_space_ids,
-    visible_tag_ids,
 )
 from loomvec.core.config import Settings
-from loomvec.core.db.repos import AssetRepo
 from loomvec.core.retrieval import Retriever
 
 # 每请求 agent 身份（ASGI 包裹层写入，工具闭包读取）
@@ -121,32 +118,14 @@ async def _search_once(
         )
         if not space_ids:
             return {"batch_id": "", "ref_items": [], "graph_evidence": [], "note": "无可检索空间"}
-        unrestricted_space_ids = {
-            selected_space_id
-            for selected_space_id in space_ids
-            if roles.get(selected_space_id) in (SpaceRole.EDITOR, SpaceRole.OWNER)
-        }
-        allowed_tags = (
-            None
-            if unrestricted_space_ids == set(space_ids)
-            else await visible_tag_ids(session, user_id=uuid.UUID(claims.user_id))
-        )
-        visible_assets = await AssetRepo(session).list_in_spaces(
-            space_ids,
-            limit=ctx.settings.search.filter_scan_limit,
-            include_unreviewed=True,
-            visible_tag_ids=allowed_tags,
-            unrestricted_space_ids=unrestricted_space_ids,
-        )
-        asset_ids = [asset.id for asset in visible_assets]
-        if not asset_ids:
-            return {"batch_id": "", "ref_items": [], "graph_evidence": [], "note": "无可检索文献"}
+        # 能出现在 effective_scope 里就已经代表对该空间有只读以上的访问权限
+        # （真实成员含 viewer，或已链接的公共空间），空间内全部资产可见，
+        # 知识库标签权限不再作为空间内检索的附加闸门，不需要额外预过滤 asset_ids。
         hits = await ctx.retriever.search(
             space_ids=space_ids,
             tenant_id=tenant_id,
             query=query,
             top_k=top_k,
-            asset_ids=asset_ids,
             use_graph=use_graph,
             session=session,
         )
@@ -273,10 +252,6 @@ async def tool_read_unit(ctx: McpAppState, unit_id: str, asset_id: str) -> dict[
             review_required=space.review_required,
             review_status=asset.review_status,
             role=role,
-        ):
-            return {"error": "not_found"}
-        if role == SpaceRole.VIEWER and not await asset_visible_via_tags(
-            session, asset_id=asset.id, user_id=uuid.UUID(claims.user_id)
         ):
             return {"error": "not_found"}
         parent = None
