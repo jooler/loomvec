@@ -2444,6 +2444,20 @@
         "title": "KnowledgeBaseMemberRequest",
         "type": "object"
       },
+      "KnowledgeBaseMergeRequest": {
+        "properties": {
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id"
+        ],
+        "title": "KnowledgeBaseMergeRequest",
+        "type": "object"
+      },
       "KnowledgeBaseOut": {
         "properties": {
           "id": {
@@ -2477,12 +2491,16 @@
               }
             ],
             "title": "Role"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TagStatus"
           }
         },
         "required": [
           "id",
           "name",
-          "parent_id"
+          "parent_id",
+          "status"
         ],
         "title": "KnowledgeBaseOut",
         "type": "object"
@@ -4922,6 +4940,15 @@
         ],
         "title": "TagOut",
         "type": "object"
+      },
+      "TagStatus": {
+        "description": "知识库节点状态：active=正式节点；pending=管线自动归类新建、待人工确认或合并。",
+        "enum": [
+          "active",
+          "pending"
+        ],
+        "title": "TagStatus",
+        "type": "string"
       },
       "TakedownRequest": {
         "properties": {
@@ -16110,6 +16137,7 @@
     },
     "/api/v1/spaces/{space_id}/knowledge-bases": {
       "get": {
+        "description": "可见知识库节点平面列表；status=pending 只列管线自动新建、待确认的节点。",
         "operationId": "list_knowledge_bases_api_v1_spaces__space_id__knowledge_bases_get",
         "parameters": [
           {
@@ -16120,6 +16148,22 @@
               "format": "uuid",
               "title": "Space Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TagStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
             }
           },
           {
@@ -16393,6 +16437,81 @@
         ]
       }
     },
+    "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/confirm": {
+      "post": {
+        "description": "确认 pending 节点为正式知识库（status → active）。",
+        "operationId": "confirm_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "knowledge_base_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Knowledge Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Confirm Knowledge Base",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
     "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/members": {
       "get": {
         "operationId": "list_knowledge_base_members_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members_get",
@@ -16621,6 +16740,91 @@
           }
         ],
         "summary": "Remove Knowledge Base Member",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/merge": {
+      "post": {
+        "description": "把 pending 节点并入本空间节点 target_id：文献关联与子节点改挂目标，源节点删除；\n返回目标节点。",
+        "operationId": "merge_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__merge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "knowledge_base_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Knowledge Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeBaseMergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Merge Knowledge Base",
         "tags": [
           "knowledge-bases"
         ]

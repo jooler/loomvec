@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.api.context import Identity
 from loomvec.core.authz import SpaceAccess
+from loomvec.core.constants import ASSET_META_SOURCE_KEY
 from loomvec.core.db.models import (
     Asset,
     AssetFolder,
@@ -228,7 +229,10 @@ async def _replicate_asset(
         created_by=uuid.UUID(identity.user_id)
         if not identity.user_id.startswith("apikey:")
         else None,
-        asset_meta=dict(source.asset_meta or {}),
+        # 副本归复制者所有：去掉系统入库来源标记，权限按普通上传判定
+        asset_meta={
+            k: v for k, v in (source.asset_meta or {}).items() if k != ASSET_META_SOURCE_KEY
+        },
         category_id=source.category_id,
         user_meta=dict(source.user_meta or {}),
     )

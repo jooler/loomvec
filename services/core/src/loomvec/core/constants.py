@@ -28,6 +28,14 @@ HEARTBEAT_KEY = "loomvec:worker:heartbeat"
 HEARTBEAT_TTL_SECONDS = 120
 DEAD_LETTER_KEY = "loomvec:jobs:dead"
 DEAD_LETTER_MAX_LEN = 1000
+# 目录监听入库扫描互斥锁（ingest.watch_scan；多 worker 进程同一时刻只跑一轮扫描）
+INGEST_WATCH_LOCK_KEY = "loomvec:ingest_watch:lock"
+
+# 资产来源标记（asset.asset_meta[ASSET_META_SOURCE_KEY]）：系统入库的资产没有上传人，
+# 管理权限走 authz.can_manage_asset 的系统入库规则（人类 owner/editor 可管，API Key 不可）
+ASSET_META_SOURCE_KEY = "source"
+ASSET_SOURCE_INGEST_WATCH = "ingest_watch"
+SYSTEM_ASSET_SOURCES = frozenset({ASSET_SOURCE_INGEST_WATCH})
 
 # 固定窗口限流（API Key，P1-API-04）
 RATE_WINDOW_SECONDS = 60

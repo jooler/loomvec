@@ -2,7 +2,9 @@
 
 - `pipeline.process_asset`：整链（或从指定步骤）执行 parse→chunk→embed→index；
   上游不可用（MinerU/AI/Milvus）自动指数退避重试，最终失败进死信记录；
-- `worker.heartbeat`：beat 每 30s 心跳写 Redis（存活与队列积压可观测）。
+  跑完后自动归类知识库（_auto_assign_knowledge_bases，可新建 pending 节点）；
+- `worker.heartbeat`：beat 每 30s 心跳写 Redis（存活与队列积压可观测）；
+- `ingest.watch_scan`：beat 周期单层扫描监听目录，自动上传入库（worker/ingest_watch.py）。
 """
 
 from __future__ import annotations
@@ -202,129 +204,246 @@ async def _maybe_trigger_merge(deps: PipelineDeps, asset_id: str) -> None:
         logger.warning("merge_trigger_check_failed", asset_id=asset_id, error=str(e))
 
 
-async def _auto_assign_knowledge_bases(deps: PipelineDeps, asset_id: str) -> None:
-    """管线完成后按标题/摘要/正文给文献挂一个或多个知识库节点。
+# 自动归类采纳 LLM 结果（选中现有节点 / 建议新建节点）的最低置信度
+_AUTO_TAG_MIN_CONFIDENCE = 0.75
 
-    自动分类失败不影响已完成的解析和向量化；规则命中作为 LLM 不可用时的确定性兜底。
-    只写直接命中的节点，父级通过知识库树查询自动包含。
+_AUTO_TAG_SELECT_PROMPT = (
+    "你是文献知识库分类器。从给定知识库目录中选择与文献直接相关的节点，"
+    "不要选择仅因词面偶然出现的节点。"
+)
+_AUTO_TAG_NEW_PROMPT = (
+    "优先复用现有知识库：只要目录中的节点（包括较宽泛的上级节点）能覆盖文献的核心主题，"
+    "就不要建议新建；只有目录中没有任何节点能覆盖文献的核心主题时，才建议新建一个知识库，"
+    "名称用简洁的学科或主题名（不超过 20 个字，不要带“相关研究”“文献”等泛化词），"
+    "可从目录中选一个节点作为它的上级。"
+)
+_AUTO_TAG_TAGS_SCHEMA = '"tags": [{"id": "<目录中的 id>", "confidence": <0~1>}]'
+_AUTO_TAG_NEW_SCHEMA = (
+    '"new_knowledge_base": null 或 {"name": "<新知识库名>", '
+    '"parent_id": "<目录中的上级 id 或 null>", "confidence": <0~1>, "reason": "<一句话理由>"}'
+)
+
+
+def _auto_tag_system_prompt(allow_new: bool) -> str:
+    """allow_new=False（开关关闭 / pending 达上限）时不向 LLM 索要新知识库建议。"""
+    if not allow_new:
+        return f"{_AUTO_TAG_SELECT_PROMPT}输出 JSON：{{{_AUTO_TAG_TAGS_SCHEMA}}}。"
+    return (
+        f"{_AUTO_TAG_SELECT_PROMPT}{_AUTO_TAG_NEW_PROMPT}"
+        f"输出 JSON：{{{_AUTO_TAG_TAGS_SCHEMA}, {_AUTO_TAG_NEW_SCHEMA}}}。"
+    )
+
+
+async def _create_suggested_knowledge_base(
+    session, space, suggestion, catalog_ids: set[uuid.UUID], *, max_pending: int | None = None
+) -> tuple[uuid.UUID, float] | None:
+    """LLM 建议的新知识库 → create_system_tag（同名复用 / 合并重定向 / 新建 pending 节点）。
+
+    建议不合法、置信度不足、同名节点曾被人工删除、或 pending 已达上限时返回 None。
     """
+    from loomvec.core.knowledge_base_auto import create_system_tag
+
+    if not isinstance(suggestion, dict):
+        return None
+    name = str(suggestion.get("name") or "").strip()
+    try:
+        confidence = float(suggestion.get("confidence", 0))
+    except (TypeError, ValueError):
+        return None
+    if not name or confidence < _AUTO_TAG_MIN_CONFIDENCE:
+        return None
+    try:
+        parent_id = uuid.UUID(str(suggestion.get("parent_id")))
+    except ValueError:
+        parent_id = None
+    tag = await create_system_tag(
+        session,
+        space=space,
+        name=name,
+        parent_id=parent_id if parent_id in catalog_ids else None,
+        reason=str(suggestion.get("reason") or "")[:500] or None,
+        max_pending=max_pending,
+    )
+    return (tag.id, confidence) if tag is not None else None
+
+
+async def _auto_assign_knowledge_bases(deps: PipelineDeps, asset_id: str) -> None:
+    """管线完成后按标题/摘要/正文给文献挂一个或多个知识库节点（docs/17「管线自动归类」）。
+
+    有 LLM 时从当前空间知识库目录（含 pending 节点）选择节点；pipeline.auto_create_knowledge_bases
+    打开且空间 pending 节点未达 pipeline.max_pending_knowledge_bases 时，目录中没有能覆盖
+    文献核心主题的节点时 LLM 还可建议一个新知识库，经 core.knowledge_base_auto.create_system_tag
+    落库（目录为空时同样走 LLM）。规则命中作为 LLM 不可用或无结果时的确定性兜底，只匹配现有
+    节点、不新建。写关联前对所有候选节点按 id 升序一次性加 FOR KEY SHARE 锁复核（见
+    core.knowledge_base_auto.resolve_live_tags）：已被合并的改挂合并目标，已删除的跳过。
+    自动分类失败不影响已完成的解析和向量化。只写直接命中的节点。
+
+    候选节点在加锁期间又被合并一次以上（多跳）时，新牵涉进来的节点 id 可能不在最初
+    那条批量语句的排序范围内，理论上仍可能和一次跨多跳的人工合并构成死锁环（概率很
+    低，resolve_live_tags 的文档有详细说明）；这类死锁 PG 会主动中止其中一个事务并
+    报 SQLSTATE 40P01，重试一次即可自愈，不需要人工介入。
+    """
+    from sqlalchemy.exc import DBAPIError
+
+    def _is_deadlock(exc: BaseException) -> bool:
+        return isinstance(exc, DBAPIError) and getattr(exc.orig, "sqlstate", None) == "40P01"
+
+    for attempt in range(2):
+        try:
+            await _auto_assign_knowledge_bases_once(deps, asset_id)
+            return
+        except Exception as e:
+            if _is_deadlock(e) and attempt == 0:
+                logger.info("knowledge_base_auto_classification_deadlock_retry", asset_id=asset_id)
+                continue
+            logger.warning(
+                "knowledge_base_auto_classification_failed", asset_id=asset_id, error=str(e)
+            )
+            return
+
+
+async def _auto_assign_knowledge_bases_once(deps: PipelineDeps, asset_id: str) -> None:
     from sqlalchemy import select
 
-    from loomvec.core.db.models import Asset, AssetTag, AssetVersion, Tag
+    from loomvec.core.db.models import Asset, AssetTag, AssetVersion, Space, Tag
+    from loomvec.core.knowledge_base_auto import count_pending_tags, resolve_live_tags
 
-    try:
-        async with deps.session_factory() as session:
-            asset = (
-                await session.execute(
-                    select(Asset).where(Asset.id == uuid.UUID(asset_id), Asset.deleted_at.is_(None))
-                )
-            ).scalar_one_or_none()
-            if asset is None:
-                return
-            tags = list(
-                (
-                    await session.execute(
-                        select(Tag).where(
-                            Tag.deleted_at.is_(None),
-                            Tag.tenant_id == asset.tenant_id,
-                            (Tag.space_id == asset.space_id) | Tag.space_id.is_(None),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
+    pipeline_cfg = deps.settings.pipeline
+    async with deps.session_factory() as session:
+        asset = (
+            await session.execute(
+                select(Asset).where(Asset.id == uuid.UUID(asset_id), Asset.deleted_at.is_(None))
             )
-            if not tags:
-                return
-            version = (
+        ).scalar_one_or_none()
+        if asset is None:
+            return
+        tags = list(
+            (
                 await session.execute(
-                    select(AssetVersion)
-                    .where(AssetVersion.asset_id == asset.id)
-                    .order_by(AssetVersion.version.desc())
-                    .limit(1)
+                    select(Tag).where(
+                        Tag.deleted_at.is_(None),
+                        Tag.tenant_id == asset.tenant_id,
+                        (Tag.space_id == asset.space_id) | Tag.space_id.is_(None),
+                    )
                 )
-            ).scalar_one_or_none()
-            text_parts = [asset.name]
-            pdf_info = asset.asset_meta.get("pdf_info") or {}
-            text_parts.extend(str(pdf_info.get(k) or "") for k in ("title", "subject", "author"))
-            if version is not None:
-                parse_meta = (version.version_meta or {}).get("parse") or {}
-                md_key = parse_meta.get("md_key")
-                if md_key:
-                    text_parts.append(
-                        (
-                            await deps.storage.get_object(
-                                deps.settings.storage.bucket_derived,
-                                md_key,
-                            )
-                        ).decode("utf-8", errors="ignore")[:24000]
-                    )
-            corpus = "\n".join(text_parts)
-            chosen: dict[uuid.UUID, float] = {}
-            if deps.ai.llm_available():
-                catalog = "\n".join(f"{tag.id}\t{tag.name}" for tag in tags)
-                try:
-                    result = await deps.ai.complete_json(
-                        [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "你是文献知识库分类器。只从给定知识库中选择直接相关的节点，"
-                                    "输出 JSON，仅返回 tags 数组，每项包含 id 和 confidence。"
-                                    "不要选择仅因词面偶然出现的节点。"
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": f"知识库目录：\n{catalog}\n\n文献内容：\n{corpus}",
-                            },
-                        ],
-                        temperature=0,
-                        max_tokens=1000,
-                    )
-                    for item in result.get("tags") or []:
-                        try:
-                            tag_id = uuid.UUID(str(item.get("id")))
-                            confidence = float(item.get("confidence", 0))
-                        except (TypeError, ValueError):
-                            continue
-                        if tag_id in {tag.id for tag in tags} and confidence >= 0.75:
-                            chosen[tag_id] = confidence
-                except Exception as e:
-                    logger.info(
-                        "knowledge_base_llm_classification_fallback",
-                        asset_id=asset_id,
-                        error=str(e),
-                    )
-            if not chosen:
-                folded = corpus.casefold()
-                chosen = {
-                    tag.id: 1.0
-                    for tag in tags
-                    if tag.name.strip() and tag.name.casefold() in folded
-                }
-            existing = {
-                row.tag_id
-                for row in (
-                    await session.execute(select(AssetTag).where(AssetTag.asset_id == asset.id))
-                )
-                .scalars()
-                .all()
-            }
-            for tag_id, confidence in chosen.items():
-                if tag_id not in existing:
-                    session.add(
-                        AssetTag(
-                            tenant_id=asset.tenant_id,
-                            asset_id=asset.id,
-                            tag_id=tag_id,
-                            source="auto",
-                            confidence=confidence,
+            )
+            .scalars()
+            .all()
+        )
+        llm_available = deps.ai.llm_available()
+        allow_new = (
+            llm_available
+            and pipeline_cfg.auto_create_knowledge_bases
+            and await count_pending_tags(session, asset.space_id)
+            < pipeline_cfg.max_pending_knowledge_bases
+        )
+        if not tags and not allow_new:
+            return  # 无目录可匹配、也不允许新建
+        version = (
+            await session.execute(
+                select(AssetVersion)
+                .where(AssetVersion.asset_id == asset.id)
+                .order_by(AssetVersion.version.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        text_parts = [asset.name]
+        pdf_info = asset.asset_meta.get("pdf_info") or {}
+        text_parts.extend(str(pdf_info.get(k) or "") for k in ("title", "subject", "author"))
+        if version is not None:
+            parse_meta = (version.version_meta or {}).get("parse") or {}
+            md_key = parse_meta.get("md_key")
+            if md_key:
+                text_parts.append(
+                    (
+                        await deps.storage.get_object(
+                            deps.settings.storage.bucket_derived,
+                            md_key,
                         )
+                    ).decode("utf-8", errors="ignore")[:24000]
+                )
+        corpus = "\n".join(text_parts)
+        chosen: dict[uuid.UUID, float] = {}
+        suggestion = None
+        catalog_ids = {tag.id for tag in tags}
+        if llm_available:
+            catalog = "\n".join(f"{tag.id}\t{tag.name}" for tag in tags) or "（空）"
+            try:
+                result = await deps.ai.complete_json(
+                    [
+                        {"role": "system", "content": _auto_tag_system_prompt(allow_new)},
+                        {
+                            "role": "user",
+                            "content": f"知识库目录：\n{catalog}\n\n文献内容：\n{corpus}",
+                        },
+                    ],
+                    temperature=0,
+                    max_tokens=1000,
+                )
+                for item in result.get("tags") or []:
+                    try:
+                        tag_id = uuid.UUID(str(item.get("id")))
+                        confidence = float(item.get("confidence", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if tag_id in catalog_ids and confidence >= _AUTO_TAG_MIN_CONFIDENCE:
+                        chosen[tag_id] = confidence
+                if allow_new:
+                    suggestion = result.get("new_knowledge_base")
+            except Exception as e:
+                logger.info(
+                    "knowledge_base_llm_classification_fallback",
+                    asset_id=asset_id,
+                    error=str(e),
+                )
+        if suggestion is not None:
+            try:
+                space = await session.get(Space, asset.space_id)
+                created = await _create_suggested_knowledge_base(
+                    session,
+                    space,
+                    suggestion,
+                    catalog_ids,
+                    max_pending=pipeline_cfg.max_pending_knowledge_bases,
+                )
+                if created is not None:
+                    chosen.setdefault(*created)
+            except Exception as e:
+                logger.warning("knowledge_base_auto_create_failed", asset_id=asset_id, error=str(e))
+        if not chosen:
+            folded = corpus.casefold()
+            chosen = {
+                tag.id: 1.0 for tag in tags if tag.name.strip() and tag.name.casefold() in folded
+            }
+        # 写关联前复核目标节点（FOR KEY SHARE 持有到提交，与人工 merge 的 FOR UPDATE
+        # 互斥，但不与 merge 改挂子节点 parent_id 的 UPDATE 互斥；按 id 升序批量加锁，
+        # 顺序与 merge 一致，避免两边各自加锁顺序不同造成死锁，细节见 resolve_live_tags）
+        live_tags = await resolve_live_tags(session, list(chosen), lock=True)
+        resolved: dict[uuid.UUID, float] = {}
+        for tag_id, confidence in chosen.items():
+            live = live_tags.get(tag_id)
+            if live is not None:
+                resolved.setdefault(live.id, confidence)
+        existing = {
+            row.tag_id
+            for row in (
+                await session.execute(select(AssetTag).where(AssetTag.asset_id == asset.id))
+            )
+            .scalars()
+            .all()
+        }
+        for tag_id, confidence in resolved.items():
+            if tag_id not in existing:
+                session.add(
+                    AssetTag(
+                        tenant_id=asset.tenant_id,
+                        asset_id=asset.id,
+                        tag_id=tag_id,
+                        source="auto",
+                        confidence=confidence,
                     )
-            await session.commit()
-    except Exception as e:
-        logger.warning("knowledge_base_auto_classification_failed", asset_id=asset_id, error=str(e))
+                )
+        await session.commit()
 
 
 @celery_app.task(name="worker.ping")
@@ -786,6 +905,29 @@ def transcode_asset(self, asset_id: str) -> dict:
         except Exception:
             await tc.write_progress(deps.redis, asset_id, 0.0, "failed")
             raise
+        finally:
+            await _dispose_deps(deps)
+
+    return asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# 目录监听自动入库（beat 周期任务；实现见 worker/ingest_watch.py）
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="ingest.watch_scan")
+def ingest_watch_scan() -> dict:
+    """单层扫描 ingest_watch.dir：稳定的新文件上传登记并入队管线；dir 为空时 no-op。"""
+    if not get_settings().ingest_watch.dir:
+        return {"status": "disabled"}
+
+    async def _run() -> dict:
+        from loomvec.worker.ingest_watch import scan_watch_dir
+
+        deps = await build_deps()
+        try:
+            return await scan_watch_dir(deps)
         finally:
             await _dispose_deps(deps)
 

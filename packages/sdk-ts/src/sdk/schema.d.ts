@@ -2102,7 +2102,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Knowledge Bases */
+        /**
+         * List Knowledge Bases
+         * @description 可见知识库节点平面列表；status=pending 只列管线自动新建、待确认的节点。
+         */
         get: operations["list_knowledge_bases_api_v1_spaces__space_id__knowledge_bases_get"];
         put?: never;
         /** Create Knowledge Base */
@@ -2129,6 +2132,26 @@ export interface paths {
         head?: never;
         /** Update Knowledge Base */
         patch: operations["update_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Knowledge Base
+         * @description 确认 pending 节点为正式知识库（status → active）。
+         */
+        post: operations["confirm_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/members": {
@@ -2161,6 +2184,27 @@ export interface paths {
         post?: never;
         /** Remove Knowledge Base Member */
         delete: operations["remove_knowledge_base_member_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members__user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Knowledge Base
+         * @description 把 pending 节点并入本空间节点 target_id：文献关联与子节点改挂目标，源节点删除；
+         *     返回目标节点。
+         */
+        post: operations["merge_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__merge_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3208,6 +3252,14 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** KnowledgeBaseMergeRequest */
+        KnowledgeBaseMergeRequest: {
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
         /** KnowledgeBaseOut */
         KnowledgeBaseOut: {
             /**
@@ -3221,6 +3273,7 @@ export interface components {
             parent_id: string | null;
             /** Role */
             role?: string | null;
+            status: components["schemas"]["TagStatus"];
         };
         /** KnowledgeBaseUpdateRequest */
         KnowledgeBaseUpdateRequest: {
@@ -4041,6 +4094,12 @@ export interface components {
             /** Parent Id */
             parent_id?: string | null;
         };
+        /**
+         * TagStatus
+         * @description 知识库节点状态：active=正式节点；pending=管线自动归类新建、待人工确认或合并。
+         * @enum {string}
+         */
+        TagStatus: "active" | "pending";
         /** TakedownRequest */
         TakedownRequest: {
             /** Reason */
@@ -9335,7 +9394,9 @@ export interface operations {
     };
     list_knowledge_bases_api_v1_spaces__space_id__knowledge_bases_get: {
         parameters: {
-            query?: never;
+            query?: {
+                status?: components["schemas"]["TagStatus"] | null;
+            };
             header?: {
                 "X-API-Key"?: string | null;
             };
@@ -9473,6 +9534,40 @@ export interface operations {
             };
         };
     };
+    confirm_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                knowledge_base_id: string;
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_knowledge_base_members_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__members_get: {
         parameters: {
             query?: never;
@@ -9566,6 +9661,44 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_knowledge_base_api_v1_spaces__space_id__knowledge_bases__knowledge_base_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                knowledge_base_id: string;
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseOut"];
+                };
             };
             /** @description Validation Error */
             422: {

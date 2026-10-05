@@ -36,6 +36,7 @@ from loomvec.core.authz import (
     asset_visible_via_tags,
     can_manage_asset,
     decide_asset_visibility,
+    is_system_ingested,
     visible_space_ids,
     visible_tag_ids,
 )
@@ -328,9 +329,15 @@ def _require_asset_manager(access: SpaceAccess, asset, user_id: uuid.UUID | None
     """editor 仅可管理自己上传的资产；owner 不限；viewer 拒绝（doc 05 能力矩阵）。
 
     API Key 身份（member 为空、effective_role 默认 EDITOR）按租户级 editor 兜底，
-    仅可管理 API Key 登记的资产；公共空间虚拟 viewer 走 access.role=VIEWER 拒绝写入。
+    仅可管理 API Key 登记的资产；系统入库（目录监听）的资产人类 editor 可管、API Key
+    不可；公共空间虚拟 viewer 走 access.role=VIEWER 拒绝写入。
     """
-    if not can_manage_asset(role=access.role, asset_created_by=asset.created_by, user_id=user_id):
+    if not can_manage_asset(
+        role=access.role,
+        asset_created_by=asset.created_by,
+        user_id=user_id,
+        system_ingested=is_system_ingested(asset.asset_meta),
+    ):
         raise PermissionDeniedError(reason="无该资产的编辑/删除权限（editor 仅限本人上传）")
 
 

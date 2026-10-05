@@ -29,6 +29,7 @@ from loomvec.core.db.models.asset import (
     SemanticUnit,
     Tag,
     TagMember,
+    TagStatus,
     UnitType,
 )
 from loomvec.core.db.models.enterprise import (
@@ -61,6 +62,7 @@ from loomvec.core.db.models.identity import (
     UserRole,
     UserStatus,
 )
+from loomvec.core.db.models.ingest import IngestFile, IngestFileStatus
 from loomvec.core.db.models.pipeline import (
     JobStatus,
     JobType,
@@ -99,6 +101,8 @@ __all__ = [
     "Entity",
     "EntityMergeLog",
     "GraphStatus",
+    "IngestFile",
+    "IngestFileStatus",
     "JobStatus",
     "JobType",
     "MergeLogStatus",
@@ -126,6 +130,7 @@ __all__ = [
     "SystemConfig",
     "Tag",
     "TagMember",
+    "TagStatus",
     "Tenant",
     "TenantOidcBinding",
     "TenantStatus",

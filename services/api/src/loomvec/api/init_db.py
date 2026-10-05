@@ -60,6 +60,10 @@ _ADDITIVE_COLUMNS: list[tuple[str, str]] = [
     # 层级知识库：Tag 仍兼容旧标签，只增加父节点关系
     ("tag", "ADD COLUMN IF NOT EXISTS parent_id UUID"),
     ("tag", "ADD COLUMN IF NOT EXISTS space_id UUID"),
+    # 知识库节点状态（TagStatus）：存量行由 DEFAULT 补为 active；管线自动新建的为 pending
+    ("tag", "ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'active'"),
+    # 合并目标（新库由 create_all 建 FK；既有库只补列，列可空、历史行全空）
+    ("tag", "ADD COLUMN IF NOT EXISTS merged_into UUID"),
     ("asset_tag", "ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'manual'"),
     ("asset_tag", "ADD COLUMN IF NOT EXISTS confidence FLOAT"),
 ]
@@ -69,6 +73,7 @@ _ADDITIVE_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS ix_api_key_user_id ON api_key (user_id)",
     "CREATE INDEX IF NOT EXISTS ix_tag_parent_id ON tag (parent_id)",
     "CREATE INDEX IF NOT EXISTS ix_tag_space_id ON tag (space_id)",
+    "CREATE INDEX IF NOT EXISTS ix_asset_checksum ON asset (checksum)",
 ]
 
 # 新建知识库按空间隔离名称；存量库原约束是租户级名称唯一。

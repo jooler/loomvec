@@ -93,5 +93,12 @@ celery_app.conf.update(
             "task": "graph.community_scan",
             "schedule": settings.graph.community_interval_seconds,
         },
+        # 目录监听自动入库（ingest_watch.dir 为空时任务内 no-op）
+        "ingest-watch-scan": {
+            "task": "ingest.watch_scan",
+            "schedule": settings.ingest_watch.poll_interval_seconds,
+            # 队列积压时过期丢弃，不堆积重复的扫描任务（下一周期会重新投递）
+            "options": {"expires": settings.ingest_watch.poll_interval_seconds},
+        },
     },
 )

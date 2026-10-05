@@ -9,6 +9,8 @@ description = "LoomVec 处理管线执行器（Celery + Redis）"
 requires-python = ">=3.12"
 dependencies = [
     "loomvec-core",
+    # 目录监听入库复用 api 服务层的上传策略与资产登记（worker/ingest_watch.py）
+    "loomvec-api",
     "celery[redis]>=5.5",
 ]
 

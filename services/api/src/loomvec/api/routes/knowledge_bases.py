@@ -14,7 +14,7 @@ from loomvec.api.deps import get_session, require_scope, require_space
 from loomvec.api.services import knowledge_bases as knowledge_base_service
 from loomvec.api.services import spaces as space_service
 from loomvec.core.authz import SpaceAccess, at_least, tag_role, visible_tag_ids
-from loomvec.core.db.models import SpaceRole, User
+from loomvec.core.db.models import SpaceRole, Tag, TagStatus, User
 from loomvec.core.db.repos import TagRepo
 
 router = APIRouter(prefix="/api/v1", tags=["knowledge-bases"])
@@ -30,10 +30,16 @@ class KnowledgeBaseUpdateRequest(BaseModel):
     parent_id: uuid.UUID | None = None
 
 
+class KnowledgeBaseMergeRequest(BaseModel):
+    target_id: uuid.UUID
+
+
 class KnowledgeBaseOut(BaseModel):
     id: uuid.UUID
     name: str
     parent_id: uuid.UUID | None
+    # active=正式节点；pending=管线自动归类新建、待人工确认或合并
+    status: TagStatus
     role: str | None = None
 
 
@@ -57,7 +63,20 @@ class KnowledgeBaseMemberListOut(BaseModel):
     items: list[KnowledgeBaseMemberOut]
 
 
-async def _nodes_for_access(session: AsyncSession, access: SpaceAccess) -> list[KnowledgeBaseOut]:
+async def _node_out(session: AsyncSession, tag: Tag, identity: Identity) -> KnowledgeBaseOut:
+    role = await tag_role(session, tag_id=tag.id, user_id=uuid.UUID(identity.user_id))
+    return KnowledgeBaseOut(
+        id=tag.id,
+        name=tag.name,
+        parent_id=tag.parent_id,
+        status=tag.status,
+        role=role.value if role else None,
+    )
+
+
+async def _nodes_for_access(
+    session: AsyncSession, access: SpaceAccess, status: TagStatus | None = None
+) -> list[KnowledgeBaseOut]:
     rows = await TagRepo(session).list_for_tenant(access.space.tenant_id, space_id=access.space.id)
     if at_least(access.role, SpaceRole.EDITOR):
         allowed = {tag.id for tag in rows}
@@ -75,7 +94,8 @@ async def _nodes_for_access(session: AsyncSession, access: SpaceAccess) -> list[
     user_id = access.member.user_id if access.member is not None else None
     items: list[KnowledgeBaseOut] = []
     for tag in rows:
-        if tag.id not in allowed:
+        # 状态过滤只作用于输出：可见性的祖先补全仍基于全部节点
+        if tag.id not in allowed or (status is not None and tag.status != status):
             continue
         role = await tag_role(session, tag_id=tag.id, user_id=user_id) if user_id else None
         items.append(
@@ -83,6 +103,7 @@ async def _nodes_for_access(session: AsyncSession, access: SpaceAccess) -> list[
                 id=tag.id,
                 name=tag.name,
                 parent_id=tag.parent_id,
+                status=tag.status,
                 role=role.value if role else None,
             )
         )
@@ -91,10 +112,12 @@ async def _nodes_for_access(session: AsyncSession, access: SpaceAccess) -> list[
 
 @router.get("/spaces/{space_id}/knowledge-bases", response_model=KnowledgeBaseListOut)
 async def list_knowledge_bases(
+    status: TagStatus | None = None,
     access: SpaceAccess = Depends(require_space()),
     session: AsyncSession = Depends(get_session),
 ) -> KnowledgeBaseListOut:
-    return KnowledgeBaseListOut(items=await _nodes_for_access(session, access))
+    """可见知识库节点平面列表；status=pending 只列管线自动新建、待确认的节点。"""
+    return KnowledgeBaseListOut(items=await _nodes_for_access(session, access, status))
 
 
 @router.post("/spaces/{space_id}/knowledge-bases", response_model=KnowledgeBaseOut, status_code=201)
@@ -108,7 +131,11 @@ async def create_knowledge_base(
         session, identity=identity, space=access.space, name=body.name, parent_id=body.parent_id
     )
     return KnowledgeBaseOut(
-        id=tag.id, name=tag.name, parent_id=tag.parent_id, role=SpaceRole.OWNER.value
+        id=tag.id,
+        name=tag.name,
+        parent_id=tag.parent_id,
+        status=tag.status,
+        role=SpaceRole.OWNER.value,
     )
 
 
@@ -132,10 +159,7 @@ async def update_knowledge_base(
         parent_id=body.parent_id,
         change_parent="parent_id" in body.model_fields_set,
     )
-    role = await tag_role(session, tag_id=tag.id, user_id=uuid.UUID(identity.user_id))
-    return KnowledgeBaseOut(
-        id=tag.id, name=tag.name, parent_id=tag.parent_id, role=role.value if role else None
-    )
+    return await _node_out(session, tag, identity)
 
 
 @router.delete("/spaces/{space_id}/knowledge-bases/{knowledge_base_id}", status_code=204)
@@ -147,6 +171,45 @@ async def delete_knowledge_base(
 ) -> None:
     tag = await knowledge_base_service.get_tag(session, knowledge_base_id)
     await knowledge_base_service.delete(session, identity=identity, space=access.space, tag=tag)
+
+
+@router.post(
+    "/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/confirm",
+    response_model=KnowledgeBaseOut,
+)
+async def confirm_knowledge_base(
+    knowledge_base_id: uuid.UUID,
+    access: SpaceAccess = Depends(require_space(SpaceRole.VIEWER)),
+    identity: Identity = Depends(require_scope("write")),
+    session: AsyncSession = Depends(get_session),
+) -> KnowledgeBaseOut:
+    """确认 pending 节点为正式知识库（status → active）。"""
+    tag = await knowledge_base_service.get_tag(session, knowledge_base_id)
+    tag = await knowledge_base_service.confirm(
+        session, identity=identity, space=access.space, tag=tag
+    )
+    return await _node_out(session, tag, identity)
+
+
+@router.post(
+    "/spaces/{space_id}/knowledge-bases/{knowledge_base_id}/merge",
+    response_model=KnowledgeBaseOut,
+)
+async def merge_knowledge_base(
+    knowledge_base_id: uuid.UUID,
+    body: KnowledgeBaseMergeRequest,
+    access: SpaceAccess = Depends(require_space(SpaceRole.VIEWER)),
+    identity: Identity = Depends(require_scope("write")),
+    session: AsyncSession = Depends(get_session),
+) -> KnowledgeBaseOut:
+    """把 pending 节点并入本空间节点 target_id：文献关联与子节点改挂目标，源节点删除；
+    返回目标节点。"""
+    tag = await knowledge_base_service.get_tag(session, knowledge_base_id)
+    target = await knowledge_base_service.get_tag(session, body.target_id)
+    target = await knowledge_base_service.merge(
+        session, identity=identity, space=access.space, tag=tag, target=target
+    )
+    return await _node_out(session, target, identity)
 
 
 @router.get(

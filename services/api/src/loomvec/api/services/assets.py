@@ -142,8 +142,14 @@ async def register_file_asset(
     content_type: str | None,
     space: Space,
     folder_id: uuid.UUID | None = None,
+    asset_id: uuid.UUID | None = None,
+    asset_meta: dict | None = None,
 ) -> Asset:
-    """登记已直传的文件资产：对象存在校验 → 两级配额闸门 → 计量 + v1。"""
+    """登记已直传的文件资产：对象存在校验 → 两级配额闸门 → 计量 + v1。
+
+    asset_id / asset_meta 供系统入库预先指定资产 id 与来源标记（与调用方在同一
+    session 中的台账改动一并提交）；用户直传不传。
+    """
     from loomvec.api.services.folders import validate_folder_in_space
 
     policy = await upload_policy(session, settings)
@@ -165,6 +171,8 @@ async def register_file_asset(
         size_bytes=size,
         storage_key=key,
         folder_id=folder_id,
+        **({"id": asset_id} if asset_id is not None else {}),
+        **({"asset_meta": asset_meta} if asset_meta is not None else {}),
     )
     await session.flush()
     session.add(

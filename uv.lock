@@ -1295,6 +1295,7 @@ version = "0.1.0"
 source = { editable = "services/worker" }
 dependencies = [
     { name = "celery", extra = ["redis"] },
+    { name = "loomvec-api" },
     { name = "loomvec-core" },
 ]
 
@@ -1307,6 +1308,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "celery", extras = ["redis"], specifier = ">=5.5" },
+    { name = "loomvec-api", editable = "services/api" },
     { name = "loomvec-core", editable = "services/core" },
 ]
 

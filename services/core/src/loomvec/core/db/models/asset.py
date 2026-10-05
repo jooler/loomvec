@@ -95,7 +95,8 @@ class Asset(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # 原始对象在 raw bucket 的 key（文本摄取时内容直接入库，此列为空）
     storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)  # sha256
+    # sha256（parse 步骤填充）；索引供去重查询（上传去重预检 / 目录监听入库）
+    checksum: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[AssetStatus] = mapped_column(
         Enum(AssetStatus, name="asset_status", values_callable=enum_values),
         nullable=False,
@@ -152,6 +153,13 @@ class AssetTag(UuidPkMixin, TenantMixin, TimestampMixin, Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class TagStatus(enum.StrEnum):
+    """知识库节点状态：active=正式节点；pending=管线自动归类新建、待人工确认或合并。"""
+
+    ACTIVE = "active"
+    PENDING = "pending"
+
+
 class Tag(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
     """知识库节点：空间级命名空间中的可嵌套标签。"""
 
@@ -166,6 +174,17 @@ class Tag(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tag.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # TagStatus 取值；server_default 与 init_db 的 ADD COLUMN DDL 对齐（存量行补为 active）
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=TagStatus.ACTIVE.value,
+        server_default=TagStatus.ACTIVE.value,
+    )
+    # 被人工合并掉时指向合并目标（节点随之软删）；自动归类沿此链重定向，不再重建同名节点
+    merged_into: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tag.id", ondelete="SET NULL"), nullable=True
     )
 
 

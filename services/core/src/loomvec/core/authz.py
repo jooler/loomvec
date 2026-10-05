@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loomvec.core.constants import ASSET_META_SOURCE_KEY, SYSTEM_ASSET_SOURCES
 from loomvec.core.db.models import (
     AssetTag,
     ReviewStatus,
@@ -119,23 +120,33 @@ def at_least(role: SpaceRole | str, min_role: SpaceRole | str) -> bool:
     return r >= m
 
 
+def is_system_ingested(asset_meta: dict | None) -> bool:
+    """资产是否由系统入库（如目录监听），据 asset_meta 的来源标记判定。"""
+    return (asset_meta or {}).get(ASSET_META_SOURCE_KEY) in SYSTEM_ASSET_SOURCES
+
+
 def can_manage_asset(
     *,
     role: SpaceRole | str,
     asset_created_by: uuid.UUID | None,
     user_id: uuid.UUID | None,
+    system_ingested: bool = False,
 ) -> bool:
     """资产编辑/删除边界（doc 05 能力矩阵）：
 
     - owner：空间内全部资产；
     - editor：仅自己上传的（created_by == user_id）；API Key 身份（user_id 为空）
       仅可管理同为 API Key 登记的资产（created_by 为空）；
+    - 系统入库且无上传人的资产（system_ingested，见 is_system_ingested）：人类 editor
+      可管理，API Key 身份不可（不落入 API Key 资产池）；
     - viewer：无权。
     """
     if at_least(role, SpaceRole.OWNER):
         return True
     if not at_least(role, SpaceRole.EDITOR):
         return False
+    if system_ingested and asset_created_by is None:
+        return user_id is not None
     if user_id is None:  # API Key 身份：仅限 API Key 登记的资产
         return asset_created_by is None
     return asset_created_by == user_id

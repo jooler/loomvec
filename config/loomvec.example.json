@@ -81,7 +81,9 @@
     "summary_enabled": false,
     "auto_rename_papers": true,
     "crossref_enabled": true,
-    "crossref_mailto": ""
+    "crossref_mailto": "",
+    "auto_create_knowledge_bases": true,
+    "max_pending_knowledge_bases": 20
   },
   "upload": {
     "max_size_bytes": 209715200,
@@ -109,6 +111,16 @@
       ".flac"
     ],
     "presign_expires_seconds": 3600
+  },
+  "ingest_watch": {
+    "$comment": "目录监听自动入库（worker beat 任务 ingest.watch_scan，需 worker 带 -B 运行 beat）。dir 为空即关闭；dir（监听目录）与 space_id（入库目标空间 id）只在本机 config/loomvec.json 填真实值，本模板仅留空占位。只扫描 dir 单层、不递归子目录、不跟随软链接；后缀在 extensions 白名单内、大小与修改时间自首次观察起持续 stability_seconds 秒不变（且至少连续两轮扫描不变）的文件才上传入库；stability_seconds 应不小于 2 倍 poll_interval_seconds（扫描周期，秒）。",
+    "dir": "",
+    "space_id": "",
+    "poll_interval_seconds": 60,
+    "stability_seconds": 120,
+    "extensions": [
+      ".pdf"
+    ]
   },
   "image": {
     "thumbnail_max_width": 480,

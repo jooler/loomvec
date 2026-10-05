@@ -6,7 +6,7 @@
   运行环境（ENV）、日志、认证密钥、限流、worker 运行参数、OTel、**服务端口**；
   统一前缀 `LOOMVEC_`，嵌套字段用 `__` 分隔（如 `LOOMVEC_POSTGRES__URL`）；
 - **`config/loomvec.json`（应用运行参数，应用自管理）**：AI 供方（地址/密钥/模型）、
-  MinerU、检索、管线分片、上传白名单、图片处理、图谱、媒体、转写、问答；
+  MinerU、检索、管线分片、上传白名单、目录监听入库、图片处理、图谱、媒体、转写、问答；
   路径经 `LOOMVEC_APP_CONFIG` 指定（缺省 `<仓库根>/config/loomvec.json`），
   文件不存在时使用内置默认值；模板见 `config/loomvec.example.json`；
 - **DB `system_config`（admin 动态配置，显式管理覆盖）**：经管理端集中配置的
@@ -318,6 +318,10 @@ class PipelineSettings(BaseModel):
     # DOI → api.crossref.org 元数据查询；内网部署关闭后仅用 PDF 元数据 + LLM
     crossref_enabled: bool = True
     crossref_mailto: str = ""  # Crossref polite pool 联系邮箱（可选）
+    # 管线自动归类：LLM 判定现有知识库都覆盖不了文献主题时允许新建 pending 节点（docs/17）
+    auto_create_knowledge_bases: bool = True
+    # 每空间未处理（pending）知识库上限：达到后不再新建，只从现有节点中选择
+    max_pending_knowledge_bases: int = 20
 
 
 class WorkerSettings(BaseModel):
@@ -374,6 +378,22 @@ class UploadSettings(BaseModel):
         ]
     )
     presign_expires_seconds: int = 3600
+
+
+class IngestWatchSettings(BaseModel):
+    """目录监听自动入库（worker beat 周期任务 `ingest.watch_scan`，worker/ingest_watch.py）。
+
+    dir 为空即关闭；只扫描 dir 单层（不递归子目录）。dir / space_id 的真实值只写本机
+    config/loomvec.json，入库模板只放占位。
+    """
+
+    dir: str = ""  # 监听目录；空 = 关闭
+    space_id: str = ""  # 入库目标空间 id（dir 非空时必填）
+    poll_interval_seconds: int = 60  # 扫描周期（beat）
+    # 文件 size+mtime 自首次观察起持续该秒数不变才视为写完（防读到同步中的半截文件）；
+    # 应不小于 2×poll_interval_seconds，否则实际只由「连续两轮不变」决定
+    stability_seconds: int = 120
+    extensions: list[str] = Field(default_factory=lambda: [".pdf"])  # 后缀白名单（不区分大小写）
 
 
 class ImageSettings(BaseModel):
@@ -603,7 +623,7 @@ class AppConfig(BaseModel):
     """应用运行参数（config/loomvec.json，应用自管理）。
 
     与环境变量解耦：AI 供方（地址/密钥/模型）、MinerU、检索、管线分片、
-    上传白名单、图片处理、图谱、媒体、转写、智能体。文件支持部分覆盖
+    上传白名单、目录监听入库、图片处理、图谱、媒体、转写、智能体。文件支持部分覆盖
     （未写的键取内置默认）；admin 动态配置（DB）未覆盖时以此为生效值。
     """
 
@@ -612,6 +632,7 @@ class AppConfig(BaseModel):
     search: SearchSettings = Field(default_factory=SearchSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     upload: UploadSettings = Field(default_factory=UploadSettings)
+    ingest_watch: IngestWatchSettings = Field(default_factory=IngestWatchSettings)
     image: ImageSettings = Field(default_factory=ImageSettings)
     graph: GraphSettings = Field(default_factory=GraphSettings)
     media: MediaSettings = Field(default_factory=MediaSettings)
@@ -695,6 +716,10 @@ class Settings(BaseSettings):
     @property
     def upload(self) -> UploadSettings:
         return get_app_config().upload
+
+    @property
+    def ingest_watch(self) -> IngestWatchSettings:
+        return get_app_config().ingest_watch
 
     @property
     def image(self) -> ImageSettings:
