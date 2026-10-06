@@ -8,10 +8,11 @@ beat 周期任务 `ingest.watch_scan` 调用 scan_watch_dir，每轮（docs/18�
    每行在独立保存点中写入，单行异常不拖垮整轮；长期不在目录中的行按保留期清理；
    duplicate 行指向的资产已不可用时回到 pending_stable 重新判定；
 3. 补偿入队：已登记资产但未入队（uploaded）的行重新入队；
-4. 稳定的文件：同租户有同大小、尚未算出 sha256 的在途资产则本轮不读不传、等它算出再判；
-   否则读入（O_NOFOLLOW，不持有数据库事务）、PDF 头尾校验、算 sha256；同租户已有可用的
-   同内容资产则记 duplicate（不上传、不入队）；否则写对象存储 → register_file_asset（台账
-   uploaded、预分配的 asset_id 与资产同事务提交）→ enqueue_pipeline → done；
+4. 稳定的文件：目标空间或同租户已发布的公共空间（大家都看得到的）有同大小、尚未算出 sha256
+   的在途资产则本轮不读不传、等它算出再判；否则读入（O_NOFOLLOW，不持有数据库事务）、PDF
+   头尾校验、算 sha256；上述空间已有可用的同内容资产则记 duplicate（不上传、不入队）；否则
+   写对象存储 → register_file_asset（台账 uploaded、预分配的 asset_id 与资产同事务提交）→
+   enqueue_pipeline → done；
 5. 单个文件失败只把该行记 error，继续处理其它文件；error 行在文件 size/mtime 变化后重新处理。
 """
 
@@ -28,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 
 from celery.exceptions import SoftTimeLimitExceeded
 from redis.exceptions import LockError
-from sqlalchemy import exists, or_, select, text, update
+from sqlalchemy import and_, exists, or_, select, text, update
 
 from loomvec.api.context import Identity
 from loomvec.api.services import assets as asset_service
@@ -44,6 +45,9 @@ from loomvec.core.db.models import (
     IngestFileStatus,
     ReviewStatus,
     Space,
+    SpaceGroupVisibility,
+    SpaceType,
+    UserGroup,
 )
 from loomvec.core.db.repos import AssetRepo
 from loomvec.core.errors import ValidationError
@@ -496,10 +500,26 @@ async def _ingest_one(
 
 
 def _usable_asset_conditions(space: Space) -> tuple:
-    """可作为去重依据的现存资产（需 join Space）：与目标空间同租户（tenant_id 可空，空租户之间
-    也按同一租户判）、资产未删除且未失败 / 未被驳回、所属空间未删除且未封禁（删空间不软删
-    资产行，须连空间一起判）。"""
+    """可作为去重依据的现存资产（需 join Space）。
+
+    大家都看得到的才算已有：位于目标空间，或已发布的公共空间（至少对一个未删除的用户分组
+    可见，与 authz 公共空间可见性同口径）；需审核的非目标空间只认审核通过的（分组用户只看得到
+    这些）。他人协作 / 个人空间、未发布的公共空间里的副本不挡入库。另须与目标空间同租户
+    （tenant_id 可空，空租户之间也按同一租户判）、资产未删除且未失败 / 未被驳回、所属空间
+    未删除且未封禁（删空间不软删资产行，须连空间一起判）。
+    """
+    published = exists().where(
+        SpaceGroupVisibility.space_id == Space.id,
+        UserGroup.id == SpaceGroupVisibility.group_id,
+        UserGroup.deleted_at.is_(None),
+    )
     return (
+        or_(Space.id == space.id, and_(Space.space_type == SpaceType.PUBLIC, published)),
+        or_(
+            Space.id == space.id,
+            Space.review_required.is_(False),
+            Asset.review_status == ReviewStatus.APPROVED,
+        ),
         Space.tenant_id.is_not_distinct_from(space.tenant_id),
         Space.deleted_at.is_(None),
         Space.banned_at.is_(None),
@@ -512,7 +532,8 @@ def _usable_asset_conditions(space: Space) -> tuple:
 async def _find_duplicate(
     session, space: Space, watch_dir: str, record: IngestFile, checksum: str
 ) -> tuple[uuid.UUID, uuid.UUID] | None:
-    """内容相同的可用资产 (asset_id, space_id)：同租户任一空间，目标空间优先、其次最早入库的。
+    """内容相同的可用资产 (asset_id, space_id)：目标空间或同租户已发布的公共空间，目标空间
+    优先、其次最早入库的。
 
     判定来源：管线已算出相同 sha256 的资产（含人工上传）/ 本路径上次入库的资产 / 同目录
     其它路径入库的资产（刚登记、管线尚未写 checksum 的也能认出）。须在改写 record.checksum
@@ -551,7 +572,8 @@ async def _find_duplicate(
 
 
 async def _has_inflight_same_size(session, space: Space, watch_dir: str, size: int) -> bool:
-    """同租户有同大小、管线尚未写入 checksum 的在途资产（pending / processing）。
+    """目标空间或同租户已发布的公共空间里有同大小、管线尚未写入 checksum 的在途资产
+    （pending / processing；需审核的非目标空间里的不算，审核通过前也不算已有）。
 
     本目录登记的资产不算：其 sha256 已记在台账，同内容已由 _find_duplicate 认出。
     """
@@ -576,8 +598,9 @@ async def _has_inflight_same_size(session, space: Space, watch_dir: str, size: i
 
 
 async def _reopen_orphaned_duplicates(deps: PipelineDeps, space: Space, watch_dir: str) -> int:
-    """duplicate 行指向的资产已不可用（删除 / 所在空间删除或封禁 / 失败 / 驳回 / 换了租户）：
-    回到 pending_stable 重新判定——同租户仍有别的同内容资产则再记 duplicate，否则正常入库。
+    """duplicate 行指向的资产已不可用（删除 / 所在空间删除或封禁 / 失败 / 驳回 / 公共空间撤销
+    发布 / 既不在目标空间也不在已发布的公共空间，如改了 space_id）：回到 pending_stable
+    重新判定——仍有别的可用同内容资产则再记 duplicate，否则正常入库。
 
     指向监听自己入库的资产时不重开（done 行同理）：它被人删掉视为有意删除，文件不变就不再
     入库。同目录副本、或 done 行因 mtime 变化重判后，duplicate 都可能指向监听自己的资产。

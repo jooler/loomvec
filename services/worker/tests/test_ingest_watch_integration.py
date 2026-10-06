@@ -3,9 +3,11 @@
 覆盖：首轮登记 pending_stable → 稳定后上传登记并入队（done，资产带来源标记、无上传人）→
 上传策略不合规与 PDF 未写完整记 error 且不影响其它文件 → 软链接不入库 → 其它路径同内容判
 duplicate → 只改 mtime 判 duplicate → 内容变化作为新资产入库 → 入队失败保持 uploaded、
-下轮补偿入队 → 长期消失文件的台账行清理 → 扫描互斥锁；跨空间去重（同租户其它空间已有可用的
-即跳过、目标空间优先，已删 / 失败 / 驳回 / 封禁与其它租户不算，空租户）→ 等待同大小在途资产 →
-duplicate 指向的资产不可用后重开。无 Docker 或 testcontainers 时跳过。
+下轮补偿入队 → 长期消失文件的台账行清理 → 扫描互斥锁；跨空间去重（目标空间或同租户已发布的
+公共空间已有可用的即跳过、目标空间优先；他人协作 / 个人空间、未发布的公共空间、审核未通过、
+已删 / 失败 / 驳回 / 封禁与其它租户不算；空租户）→ 等待同大小在途资产 → duplicate 指向的资产
+不可用（含撤销发布、不在去重范围内）后重开 → 改 space_id 后按新空间去重。
+无 Docker 或 testcontainers 时跳过。
 """
 
 from __future__ import annotations
@@ -270,12 +272,35 @@ def _sha(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def _space(session, slug: str, tenant_id):
+def _space(session, slug: str, tenant_id, *, kind: str = "shared", review_required=False):
     from loomvec.core.db.models import Space, SpaceType
 
-    space = Space(slug=slug, name=slug, space_type=SpaceType.SHARED, tenant_id=tenant_id)
+    space = Space(
+        slug=slug,
+        name=slug,
+        space_type=SpaceType(kind),
+        tenant_id=tenant_id,
+        review_required=review_required,
+    )
     session.add(space)
     return space
+
+
+async def _publish(session, space, *, group_deleted: bool = False):
+    """把公共空间发布给一个新建分组（行存在即该分组可见）；返回可见性行。"""
+    from loomvec.core.db.models import SpaceGroupVisibility, UserGroup
+
+    group = UserGroup(
+        tenant_id=space.tenant_id,
+        name=f"group-{uuid.uuid4().hex[:8]}",
+        deleted_at=datetime.now(UTC) if group_deleted else None,
+    )
+    session.add(group)
+    await session.flush()
+    visibility = SpaceGroupVisibility(space_id=space.id, group_id=group.id)
+    session.add(visibility)
+    await session.flush()
+    return visibility
 
 
 def _asset(session, space, *, checksum, created_at=None, size=0, **fields):
@@ -320,11 +345,17 @@ async def test_ingest_watch_dedup_across_spaces(session_factory, tmp_path, monke
 
     deps, sent, storage, _ = _harness(session_factory, tmp_path, monkeypatch)
     names = (
-        "other-space",  # 同租户其它空间已有 → duplicate
-        "both",  # 目标空间与其它空间都有 → 指向目标空间的
-        "earliest",  # 两个非目标空间都有 → 指向更早的
-        "ledger",  # 台账另一路径登记过、资产在其它空间且尚无 checksum → duplicate
-        "asset-deleted",  # 以下均不可用 → 正常入库
+        "public-space",  # 同租户公共空间已有 → duplicate
+        "both",  # 目标空间与公共空间都有 → 指向目标空间的
+        "earliest",  # 两个公共空间都有 → 指向更早的
+        "ledger",  # 台账另一路径登记过、资产在公共空间且尚无 checksum → duplicate
+        "review-approved",  # 需审核的公共空间里审核通过的 → duplicate
+        "shared-space",  # 以下均不算已有 → 正常入库：他人协作空间里的
+        "personal-space",
+        "unpublished-public",  # 未发布给任何分组的公共空间
+        "deleted-group",  # 只发布给已删除分组的公共空间
+        "review-pending",  # 需审核的公共空间里尚未审核通过的
+        "asset-deleted",
         "deleted-space",
         "banned-space",
         "failed",
@@ -339,20 +370,43 @@ async def test_ingest_watch_dedup_across_spaces(session_factory, tmp_path, monke
         other_tenant = Tenant(name="other-tenant")
         session.add(other_tenant)
         await session.flush()
-        sibling = _space(session, "sibling", target.tenant_id)
-        cousin = _space(session, "cousin", target.tenant_id)
-        removed = _space(session, "removed", target.tenant_id)
+        sibling = _space(session, "sibling", target.tenant_id, kind="public")
+        cousin = _space(session, "cousin", target.tenant_id, kind="public")
+        reviewed = _space(
+            session, "reviewed", target.tenant_id, kind="public", review_required=True
+        )
+        private = _space(session, "private", target.tenant_id)
+        personal = _space(session, "personal", target.tenant_id, kind="personal")
+        unpublished = _space(session, "unpublished", target.tenant_id, kind="public")
+        group_gone = _space(session, "group-gone", target.tenant_id, kind="public")
+        removed = _space(session, "removed", target.tenant_id, kind="public")
         removed.deleted_at = datetime.now(UTC)
-        banned = _space(session, "banned", target.tenant_id)
+        banned = _space(session, "banned", target.tenant_id, kind="public")
         banned.banned_at = datetime.now(UTC)
-        foreign = _space(session, "foreign", other_tenant.id)
+        foreign = _space(session, "foreign", other_tenant.id, kind="public")
         await session.flush()
+        for published in (sibling, cousin, reviewed, removed, banned, foreign):
+            await _publish(session, published)
+        await _publish(session, group_gone, group_deleted=True)
 
         def sha(name):
             return _sha(contents[name])
 
-        in_sibling = _asset(session, sibling, checksum=sha("other-space"), created_at=earlier)
+        in_sibling = _asset(session, sibling, checksum=sha("public-space"), created_at=earlier)
         _asset(session, sibling, checksum=sha("both"), created_at=earlier)  # 更早，但不在目标空间
+        approved = _asset(
+            session, reviewed, checksum=sha("review-approved"), review_status=ReviewStatus.APPROVED
+        )
+        _asset(session, private, checksum=sha("shared-space"), created_at=earlier)
+        _asset(session, personal, checksum=sha("personal-space"))
+        _asset(session, unpublished, checksum=sha("unpublished-public"))
+        _asset(session, group_gone, checksum=sha("deleted-group"))
+        _asset(
+            session,
+            reviewed,
+            checksum=sha("review-pending"),
+            review_status=ReviewStatus.PENDING_REVIEW,
+        )
         in_target = _asset(session, target, checksum=sha("both"))
         oldest = _asset(
             session, cousin, checksum=sha("earliest"), created_at=earlier - timedelta(days=1)
@@ -386,20 +440,21 @@ async def test_ingest_watch_dedup_across_spaces(session_factory, tmp_path, monke
         (tmp_path / f"{name}.pdf").write_bytes(content)
     await ingest_watch.scan_watch_dir(deps)
     result = await ingest_watch.scan_watch_dir(deps)
-    assert (result["duplicate"], result["ingested"]) == (4, 6)
+    assert (result["duplicate"], result["ingested"]) == (5, 11)
 
     rows = await _ledger(session_factory)
     expected_duplicates = {
-        "other-space.pdf": in_sibling.id,
+        "public-space.pdf": in_sibling.id,
         "both.pdf": in_target.id,
         "earliest.pdf": oldest.id,
         "ledger.pdf": unparsed.id,
+        "review-approved.pdf": approved.id,
     }
     for name, asset_id in expected_duplicates.items():
         assert (rows[name].status, rows[name].asset_id) == (IngestFileStatus.DUPLICATE, asset_id)
     ingested = {f"{n}.pdf" for n in names} - set(expected_duplicates)
     assert {rows[n].status for n in ingested} == {IngestFileStatus.DONE}
-    assert len(storage.objects) == 6 and len(sent) == 6
+    assert len(storage.objects) == 11 and len(sent) == 11
 
 
 async def test_ingest_watch_dedup_null_tenant(session_factory, tmp_path, monkeypatch):
@@ -411,8 +466,9 @@ async def test_ingest_watch_dedup_null_tenant(session_factory, tmp_path, monkeyp
     shared, tenanted = _pdf("shared"), _pdf("tenanted")
     async with session_factory() as session:
         target = _space(session, "null-target", None)
-        sibling = _space(session, "null-sibling", None)
+        sibling = _space(session, "null-sibling", None, kind="public")
         await session.flush()
+        await _publish(session, sibling)
         in_sibling = _asset(session, sibling, checksum=_sha(shared))
         _asset(
             session, await session.get(Space, uuid.UUID(DEFAULT_SPACE_ID)), checksum=_sha(tenanted)
@@ -436,7 +492,8 @@ async def test_ingest_watch_dedup_null_tenant(session_factory, tmp_path, monkeyp
 
 
 async def test_ingest_watch_waits_for_inflight_same_size(session_factory, tmp_path, monkeypatch):
-    """同大小、尚无 checksum 的在途资产：等它算出 checksum 再判；超过等待上限照常入库。"""
+    """目标空间或公共空间里同大小、尚无 checksum 的在途资产：等它算出 checksum 再判；
+    超过等待上限照常入库；他人协作空间、需审核的公共空间里的在途资产不等。"""
     from sqlalchemy import update
 
     from loomvec.api.init_db import DEFAULT_SPACE_ID
@@ -445,20 +502,31 @@ async def test_ingest_watch_waits_for_inflight_same_size(session_factory, tmp_pa
 
     deps, sent, _, _ = _harness(session_factory, tmp_path, monkeypatch)
     paper, other, late = _pdf("paper"), _pdf("other-size!"), _pdf("late")
+    private_copy, review_copy = _pdf("in-private-space"), _pdf("in-review-space-copy")
     async with session_factory() as session:
         target = await session.get(Space, uuid.UUID(DEFAULT_SPACE_ID))
-        sibling = _space(session, "sibling", target.tenant_id)
+        sibling = _space(session, "sibling", target.tenant_id, kind="public")
+        reviewed = _space(
+            session, "reviewed", target.tenant_id, kind="public", review_required=True
+        )
+        private = _space(session, "private", target.tenant_id)
         await session.flush()
+        await _publish(session, sibling)
+        await _publish(session, reviewed)
         uploading = _asset(
             session, sibling, checksum=None, size=len(paper), status=AssetStatus.PROCESSING
         )
+        _asset(session, private, checksum=None, size=len(private_copy), status=AssetStatus.PENDING)
+        _asset(session, reviewed, checksum=None, size=len(review_copy), status=AssetStatus.PENDING)
         await session.commit()
 
     (tmp_path / "paper.pdf").write_bytes(paper)
     (tmp_path / "other.pdf").write_bytes(other)  # 大小不同 → 不等待
+    (tmp_path / "private.pdf").write_bytes(private_copy)  # 同大小在途资产在他人协作空间 → 不等待
+    (tmp_path / "review.pdf").write_bytes(review_copy)  # 在需审核的公共空间 → 不等待
     await ingest_watch.scan_watch_dir(deps)
     result = await ingest_watch.scan_watch_dir(deps)
-    assert (result["awaiting_inflight"], result["ingested"]) == (1, 1)
+    assert (result["awaiting_inflight"], result["ingested"]) == (1, 3)
     rows = await _ledger(session_factory)
     assert rows["paper.pdf"].status == IngestFileStatus.PENDING_STABLE
 
@@ -470,7 +538,7 @@ async def test_ingest_watch_waits_for_inflight_same_size(session_factory, tmp_pa
         await session.commit()
     assert (await ingest_watch.scan_watch_dir(deps))["duplicate"] == 1
     assert (await _ledger(session_factory))["paper.pdf"].asset_id == uploading.id
-    assert len(sent) == 1
+    assert len(sent) == 3
 
     # 一直等不到 checksum：自稳定起超过等待上限后照常入库
     async with session_factory() as session:
@@ -501,9 +569,11 @@ async def test_ingest_watch_reopens_orphaned_duplicate(session_factory, tmp_path
     paper = _pdf("paper")
     async with session_factory() as session:
         target = await session.get(Space, uuid.UUID(DEFAULT_SPACE_ID))
-        sibling = _space(session, "sibling", target.tenant_id)
-        cousin = _space(session, "cousin", target.tenant_id)
+        sibling = _space(session, "sibling", target.tenant_id, kind="public")
+        cousin = _space(session, "cousin", target.tenant_id, kind="public")
         await session.flush()
+        await _publish(session, sibling)
+        await _publish(session, cousin)
         first = _asset(
             session, sibling, checksum=_sha(paper), created_at=datetime.now() - timedelta(days=1)
         )
@@ -552,3 +622,116 @@ async def test_ingest_watch_reopens_orphaned_duplicate(session_factory, tmp_path
         result = await ingest_watch.scan_watch_dir(deps)
         assert "reopened" not in result and "ingested" not in result
     assert len(sent) == 1
+
+
+async def test_ingest_watch_reopens_duplicate_outside_scope(session_factory, tmp_path, monkeypatch):
+    """duplicate 指向不在去重范围内的资产（他人协作空间，如按旧规则判的或改过 space_id）：
+    重开后按当前范围重判，正常入库到目标空间。"""
+    from loomvec.api.init_db import DEFAULT_SPACE_ID
+    from loomvec.core.db.models import IngestFile, IngestFileStatus, Space
+    from loomvec.worker import ingest_watch
+
+    deps, sent, _, _ = _harness(session_factory, tmp_path, monkeypatch)
+    paper = _pdf("paper")
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(paper)
+    st = path.stat()
+    async with session_factory() as session:
+        target = await session.get(Space, uuid.UUID(DEFAULT_SPACE_ID))
+        private = _space(session, "private", target.tenant_id)
+        await session.flush()
+        elsewhere = _asset(session, private, checksum=_sha(paper))
+        await session.flush()
+        session.add(
+            IngestFile(
+                tenant_id=target.tenant_id,
+                watch_dir=os.path.normpath(str(tmp_path)),
+                file_path=str(path),
+                file_size=st.st_size,
+                file_mtime=st.st_mtime,
+                checksum=_sha(paper),
+                status=IngestFileStatus.DUPLICATE.value,
+                asset_id=elsewhere.id,
+                stable_since=datetime.now(UTC),
+                last_checked_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    result = await ingest_watch.scan_watch_dir(deps)
+    assert (result["reopened"], result["ingested"]) == (1, 1)
+    row = (await _ledger(session_factory))["paper.pdf"]
+    assert row.status == IngestFileStatus.DONE and row.asset_id != elsewhere.id
+    assert len(sent) == 1
+
+
+async def test_ingest_watch_reopens_when_public_space_unpublished(
+    session_factory, tmp_path, monkeypatch
+):
+    """公共空间撤销发布后不再算大家看得到：指向它的 duplicate 行重开并入库到目标空间。"""
+    from sqlalchemy import delete
+
+    from loomvec.api.init_db import DEFAULT_SPACE_ID
+    from loomvec.core.db.models import IngestFileStatus, Space, SpaceGroupVisibility
+    from loomvec.worker import ingest_watch
+
+    deps, sent, _, _ = _harness(session_factory, tmp_path, monkeypatch)
+    paper = _pdf("paper")
+    async with session_factory() as session:
+        target = await session.get(Space, uuid.UUID(DEFAULT_SPACE_ID))
+        public = _space(session, "public", target.tenant_id, kind="public")
+        await session.flush()
+        visibility = await _publish(session, public)
+        published = _asset(session, public, checksum=_sha(paper))
+        await session.commit()
+
+    (tmp_path / "paper.pdf").write_bytes(paper)
+    await ingest_watch.scan_watch_dir(deps)
+    assert (await ingest_watch.scan_watch_dir(deps))["duplicate"] == 1
+    assert (await _ledger(session_factory))["paper.pdf"].asset_id == published.id
+
+    async with session_factory() as session:
+        await session.execute(
+            delete(SpaceGroupVisibility).where(SpaceGroupVisibility.id == visibility.id)
+        )
+        await session.commit()
+    result = await ingest_watch.scan_watch_dir(deps)
+    assert (result["reopened"], result["ingested"]) == (1, 1)
+    assert (await _ledger(session_factory))["paper.pdf"].status == IngestFileStatus.DONE
+    assert len(sent) == 1
+
+
+async def test_ingest_watch_space_id_change(session_factory, tmp_path, monkeypatch):
+    """改 space_id 后：已入库的文件不迁移；文件变化后按新空间去重，旧空间（非公共）里的不算。"""
+    from loomvec.core.db.models import Asset, IngestFileStatus
+    from loomvec.worker import ingest_watch
+
+    deps, sent, _, _ = _harness(session_factory, tmp_path, monkeypatch)
+    paper = tmp_path / "paper.pdf"
+    paper.write_bytes(_pdf("paper"))
+    await ingest_watch.scan_watch_dir(deps)
+    await ingest_watch.scan_watch_dir(deps)
+    old_asset = (await _ledger(session_factory))["paper.pdf"].asset_id
+
+    async with session_factory() as session:
+        old = await session.get(Asset, old_asset)
+        old_space_id = old.space_id
+        new_space = _space(session, "new-target", old.tenant_id)  # 同租户协作空间
+        await session.commit()
+        new_space_id = new_space.id
+    deps.settings.ingest_watch.space_id = str(new_space_id)
+
+    # 文件不变：不迁移、不重新入库
+    result = await ingest_watch.scan_watch_dir(deps)
+    assert "ingested" not in result and len(sent) == 1
+
+    # 文件变化（只改 mtime）：旧空间不在新空间的去重范围内 → 入库到新空间
+    st = paper.stat()
+    os.utime(paper, (st.st_atime, st.st_mtime + 10))
+    await ingest_watch.scan_watch_dir(deps)
+    assert (await ingest_watch.scan_watch_dir(deps))["ingested"] == 1
+    row = (await _ledger(session_factory))["paper.pdf"]
+    async with session_factory() as session:
+        new_asset = await session.get(Asset, row.asset_id)
+    assert row.status == IngestFileStatus.DONE
+    assert new_asset.space_id == new_space_id != old_space_id
