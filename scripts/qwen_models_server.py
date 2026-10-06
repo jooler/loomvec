@@ -9,6 +9,8 @@ instruction locally.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import gc
 import threading
 import time
 from typing import Any
@@ -24,6 +26,16 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 EMBED_MODEL = "qwen3-embedding-0.6b"
 RERANK_MODEL = "qwen3-reranker-0.6b"
 DEFAULT_INSTRUCTION = "Given a web search query, retrieve relevant passages that answer the query"
+# 同卡还有 MinerU 等进程：缓存的空闲显存超过该值才归还驱动，避免长期停在峰值。
+IDLE_CACHE_RELEASE_BYTES = 1 << 30
+
+
+def _release_cuda_cache(*, after_oom: bool) -> None:
+    if after_oom:
+        gc.collect()
+    elif torch.cuda.memory_reserved() - torch.cuda.memory_allocated() <= IDLE_CACHE_RELEASE_BYTES:
+        return
+    torch.cuda.empty_cache()
 
 
 class EmbeddingRequest(BaseModel):
@@ -103,21 +115,22 @@ class QwenService:
     def embed(self, texts: list[str], input_type: str) -> list[list[float]]:
         if self.embedding is None:
             raise HTTPException(status_code=503, detail="embedding 模型未启用")
-        with self.lock, torch.inference_mode():
-            kwargs: dict[str, Any] = {"normalize_embeddings": True}
-            if input_type == "query":
-                kwargs["prompt_name"] = "query"
-            vectors = self.embedding.encode(texts, **kwargs)
-        return vectors.tolist()
+        kwargs: dict[str, Any] = {"normalize_embeddings": True}
+        if input_type == "query":
+            kwargs["prompt_name"] = "query"
+        vectors: list[list[float]] | None = None
+        with self.lock:
+            with contextlib.suppress(torch.OutOfMemoryError), torch.inference_mode():
+                vectors = self.embedding.encode(texts, **kwargs).tolist()
+            # 必须等异常被吞掉之后再回收：异常存活期间其 traceback 仍引用着 forward
+            # 各层帧，其中的激活张量要等异常对象释放后才能真正归还。
+            _release_cuda_cache(after_oom=vectors is None)
+        if vectors is None:
+            raise HTTPException(status_code=503, detail="embedding 显存不足，请减小批次后重试")
+        return vectors
 
-    def rerank(self, query: str, documents: list[str], top_n: int | None) -> list[dict[str, Any]]:
-        if self.reranker is None or self.rerank_tokenizer is None:
-            raise HTTPException(status_code=503, detail="rerank 模型未启用")
-        pairs = [
-            f"<Instruct>: {self.instruction}\n<Query>: {query}\n<Document>: {document}"
-            for document in documents
-        ]
-        with self.lock, torch.inference_mode():
+    def _rerank_scores(self, pairs: list[str]) -> list[float]:
+        with torch.inference_mode():
             inputs = self.rerank_tokenizer(
                 pairs,
                 padding=False,
@@ -130,9 +143,29 @@ class QwenService:
             padded = self.rerank_tokenizer.pad(inputs, padding=True, return_tensors="pt").to(
                 self.device
             )
-            logits = self.reranker(**padded).logits[:, -1, :]
+            # 只需最后一个位置的 yes/no logits：全序列 [batch, seq, vocab] 的 logits 在长文档时
+            # 一次要近 10GiB，单次前向打分也用不到 KV cache。
+            logits = self.reranker(**padded, use_cache=False, logits_to_keep=1).logits[:, -1, :]
             yes_no = torch.stack([logits[:, self.false_id], logits[:, self.true_id]], dim=1)
-            scores = F.log_softmax(yes_no, dim=1)[:, 1].exp().tolist()
+            return F.log_softmax(yes_no, dim=1)[:, 1].exp().tolist()
+
+    def rerank(self, query: str, documents: list[str], top_n: int | None) -> list[dict[str, Any]]:
+        if self.reranker is None or self.rerank_tokenizer is None:
+            raise HTTPException(status_code=503, detail="rerank 模型未启用")
+        pairs = [
+            f"<Instruct>: {self.instruction}\n<Query>: {query}\n<Document>: {document}"
+            for document in documents
+        ]
+        scores: list[float] | None = None
+        with self.lock:
+            with contextlib.suppress(torch.OutOfMemoryError):
+                scores = self._rerank_scores(pairs)
+            # 同 embed：异常释放后再回收，异常帧里的激活张量才能归还。
+            _release_cuda_cache(after_oom=scores is None)
+        if scores is None:
+            raise HTTPException(
+                status_code=503, detail="rerank 显存不足，请减少候选文档数量或长度后重试"
+            )
         results = [
             {"index": index, "relevance_score": score, "document": documents[index]}
             for index, score in enumerate(scores)
