@@ -6,9 +6,11 @@ beat 周期任务 `ingest.watch_scan` 调用 scan_watch_dir，每轮（docs/18�
    软链接（不跟随，防止把目录外的文件带进来）和非 UTF-8 文件名；
 2. 台账 ingest_file 比对 (size, mtime)：新文件登记 pending_stable；有变化即刷新稳定计时；
    每行在独立保存点中写入，单行异常不拖垮整轮；长期不在目录中的行按保留期清理；
+   duplicate 行指向的资产已不可用时回到 pending_stable 重新判定；
 3. 补偿入队：已登记资产但未入队（uploaded）的行重新入队；
-4. 稳定的文件：读入（O_NOFOLLOW，不持有数据库事务）、PDF 头尾校验、算 sha256；与目标
-   空间仍存在的资产内容相同则记 duplicate；否则写对象存储 → register_file_asset（台账
+4. 稳定的文件：同租户有同大小、尚未算出 sha256 的在途资产则本轮不读不传、等它算出再判；
+   否则读入（O_NOFOLLOW，不持有数据库事务）、PDF 头尾校验、算 sha256；同租户已有可用的
+   同内容资产则记 duplicate（不上传、不入队）；否则写对象存储 → register_file_asset（台账
    uploaded、预分配的 asset_id 与资产同事务提交）→ enqueue_pipeline → done；
 5. 单个文件失败只把该行记 error，继续处理其它文件；error 行在文件 size/mtime 变化后重新处理。
 """
@@ -26,7 +28,7 @@ from datetime import UTC, datetime, timedelta
 
 from celery.exceptions import SoftTimeLimitExceeded
 from redis.exceptions import LockError
-from sqlalchemy import select, text
+from sqlalchemy import exists, or_, select, text, update
 
 from loomvec.api.context import Identity
 from loomvec.api.services import assets as asset_service
@@ -35,7 +37,14 @@ from loomvec.core.constants import (
     ASSET_SOURCE_INGEST_WATCH,
     INGEST_WATCH_LOCK_KEY,
 )
-from loomvec.core.db.models import AssetStatus, IngestFile, IngestFileStatus, Space
+from loomvec.core.db.models import (
+    Asset,
+    AssetStatus,
+    IngestFile,
+    IngestFileStatus,
+    ReviewStatus,
+    Space,
+)
 from loomvec.core.db.repos import AssetRepo
 from loomvec.core.errors import ValidationError
 from loomvec.core.logging import get_logger
@@ -59,6 +68,8 @@ _INGESTED = tuple(
 _SEEN_REFRESH = timedelta(days=1)
 # 文件从目录消失超过该时长即删除台账行（uploaded 行等补偿入队完成后再清）
 _MISSING_RETENTION = timedelta(days=7)
+# 同大小在途资产（管线尚未写 checksum）的最长等待，自文件稳定起算；超时照常入库
+_INFLIGHT_WAIT = timedelta(hours=1)
 # 扫描锁 TTL 下限（秒）；每处理完一个文件续期
 _LOCK_TTL_MIN_SECONDS = 300
 _PDF_PROBE_BYTES = 1024
@@ -169,8 +180,11 @@ async def _scan(deps: PipelineDeps, watch_dir: str, lock) -> dict:
         logger.warning("ingest_watch_dir_unavailable", watch_dir=watch_dir, error=str(e))
         return {"status": "dir_unavailable"}
 
+    reopened = await _reopen_orphaned_duplicates(deps, space, watch_dir)
     stable = await _observe(deps, space, watch_dir, files)
     outcomes: Counter[str] = await _resume_uploaded(deps, watch_dir)
+    if reopened:
+        outcomes["reopened"] = reopened
     for scanned in stable:
         outcomes[await _process(deps, space, watch_dir, scanned)] += 1
         try:
@@ -372,9 +386,18 @@ async def _ingest_one(
         if record is None or record.status != IngestFileStatus.PENDING_STABLE:
             return "skipped"
         policy = await asset_service.upload_policy(session, settings)
-    ext = asset_service.validate_upload(policy, scanned.name, scanned.size)
+        ext = asset_service.validate_upload(policy, scanned.name, scanned.size)
 
-    # 2) 读文件与校验（线程内，不持有数据库事务）
+        # 2) 同大小在途资产（如人工上传的同一文件还在排队 / MinerU 解析中，checksum 解析完
+        #    才写入）：本轮不读不传，保持 pending_stable 下轮重判，避免同内容并行跑两遍管线；
+        #    等待期间不读文件，不给 NFS 加负担
+        if datetime.now(UTC) - record.stable_since < _INFLIGHT_WAIT and (
+            await _has_inflight_same_size(session, space, watch_dir, scanned.size)
+        ):
+            logger.info("ingest_watch_wait_inflight", file_path=scanned.path, size=scanned.size)
+            return "awaiting_inflight"
+
+    # 3) 读文件与校验（线程内，不持有数据库事务）
     data, st = await asyncio.to_thread(_read_regular_file, scanned.path)
     now = datetime.now(UTC)
     if (len(data), st.st_mtime) != (scanned.size, scanned.mtime):
@@ -392,30 +415,35 @@ async def _ingest_one(
         _check_pdf(data)
     checksum = await asyncio.to_thread(lambda: hashlib.sha256(data).hexdigest())
 
-    # 3) 去重
+    # 4) 去重
     async with deps.session_factory() as session:
         record = await _record(session, watch_dir, scanned.path)
         if record is None or record.status != IngestFileStatus.PENDING_STABLE:
             return "skipped"
-        duplicate_of = await _find_duplicate(session, space, watch_dir, record, checksum)
-        if duplicate_of is not None:
+        duplicate = await _find_duplicate(session, space, watch_dir, record, checksum)
+        if duplicate is not None:
+            duplicate_id, duplicate_space_id = duplicate
             record.checksum = checksum
             record.status = IngestFileStatus.DUPLICATE.value
-            record.asset_id = duplicate_of
+            record.asset_id = duplicate_id
             record.last_checked_at = now
             await session.commit()
             logger.info(
-                "ingest_watch_file_duplicate", file_path=scanned.path, asset_id=str(duplicate_of)
+                "ingest_watch_file_duplicate",
+                file_path=scanned.path,
+                asset_id=str(duplicate_id),
+                space_id=str(duplicate_space_id),
+                cross_space=duplicate_space_id != space.id,
             )
             return "duplicate"
 
-    # 4) 上传对象存储（不持有数据库事务）
+    # 5) 上传对象存储（不持有数据库事务）
     key = raw_upload_key(space.id, uuid.uuid4().hex, scanned.name)
     await deps.storage.put_object(
         settings.storage.bucket_raw, key, data, content_type=EXT_TO_MIME.get(ext)
     )
 
-    # 5) 登记：台账 uploaded + 预分配 asset_id 与资产同事务提交（register_file_asset 内 commit），
+    # 6) 登记：台账 uploaded + 预分配 asset_id 与资产同事务提交（register_file_asset 内 commit），
     #    进程在登记与入队之间退出时由下轮 _resume_uploaded 补偿，不会重复登记
     try:
         async with deps.session_factory() as session:
@@ -447,7 +475,7 @@ async def _ingest_one(
         await _discard_object(deps, key)
         raise
 
-    # 6) 入队；失败时保持 uploaded，下轮补偿重试
+    # 7) 入队；失败时保持 uploaded，下轮补偿重试
     try:
         asset_service.enqueue_pipeline(celery_app, str(asset_id))
     except Exception as e:
@@ -467,15 +495,29 @@ async def _ingest_one(
     return "ingested"
 
 
+def _usable_asset_conditions(space: Space) -> tuple:
+    """可作为去重依据的现存资产（需 join Space）：与目标空间同租户（tenant_id 可空，空租户之间
+    也按同一租户判）、资产未删除且未失败 / 未被驳回、所属空间未删除且未封禁（删空间不软删
+    资产行，须连空间一起判）。"""
+    return (
+        Space.tenant_id.is_not_distinct_from(space.tenant_id),
+        Space.deleted_at.is_(None),
+        Space.banned_at.is_(None),
+        Asset.deleted_at.is_(None),
+        Asset.status != AssetStatus.FAILED,
+        Asset.review_status.is_distinct_from(ReviewStatus.REJECTED),
+    )
+
+
 async def _find_duplicate(
     session, space: Space, watch_dir: str, record: IngestFile, checksum: str
-) -> uuid.UUID | None:
-    """内容相同且仍存在于目标空间的资产：空间内管线已算出相同 sha256 的资产（含人工上传）/
-    本路径上次入库的资产 / 同目录其它路径入库的资产。须在改写 record.checksum 前调用。"""
-    assets = AssetRepo(session)
-    same = await assets.find_by_checksum(space.id, checksum)
-    if same:
-        return same[0].id
+) -> tuple[uuid.UUID, uuid.UUID] | None:
+    """内容相同的可用资产 (asset_id, space_id)：同租户任一空间，目标空间优先、其次最早入库的。
+
+    判定来源：管线已算出相同 sha256 的资产（含人工上传）/ 本路径上次入库的资产 / 同目录
+    其它路径入库的资产（刚登记、管线尚未写 checksum 的也能认出）。须在改写 record.checksum
+    前调用。
+    """
     candidates: list[uuid.UUID] = []
     if record.asset_id is not None and record.checksum == checksum:
         candidates.append(record.asset_id)
@@ -493,11 +535,77 @@ async def _find_duplicate(
         .scalars()
         .all()
     )
-    for candidate in candidates:
-        asset = await assets.get_live(candidate)
-        if asset is not None and asset.space_id == space.id:
-            return asset.id
-    return None
+    same_content = Asset.checksum == checksum
+    if candidates:
+        same_content = or_(same_content, Asset.id.in_(candidates))
+    row = (
+        await session.execute(
+            select(Asset.id, Asset.space_id)
+            .join(Space, Space.id == Asset.space_id)
+            .where(same_content, *_usable_asset_conditions(space))
+            .order_by((Asset.space_id == space.id).desc(), Asset.created_at.asc())
+            .limit(1)
+        )
+    ).first()
+    return (row.id, row.space_id) if row is not None else None
+
+
+async def _has_inflight_same_size(session, space: Space, watch_dir: str, size: int) -> bool:
+    """同租户有同大小、管线尚未写入 checksum 的在途资产（pending / processing）。
+
+    本目录登记的资产不算：其 sha256 已记在台账，同内容已由 _find_duplicate 认出。
+    """
+    ledger_assets = select(IngestFile.asset_id).where(
+        IngestFile.watch_dir == watch_dir, IngestFile.asset_id.is_not(None)
+    )
+    return bool(
+        await session.scalar(
+            select(
+                exists()
+                .where(Space.id == Asset.space_id)
+                .where(
+                    Asset.size_bytes == size,
+                    Asset.checksum.is_(None),
+                    Asset.status.in_((AssetStatus.PENDING, AssetStatus.PROCESSING)),
+                    Asset.id.not_in(ledger_assets),
+                    *_usable_asset_conditions(space),
+                )
+            )
+        )
+    )
+
+
+async def _reopen_orphaned_duplicates(deps: PipelineDeps, space: Space, watch_dir: str) -> int:
+    """duplicate 行指向的资产已不可用（删除 / 所在空间删除或封禁 / 失败 / 驳回 / 换了租户）：
+    回到 pending_stable 重新判定——同租户仍有别的同内容资产则再记 duplicate，否则正常入库。
+
+    指向监听自己入库的资产时不重开（done 行同理）：它被人删掉视为有意删除，文件不变就不再
+    入库。同目录副本、或 done 行因 mtime 变化重判后，duplicate 都可能指向监听自己的资产。
+    """
+    usable = (
+        exists()
+        .where(Asset.id == IngestFile.asset_id, Space.id == Asset.space_id)
+        .where(*_usable_asset_conditions(space))
+    )
+    own = exists().where(
+        Asset.id == IngestFile.asset_id,
+        Asset.asset_meta[ASSET_META_SOURCE_KEY].astext == ASSET_SOURCE_INGEST_WATCH,
+    )
+    now = datetime.now(UTC)
+    async with deps.session_factory() as session:
+        result = await session.execute(
+            update(IngestFile)
+            .where(
+                IngestFile.watch_dir == watch_dir,
+                IngestFile.status == IngestFileStatus.DUPLICATE.value,
+                ~usable,
+                ~own,
+            )
+            .values(status=IngestFileStatus.PENDING_STABLE.value, stable_since=now)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+    return result.rowcount
 
 
 async def _discard_object(deps: PipelineDeps, key: str) -> None:

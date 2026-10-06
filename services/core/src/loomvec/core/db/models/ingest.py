@@ -19,7 +19,7 @@ class IngestFileStatus(enum.StrEnum):
     PENDING_STABLE = "pending_stable"  # 已发现，等待 size+mtime 稳定
     UPLOADED = "uploaded"  # 已登记资产（asset_id 已写），尚未入队；每轮扫描补偿入队
     DONE = "done"  # 已入队管线
-    DUPLICATE = "duplicate"  # 内容与目标空间已有资产相同，跳过（asset_id 指向该资产）
+    DUPLICATE = "duplicate"  # 同租户已有可用的同内容资产，跳过（asset_id 指向该资产）
     ERROR = "error"  # 登记前失败（error_message）；文件 size/mtime 变化后重新处理
 
 
