@@ -17,32 +17,74 @@ import shutil
 import tempfile
 
 from celery import Celery
-from celery.signals import worker_init
+from celery.signals import import_modules, worker_init
 from kombu import Queue
 
 from loomvec.core.config import get_settings
 from loomvec.core.constants import QUEUE_PIPELINE, QUEUE_PIPELINE_HIGH, QUEUE_PIPELINE_LOW
-from loomvec.core.logging import setup_logging
+from loomvec.core.logging import get_logger, setup_logging
 
 settings = get_settings()
 setup_logging(settings.log_level, json_output=settings.log_json)
+logger = get_logger("loomvec.worker.celery_app")
+
+# 内部标记 "<pid>:<目录>"：本进程自建的多进程计数目录，用于区分外部预设的 PROMETHEUS_MULTIPROC_DIR
+_OWNED_MULTIPROC_DIR_ENV = "_LOOMVEC_WORKER_PROM_MULTIPROC_OWNER"
+
+
+def _owned_multiproc_dir() -> str | None:
+    """本进程自建且仍在用的计数目录。
+
+    execv 不改 PID，SIGHUP 重启后仍认得出；继承了环境变量的其他进程 PID 不同，按外部预设处理。
+    """
+    pid, sep, path = os.environ.get(_OWNED_MULTIPROC_DIR_ENV, "").partition(":")
+    if sep and pid == str(os.getpid()) and path == os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        return path
+    return None
+
+
+def _enable_metrics_multiproc(**_kwargs) -> None:
+    """导入任务模块前开启 prometheus 多进程模式（子进程计数落盘到本次启动新建的目录）。
+
+    prometheus_client 首次导入即按 PROMETHEUS_MULTIPROC_DIR 定死计数实现，而 celery 先导入
+    include 任务模块（tasks → worker/metrics.py）再发 worker_init，故挂在更早的 import_modules。
+    该信号的处理器异常会中止进程启动（worker / beat / shell 同），此处只做建目录与设环境变量。
+
+    外部预设的 PROMETHEUS_MULTIPROC_DIR 原样沿用，不建不删。SIGHUP 重启经 execv 原地重入：
+    atexit 清理没执行、环境变量被继承，按自建标记认出旧目录后删掉重建，保证重启即清零。
+    """
+    if not settings.worker.metrics_port:
+        return
+    owned = _owned_multiproc_dir()
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR") and not owned:
+        return
+    if owned:
+        shutil.rmtree(owned, ignore_errors=True)
+    multiproc_dir = tempfile.mkdtemp(prefix="loomvec-prom-")
+    atexit.register(shutil.rmtree, multiproc_dir, ignore_errors=True)
+    os.environ["PROMETHEUS_MULTIPROC_DIR"] = multiproc_dir
+    os.environ[_OWNED_MULTIPROC_DIR_ENV] = f"{os.getpid()}:{multiproc_dir}"
 
 
 def _start_metrics_server(**_kwargs) -> None:
-    """主进程启动指标端口；子进程计数经 PROMETHEUS_MULTIPROC_DIR 聚合。"""
-    port = settings.worker.metrics_port
-    if not port:
+    """主进程启动指标端口，经 MultiProcessCollector 聚合各子进程计数。"""
+    multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not settings.worker.metrics_port or not multiproc_dir:
         return
-    multiproc_dir = tempfile.mkdtemp(prefix="loomvec-prom-")
-    os.environ["PROMETHEUS_MULTIPROC_DIR"] = multiproc_dir
-    from prometheus_client import CollectorRegistry, MultiProcessCollector, start_http_server
+    from prometheus_client import CollectorRegistry, start_http_server, values
+    from prometheus_client.multiprocess import MultiProcessCollector
 
+    if values.ValueClass is values.MutexValue:
+        logger.warning(
+            "worker_metrics_not_multiprocess",
+            detail="prometheus_client 先于 import_modules 被导入，子进程计数不落盘，端口无数据",
+        )
     registry = CollectorRegistry()
-    MultiProcessCollector(registry)
-    start_http_server(port, registry=registry)
-    atexit.register(shutil.rmtree, multiproc_dir, ignore_errors=True)
+    MultiProcessCollector(registry, path=multiproc_dir)
+    start_http_server(settings.worker.metrics_port, registry=registry)
 
 
+import_modules.connect(_enable_metrics_multiproc)
 worker_init.connect(_start_metrics_server)
 
 celery_app = Celery(

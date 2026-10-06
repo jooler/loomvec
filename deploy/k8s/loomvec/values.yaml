@@ -362,7 +362,8 @@ serviceMonitor:
   enabled: false
   interval: 15s
   scrapeTimeout: 10s
-  # 追加抓取 worker :9808（需 worker 侧 exporter，见 deploy/monitoring/prometheus.yml）
+  # 追加端点同样只作用于上面选中的 api Service。worker 指标端口 :39808 未建 Service /
+  # containerPort，本 chart 不抓取；静态抓取见 deploy/monitoring/prometheus.yml
   extraEndpoints: []
   labels: {}
 

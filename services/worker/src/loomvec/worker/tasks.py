@@ -37,7 +37,7 @@ from loomvec.core.pipeline import PipelineDeps, PipelineRunner
 from loomvec.core.retrieval import MilvusStore
 from loomvec.core.storage import ObjectStorage
 from loomvec.worker.celery_app import celery_app
-from loomvec.worker.metrics import pipeline_jobs_total
+from loomvec.worker.metrics import record_pipeline_job
 
 logger = get_logger("loomvec.worker.tasks")
 
@@ -95,12 +95,12 @@ class PipelineTask(Task):
         try:
             result = super().__call__(*args, **kwargs)
         except Retry:
-            pipeline_jobs_total.labels(status="retrying").inc()
+            record_pipeline_job("retrying")
             raise
         except Exception:
-            pipeline_jobs_total.labels(status="failed").inc()
+            record_pipeline_job("failed")
             raise
-        pipeline_jobs_total.labels(status="succeeded").inc()
+        record_pipeline_job("succeeded")
         return result
 
     def on_failure(self, exc, task_id, args, kwargs, einfo) -> None:
