@@ -116,12 +116,42 @@ class ToolCallEntry:
     graph_evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
+# 提问 @ 文献的提示块（orchestrator 注入、此处回读）：模型可见，UI 历史里剔除并还原为 mentions
+_MENTION_BLOCK_RE = re.compile(r"<mentioned-documents>.*?</mentioned-documents>\s*", re.DOTALL)
+_MENTION_ITEM_RE = re.compile(r"^- (.*) \(asset_id: ([0-9a-f-]{36})\)$", re.MULTILINE)
+
+
+def build_mention_block(mentions: list[dict[str, str]]) -> str:
+    """@ 文献提示块文本（名称里的换行折成空格，保证逐行可回读）。"""
+    items = "\n".join(
+        f"- {' '.join(str(m['name']).split())} (asset_id: {m['asset_id']})" for m in mentions
+    )
+    return (
+        "<mentioned-documents>\n"
+        "用户在本次提问中 @ 了以下文献。search_knowledge 已被限定只在这些文献内检索，"
+        "请只依据它们回答；检索不到相关内容时如实说明，不要转而引用其他文献。\n"
+        f"{items}\n"
+        "</mentioned-documents>"
+    )
+
+
+def split_mentions(content: str) -> tuple[str, list[dict[str, str]]]:
+    """用户消息文本 → (剔除提示块后的正文, mentions)。"""
+    mentions = [
+        {"asset_id": asset_id, "name": name}
+        for block in _MENTION_BLOCK_RE.findall(content)
+        for name, asset_id in _MENTION_ITEM_RE.findall(block)
+    ]
+    return _MENTION_BLOCK_RE.sub("", content), mentions
+
+
 @dataclass
 class TranscriptMessage:
     """面向 UI/重放的会话消息（user/assistant 文本 + 工具摘要 + 引用快照）。"""
 
     role: str  # user | assistant
     content: str
+    mentions: list[dict[str, str]] = field(default_factory=list)  # user：@ 的文献
     reasoning: str = ""
     tool_calls: list[ToolCallEntry] = field(default_factory=list)
     citations: list[dict[str, Any]] = field(default_factory=list)
@@ -205,10 +235,12 @@ def parse_transcript(path: Path) -> list[TranscriptMessage]:
                 continue  # 纯附件/内部消息（如 replay 注入头）不进 UI
             if _is_internal_user_message(content):
                 continue  # dsh 内部注入（AGENTS.md 提示/运行时快照/技能清单）不进 UI
+            content, mentions = split_mentions(content)
             messages.append(
                 TranscriptMessage(
                     role="user",
                     content=content,
+                    mentions=mentions,
                     created_at=str(envelope.get("time") or ""),
                 )
             )
@@ -292,6 +324,7 @@ def aggregate_transcript(sessions_root: Path, workspace: Path, logical_hex: str)
                 {
                     "role": m.role,
                     "content": m.content,
+                    "mentions": m.mentions,
                     "citations": m.citations,
                     "graph_evidence": m.graph_evidence,
                     "tool_calls": [

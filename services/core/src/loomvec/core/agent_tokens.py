@@ -20,6 +20,12 @@ from loomvec.core.config import Settings
 
 JTI_BLACKLIST_PREFIX = "agent:jti:"
 CITATIONS_PREFIX = "agent:citations:"
+# 本轮提问 @ 的文献（agent:mentions:{env_id} → JSON asset_id 列表）：token 是 runtime 级、
+# 挂载时求值一次，无法逐条消息变更，故每轮由网关写入、MCP 检索时读取并强制收敛
+MENTIONS_PREFIX = "agent:mentions:"
+# 每轮起点都会覆盖/删除，TTL 只做残留回收；须远长于单轮时长（回合无时长上限），
+# 否则长回合中途过期会让检索静默退回不限文献
+MENTIONS_TTL_S = 86400
 
 
 @dataclass(frozen=True)

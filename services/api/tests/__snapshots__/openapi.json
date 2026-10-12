@@ -185,6 +185,25 @@
         "title": "AgentAttachmentOut",
         "type": "object"
       },
+      "AgentMentionOut": {
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "name"
+        ],
+        "title": "AgentMentionOut",
+        "type": "object"
+      },
       "AgentMessageListOut": {
         "properties": {
           "items": {
@@ -238,6 +257,13 @@
               "type": "object"
             },
             "title": "Graph Evidence",
+            "type": "array"
+          },
+          "mentions": {
+            "items": {
+              "$ref": "#/components/schemas/AgentMentionOut"
+            },
+            "title": "Mentions",
             "type": "array"
           },
           "role": {
@@ -329,6 +355,22 @@
               }
             ],
             "title": "Attachment Ids"
+          },
+          "mention_asset_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mention Asset Ids"
           },
           "question": {
             "minLength": 1,

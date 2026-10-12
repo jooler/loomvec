@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,10 +26,28 @@ from loomvec.agent.config import AgentRuntimeConfig, load_llm_overrides
 from loomvec.agent.runtime.manager import RuntimeManager, new_logical_session_id
 from loomvec.agent.sessions.orchestrator import PromptContext, PromptOrchestrator
 from loomvec.agent.sessions.transcript import aggregate_transcript
-from loomvec.core.authz import linked_public_space_ids, visible_space_ids
+from loomvec.core.authz import (
+    SpaceRole,
+    decide_asset_visibility,
+    linked_public_space_ids,
+    visible_space_ids,
+)
 from loomvec.core.config import Settings
-from loomvec.core.db.models import AgentEnvironment, AgentProject, AgentSession, Tenant, User
-from loomvec.core.db.repos import AgentEnvironmentRepo, AgentProjectRepo, AgentSessionRepo
+from loomvec.core.db.models import (
+    AgentEnvironment,
+    AgentProject,
+    AgentSession,
+    Asset,
+    Space,
+    Tenant,
+    User,
+)
+from loomvec.core.db.repos import (
+    AgentEnvironmentRepo,
+    AgentProjectRepo,
+    AgentSessionRepo,
+    SpaceMemberRepo,
+)
 from loomvec.core.errors import NotFoundError, ValidationError
 from loomvec.core.logging import get_logger
 
@@ -155,9 +174,14 @@ def normalize_project_path(cfg: AgentRuntimeConfig, env_id: str, raw: str | None
     return "/".join(parts)
 
 
+MAX_MENTIONS = 10  # 单条提问 @ 文献数上限
+
+
 class QuestionIn(BaseModel):
     question: str = Field(min_length=1)
     attachment_ids: list[str] | None = None
+    # 本条提问 @ 的文献（asset id）：检索只在这些文献内进行
+    mention_asset_ids: list[uuid.UUID] | None = Field(default=None, max_length=MAX_MENTIONS)
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +282,47 @@ async def _assert_member_spaces(
     unknown = [s for s in space_ids if s not in allowed]
     if unknown:
         raise ValidationError("存在无权访问的空间", space_ids=[str(s) for s in unknown[:5]])
+
+
+async def _resolve_mentions(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    scope_space_ids: list[str] | list[uuid.UUID],
+    asset_ids: list[uuid.UUID],
+) -> list[dict[str, str]]:
+    """@ 文献校验：存在、未删除、在会话检索范围内，且对当前用户可见。
+
+    返回 [{asset_id, name}]（保持传入顺序、去重）；任一不满足整体拒绝，
+    避免静默丢弃导致检索范围与用户预期不一致。
+    """
+    ids = list(dict.fromkeys(asset_ids))
+    if not ids:
+        return []
+    allowed = set(await visible_space_ids(session, user_id=user_id))
+    allowed.update(await linked_public_space_ids(session, user_id=user_id))
+    # agent_session.scope_space_ids 是 JSON 列，读出来是字符串
+    in_scope = [s for s in (uuid.UUID(str(x)) for x in scope_space_ids) if s in allowed]
+    roles = {m.space_id: m.role for m in await SpaceMemberRepo(session).list_for_user(user_id)}
+    rows = (
+        await session.execute(
+            select(Asset, Space.review_required)
+            .join(Space, Space.id == Asset.space_id)
+            .where(Asset.id.in_(ids), Asset.deleted_at.is_(None), Asset.space_id.in_(in_scope))
+        )
+    ).all()
+    visible = {
+        a.id: a
+        for a, review_required in rows
+        if decide_asset_visibility(
+            review_required=review_required,
+            review_status=a.review_status,
+            role=roles.get(a.space_id, SpaceRole.VIEWER),
+        )
+    }
+    missing = [str(i) for i in ids if i not in visible]
+    if missing:
+        raise ValidationError("所 @ 的文献不存在、不在检索范围内或无权访问", asset_ids=missing[:5])
+    return [{"asset_id": str(i), "name": visible[i].name} for i in ids]
 
 
 @router.get("/health")
@@ -444,6 +509,9 @@ async def ask(
         if row.message_count >= cfg.agent.session.session_max_messages:
             raise ValidationError("会话消息数已达上限，请新建会话")
 
+        mentions = await _resolve_mentions(
+            session, user_id, list(row.scope_space_ids or []), body.mention_asset_ids or []
+        )
         user_row = await session.get(User, user_id)
         tenant_row = await session.get(Tenant, env.tenant_id) if env.tenant_id else None
         attachments = []
@@ -474,6 +542,7 @@ async def ask(
             scope_space_ids=[str(s) for s in (row.scope_space_ids or [])],
             question=question,
             attachments=attachments,
+            mentions=mentions,
             project_path=row.project_path or "",
         )
         ctx.llm_base_url, ctx.llm_api_key = await load_llm_overrides(session)

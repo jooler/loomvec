@@ -16,10 +16,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from loomvec.agent.citations import (
@@ -34,7 +35,7 @@ from loomvec.agent.runtime.provider import SandboxUnavailableError
 from loomvec.agent.sessions import transcript
 from loomvec.agent.sessions.usage import TurnStats
 from loomvec.agent.sse import sse_event
-from loomvec.core.agent_tokens import issue_agent_token
+from loomvec.core.agent_tokens import MENTIONS_PREFIX, MENTIONS_TTL_S, issue_agent_token
 from loomvec.core.logging import get_logger
 
 logger = get_logger("loomvec.agent.orchestrator")
@@ -58,6 +59,7 @@ class PromptContext:
     scope_space_ids: list[str]  # 会话检索范围（空 = 未设置 → MCP fail-closed 不检索）
     question: str
     attachments: list[dict[str, Any]]  # resolve_attachment 产物
+    mentions: list[dict[str, str]] = field(default_factory=list)  # 本条 @ 的文献 [{asset_id, name}]
     project_path: str = ""  # 会话绑定项目目录（workspace 相对路径，空 = 根；P5.5a）
     llm_base_url: str | None = None  # 运维端 DB 配置的 LLM 覆盖（空 = 用配置文件）
     llm_api_key: str | None = None
@@ -198,6 +200,7 @@ class PromptOrchestrator:
                 if replay_note:
                     yield sse_event("status", {"status": "running"})
 
+        await self._publish_mentions(ctx)
         blocks = self._build_blocks(ctx, replay_note)
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
@@ -213,6 +216,20 @@ class PromptOrchestrator:
         run_ref.append(run_task)
         async for frame in self._pump(runtime, ctx, queue, run_task, message_id):
             yield frame
+
+    async def _publish_mentions(self, ctx: PromptContext) -> None:
+        """本轮 @ 文献写入 Redis（MCP 检索时强制收敛）；无 @ 则清掉上一轮的残留。
+
+        token 是 runtime 级、无法逐条消息变更；prompt_lock 保证同 env 同一时刻只有一轮，
+        每轮起点覆盖即可，无需轮末清理（TTL 兜底）。
+        """
+        key = f"{MENTIONS_PREFIX}{ctx.env_id}"
+        if ctx.mentions:
+            await self._redis.set(
+                key, json.dumps([m["asset_id"] for m in ctx.mentions]), ex=MENTIONS_TTL_S
+            )
+        else:
+            await self._redis.delete(key)
 
     def _build_blocks(self, ctx: PromptContext, replay_note: str) -> list[dict[str, Any]]:
         """prompt contentBlocks：重放前缀 + 工作目录说明 + 附件说明/图片 + 问题。"""
@@ -247,6 +264,8 @@ class PromptOrchestrator:
                         ),
                     }
                 )
+        if ctx.mentions:
+            blocks.append({"type": "text", "text": transcript.build_mention_block(ctx.mentions)})
         blocks.append({"type": "text", "text": ctx.question})
         return blocks
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from loomvec.core.agent_tokens import (  # noqa: F401
     CITATIONS_PREFIX,
     JTI_BLACKLIST_PREFIX,
+    MENTIONS_PREFIX,
     AgentTokenClaims,
     decode_agent_token,
     is_token_revoked,

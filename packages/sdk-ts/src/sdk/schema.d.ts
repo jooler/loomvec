@@ -2456,6 +2456,16 @@ export interface components {
             /** Size */
             size: number;
         };
+        /** AgentMentionOut */
+        AgentMentionOut: {
+            /**
+             * Asset Id
+             * Format: uuid
+             */
+            asset_id: string;
+            /** Name */
+            name: string;
+        };
         /** AgentMessageListOut */
         AgentMessageListOut: {
             /** Items */
@@ -2477,6 +2487,8 @@ export interface components {
             graph_evidence?: {
                 [key: string]: unknown;
             }[];
+            /** Mentions */
+            mentions?: components["schemas"]["AgentMentionOut"][];
             /** Role */
             role: string;
             /** Tool Calls */
@@ -2513,6 +2525,8 @@ export interface components {
         AgentQuestion: {
             /** Attachment Ids */
             attachment_ids?: string[] | null;
+            /** Mention Asset Ids */
+            mention_asset_ids?: string[] | null;
             /** Question */
             question: string;
         };

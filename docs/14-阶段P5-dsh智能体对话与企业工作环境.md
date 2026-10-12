@@ -338,6 +338,12 @@ Provider 接口只暴露 `spawn(env, token_env) / terminate(handle)`，网关其
 
 - 上传端点：`POST /api/v1/agent/sessions/{sid}/attachments`（multipart；大小/类型白名单与配额沿用租户 storage 设置；校验通过后由网关写入 env 工作区并返回 `attachment_id / path / size / mime`）。
 - 发消息请求体扩展：`POST /agent/sessions/{sid}/messages` body 增加 `attachment_ids: string[]`；网关按上表组装 `contentBlocks`。
+
+**@ 文献（`mention_asset_ids`）**：body 另可带 `mention_asset_ids: uuid[]`（≤10），表示本条提问只针对这些文献。
+- 网关（`routes._resolve_mentions`）先校验：资产存在、未删除、所在空间在会话 `scope_space_ids` 内且对当前用户可检索（成员 ∪ 已链接公共空间）、审核空间内对该角色可见；任一不满足整条请求 422 拒绝，不静默丢弃。
+- 校验通过后，`PromptOrchestrator` 在 prompt_lock 内把资产 id 写入 Redis `agent:mentions:{env_id}`（每轮起点覆盖，无 @ 则删除上一轮残留；TTL 24h 仅作残留回收，须远长于单轮时长），并在问题前追加一个 `<mentioned-documents>` text 块（列出文献名与 asset_id，告知检索已被限定）。agent token 是 runtime 级、挂载时求值一次，不能逐条变更，故限定走 Redis 而非 token claims。
+- MCP `search_knowledge` 读取该键，把 asset 集合作为 `Retriever.search(asset_ids=…)` 的强制过滤（不依赖模型传参）；`read_unit` 不受影响。
+- 历史读取（`GET …/messages`）从 JSONL 的 `<mentioned-documents>` 块还原 `mentions: [{asset_id, name}]` 并从 `content` 中剔除该块。
 - 限制与安全：上传文件经病毒/类型嗅探（复用上传管线的安全检查）；路径穿越防护（网关以 env workspace 为根做 realpath 校验）；超大文件（> 配置阈值）拒绝并提示；上传事件记入 AuditLog。
 - 用量与缓存统计（`usage` 事件的折叠，对齐 dsh web UI 统计条 / `session-stats` 与 `token-meter` 投影）：网关把 `usage` 事件按步折叠为轮次与全会话汇总——`cache_hit_rate = cache_read / (cache_read + cache_write + uncached_input)`、轮次数/步数、`llm_ms / tool_ms / ttft_ms / decode_tokens`（对应 `session-stats` 的 turns/steps/llmMs/toolMs/ttftMs/decodeMs）。会话级统计经 `GET /agent/sessions/{sid}` 返回，前端复刻 dsh 的统计条。KV 缓存命中率依赖稳定前缀：系统提示与工具清单由 profile 固定、AGENTS.md 稳定渲染（§4.4 注意事项），网关不做任何破坏前缀的重排。
 
@@ -362,7 +368,7 @@ Provider 接口只暴露 `spawn(env, token_env) / terminate(handle)`，网关其
 | `get_asset_outline` | `asset_id`                                                | 结构大纲（P2）                         | 长文档导航                                                                       |
 
 
-`space_ids` 强制收敛到「token 声明的会话 scope ∩ 用户可见空间」，越权参数直接裁剪——检索层 authz 是最后一道闸（`retriever.py:69-87` 既有逻辑）。
+`space_ids` 强制收敛到「token 声明的会话 scope ∩ 用户可见空间」，越权参数直接裁剪——检索层 authz 是最后一道闸（`retriever.py:69-87` 既有逻辑）。本轮提问带 @ 文献时，`search_knowledge` 另被强制限定在这些 asset 内（见 §5.8「@ 文献」）。
 
 ### 6.2 鉴权：per-session 短时 JWT
 
@@ -427,7 +433,7 @@ class AgentSession(Base):
 | `GET/POST /api/v1/agent/sessions`                                             | 会话列表 / 新建（body: `{title?, scope_space_ids?, project_path?}`；返回条目含 `project_path`）                                |
 | `PATCH/DELETE /api/v1/agent/sessions/{sid}`                                   | 重命名、改 scope / 软删归档                                                           |
 | `GET /api/v1/agent/sessions/{sid}/messages`                                   | 历史（JSONL 解析产物）                                                               |
-| `POST /api/v1/agent/sessions/{sid}/messages`                                  | 提问 → SSE（§5.3 协议；body: `{question, attachment_ids?}`，长度上限 `agent.session.max_question_chars`） |
+| `POST /api/v1/agent/sessions/{sid}/messages`                                  | 提问 → SSE（§5.3 协议；body: `{question, attachment_ids?, mention_asset_ids?}`，长度上限 `agent.session.max_question_chars`） |
 | `POST /api/v1/agent/sessions/{sid}/attachments`                               | 附件上传（multipart；文件/图片，见 §5.8；返回 `attachment_id/path/size/mime`）               |
 | `GET /api/v1/agent/sessions/{sid}`                                            | 会话详情（含 §5.8 折叠的统计：cache_hit_rate/turns/steps/ttft 等）                     |
 | `POST /api/v1/agent/sessions/{sid}/cancel`                                    | 停止生成（桥 `session/cancel`，最终态经 `status` 事件）                                    |
@@ -670,7 +676,7 @@ apps/web/src/
 4. **MCP server**：官方 `mcp` python-sdk 的 streamable-http app 挂载到 services/api 主 app（路径 `/api/v1/mcp`）；`search_knowledge` 内部直调 `app.state.retriever.search` + `enrich_hits`（与 routes/search.py 同链路），写 Redis `agent:citations:{session_id}:{call_id}`（TTL 1h）。
 5. **审批**：SDK client 的 `onRequestPermission` 回调按 §5.5 矩阵同步应答 `allow-once/reject-once`；`session/request_user_input` P0 一律返回默认应答链（-32601）。
 6. **契约流程**：routes/agent.py 完成后 `scripts/export_openapi.py` + `pnpm sdk:generate`（CI 校验快照，与既有流程一致）。
-7. **Redis 键汇总**：`agent:citations:{sid}:{call_id}`（TTL 1h）、`agent:jti:{jti}`（token 黑名单）、`agent:envlock:{env_id}`（spawn 互斥，TTL 60s）、`agent:queue:{session_id}`（串行闸）、`agent:ratelimit:{user_id}`（复用现有限流结构）。
+7. **Redis 键汇总**：`agent:citations:{sid}:{call_id}`（TTL 1h）、`agent:mentions:{env_id}`（本轮 @ 文献，TTL 24h）、`agent:jti:{jti}`（token 黑名单）、`agent:envlock:{env_id}`（spawn 互斥，TTL 60s）、`agent:queue:{session_id}`（串行闸）、`agent:ratelimit:{user_id}`（复用现有限流结构）。
 
 ### 15.3 测试策略
 

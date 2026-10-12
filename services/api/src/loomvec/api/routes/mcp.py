@@ -10,6 +10,8 @@ per-session 短时 JWT（services/agent_tokens.py）。
 - `search_knowledge` 每批结果同时写 Redis 引用旁路
   `agent:citations:{session_id}:{batch_id}`（TTL 1h），网关在 tool_end 时
   按 batch_id 聚合（协议升级免疫，14 文档 §5.4）；
+- 本轮 @ 的文献（Redis `agent:mentions:{env_id}`，网关每轮提问前写入/清除）强制收敛
+  `search_knowledge` 的 asset 范围，不依赖模型自觉传参；
 - 越权收敛：requested space_ids ∩ token scope ∩ 用户可检索空间
   （成员 ∪ 已链接公共空间），最后一道闸在检索层。
 """
@@ -30,6 +32,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from loomvec.api.services.agent_tokens import (
     CITATIONS_PREFIX,
+    MENTIONS_PREFIX,
     AgentTokenClaims,
     decode_agent_token,
     is_token_revoked,
@@ -105,6 +108,17 @@ async def _effective_scope(
     return effective, tenant_id, roles
 
 
+async def _mentioned_asset_ids(ctx: McpAppState) -> list[uuid.UUID] | None:
+    """本轮提问 @ 的文献（网关已校验可见性）；未 @ 返回 None = 不限文献。"""
+    raw = await ctx.redis.get(f"{MENTIONS_PREFIX}{_claims().env_id}")
+    if not raw:
+        return None
+    try:
+        return [uuid.UUID(a) for a in json.loads(raw)] or None
+    except (ValueError, TypeError):
+        return None
+
+
 async def _search_once(
     ctx: McpAppState, query: str, requested: list[uuid.UUID] | None, top_k: int, use_graph: bool
 ) -> dict[str, Any]:
@@ -120,10 +134,11 @@ async def _search_once(
             return {"batch_id": "", "ref_items": [], "graph_evidence": [], "note": "无可检索空间"}
         # 能出现在 effective_scope 里就已经代表对该空间有只读以上的访问权限
         # （真实成员含 viewer，或已链接的公共空间），空间内全部资产可见，
-        # 知识库标签权限不再作为空间内检索的附加闸门，不需要额外预过滤 asset_ids。
+        # 知识库标签权限不再作为空间内检索的附加闸门；asset_ids 仅用于本轮 @ 文献收敛。
         hits = await ctx.retriever.search(
             space_ids=space_ids,
             tenant_id=tenant_id,
+            asset_ids=await _mentioned_asset_ids(ctx),
             query=query,
             top_k=top_k,
             use_graph=use_graph,

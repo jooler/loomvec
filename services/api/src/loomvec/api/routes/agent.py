@@ -88,9 +88,15 @@ class AgentProjectCreate(BaseModel):
     name: str
 
 
+class AgentMentionOut(BaseModel):
+    asset_id: uuid.UUID
+    name: str
+
+
 class AgentMessageOut(BaseModel):
     role: str
     content: str
+    mentions: list[AgentMentionOut] = Field(default_factory=list)
     citations: list[dict[str, Any]] = Field(default_factory=list)
     graph_evidence: list[dict[str, Any]] = Field(default_factory=list)
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
@@ -105,6 +111,8 @@ class AgentMessageListOut(BaseModel):
 class AgentQuestion(BaseModel):
     question: str = Field(min_length=1)
     attachment_ids: list[str] | None = None
+    # @ 的文献（asset id，≤10）：本条提问的检索只在这些文献内进行
+    mention_asset_ids: list[uuid.UUID] | None = Field(default=None, max_length=10)
 
 
 class AgentAttachmentOut(BaseModel):

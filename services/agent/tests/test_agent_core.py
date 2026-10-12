@@ -15,11 +15,13 @@ from loomvec.agent.citations import (
 )
 from loomvec.agent.sessions.transcript import (
     aggregate_transcript,
+    build_mention_block,
     encode_segment,
     parse_transcript,
     physical_gen,
     project_key,
     replay_context,
+    split_mentions,
 )
 from loomvec.agent.sessions.usage import UsageFold
 
@@ -305,3 +307,94 @@ def test_replay_plan_budget_compression_and_fallbacks():
     assert sum(d for _, _, d in big) <= O._REPLAY_BUDGET_S + 1e-6  # 超预算等比压缩
     assert O._replay_plan(None) == []  # stream 缺失 → 空计划（回退整段帧）
     assert O._replay_plan([{"type": "chunk"}]) == []
+
+
+# ---------------------------------------------------------------------------
+# @ 文献：提示块 / 历史回读 / 每轮写入 Redis
+# ---------------------------------------------------------------------------
+
+_MENTIONS = [
+    {"asset_id": "0197a1b2-0000-7000-8000-000000000001", "name": "Attention Is All You Need.pdf"},
+    {"asset_id": "0197a1b2-0000-7000-8000-000000000002", "name": "含\n换行 (v2).pdf"},
+]
+
+
+def test_mention_block_roundtrip():
+    text = build_mention_block(_MENTIONS) + "\n总结一下方法"
+    content, mentions = split_mentions(text)
+    assert content == "总结一下方法"
+    assert [m["asset_id"] for m in mentions] == [m["asset_id"] for m in _MENTIONS]
+    assert mentions[0]["name"] == "Attention Is All You Need.pdf"
+    assert mentions[1]["name"] == "含 换行 (v2).pdf"  # 换行折成空格，保证逐行可回读
+
+
+def test_split_mentions_without_block_is_noop():
+    assert split_mentions("普通问题") == ("普通问题", [])
+
+
+def test_parse_transcript_hides_mention_block_and_exposes_mentions(tmp_path):
+    lines = _fixture_lines("占位", "答案", False)
+    lines[0]["data"]["message"]["content"] = [
+        {"type": "text", "text": build_mention_block(_MENTIONS)},
+        {"type": "text", "text": "总结一下方法"},
+    ]
+    messages = parse_transcript(_write_fixture(tmp_path, 0, lines))
+    user = messages[0]
+    assert user.role == "user"
+    assert user.content == "总结一下方法"
+    assert [m["name"] for m in user.mentions] == [
+        "Attention Is All You Need.pdf",
+        "含 换行 (v2).pdf",
+    ]
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+
+    async def set(self, key, value, ex=None):
+        self.store[key] = value
+
+    async def delete(self, key):
+        self.store.pop(key, None)
+
+
+def _ctx(mentions):
+    from loomvec.agent.sessions.orchestrator import PromptContext
+
+    return PromptContext(
+        env_id="env1",
+        tenant_id=None,
+        tenant_name="t",
+        user_id="u",
+        user_display_name="u",
+        session_id="s",
+        session_title="x",
+        scope_space_ids=[],
+        question="问题",
+        attachments=[],
+        mentions=mentions,
+    )
+
+
+async def test_publish_mentions_overwrites_and_clears():
+    from loomvec.agent.sessions.orchestrator import PromptOrchestrator
+    from loomvec.core.agent_tokens import MENTIONS_PREFIX
+
+    redis = _FakeRedis()
+    orch = PromptOrchestrator(None, None, redis)  # type: ignore[arg-type]
+    await orch._publish_mentions(_ctx(_MENTIONS))
+    assert json.loads(redis.store[f"{MENTIONS_PREFIX}env1"]) == [m["asset_id"] for m in _MENTIONS]
+    # 下一轮没有 @ → 清掉上一轮残留，检索不再被限定
+    await orch._publish_mentions(_ctx([]))
+    assert f"{MENTIONS_PREFIX}env1" not in redis.store
+
+
+def test_build_blocks_puts_mention_block_before_question():
+    from loomvec.agent.sessions.orchestrator import PromptOrchestrator
+
+    orch = PromptOrchestrator(None, None, None)  # type: ignore[arg-type]
+    blocks = orch._build_blocks(_ctx(_MENTIONS), "")
+    assert blocks[-1] == {"type": "text", "text": "问题"}
+    assert "<mentioned-documents>" in blocks[-2]["text"]
+    assert not any("<mentioned-documents>" in b["text"] for b in orch._build_blocks(_ctx([]), ""))
