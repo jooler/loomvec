@@ -158,7 +158,9 @@ def channel_suggestions(probe: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
     inf_models = set(inf.get("models") or [])
     for channel, candidates in INFINITY_CHANNEL_MODEL_CANDIDATES.items():
-        model = next((candidate for candidate in candidates if candidate in inf_models), candidates[0])
+        model = next(
+            (candidate for candidate in candidates if candidate in inf_models), candidates[0]
+        )
         suggestion: dict[str, Any] = {
             "available": bool(inf.get("ok")) and model in inf_models,
             "base_url": f"http://127.0.0.1:{inf_port}",
