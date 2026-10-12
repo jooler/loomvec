@@ -65,9 +65,17 @@ export interface AgentToolCall {
   result_summary?: string;
 }
 
+/** 提问时 @ 的文献。 */
+export interface AgentMention {
+  asset_id: string;
+  name: string;
+}
+
 export interface AgentMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** user 消息：本条 @ 的文献（检索被限定在这些文献内）。 */
+  mentions?: AgentMention[];
   reasoning?: string;
   citations?: ChatCitation[];
   graphEvidence?: GraphEvidence[];
@@ -114,6 +122,7 @@ export async function streamAgentAnswer(
   question: string,
   handlers: StreamHandlers,
   attachmentIds?: string[],
+  mentionAssetIds?: string[],
   signal?: AbortSignal,
 ): Promise<void> {
   const token = getStoredToken();
@@ -124,7 +133,11 @@ export async function streamAgentAnswer(
       'X-Request-Id': crypto.randomUUID(),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ question, attachment_ids: attachmentIds }),
+    body: JSON.stringify({
+      question,
+      attachment_ids: attachmentIds,
+      mention_asset_ids: mentionAssetIds?.length ? mentionAssetIds : undefined,
+    }),
     signal,
   });
   if (!resp.ok || !resp.body) {

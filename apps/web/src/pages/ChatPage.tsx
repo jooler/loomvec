@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Brain, ChevronDown, FileUp, FolderOpen, Paperclip, Send, ShieldAlert, Square, Wrench, X } from 'lucide-react';
+import {
+  AtSign,
+  Brain,
+  ChevronDown,
+  FileText,
+  FileUp,
+  FolderOpen,
+  Paperclip,
+  Send,
+  ShieldAlert,
+  Square,
+  Wrench,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@loomvec/sdk-ts';
 import { useTranslation } from 'react-i18next';
@@ -21,12 +34,22 @@ import {
   cancelAgentTurn,
   streamAgentAnswer,
   uploadAgentAttachment,
+  type AgentMention,
   type AgentMessage,
   type AgentToolCall,
   type ChatCitation,
   type GraphEvidence,
 } from '@/agent/agent';
 import { AnswerMarkdown, citationLabel, jumpToCitation } from '@/pages/chat-shared';
+import {
+  findMentionTrigger,
+  MAX_MENTIONS,
+  MentionPicker,
+  removeMentionTrigger,
+  useMentionCandidates,
+  type MentionCandidate,
+  type MentionDoc,
+} from '@/pages/chat-mention';
 
 /**
  * 对话页（P5，14 文档 §9）：dsh 全量接管的智能体对话（无 legacy 分支）。
@@ -39,6 +62,7 @@ import { AnswerMarkdown, citationLabel, jumpToCitation } from '@/pages/chat-shar
 interface HistoryItem {
   role: string;
   content: string;
+  mentions?: AgentMention[];
   citations?: { n: number }[];
   graph_evidence?: unknown[];
   tool_calls?: { call_id: string; tool: string; ok?: boolean; result_summary?: string }[];
@@ -47,6 +71,12 @@ interface HistoryItem {
 
 /** 单条消息附件上限（对齐服务端 agent.session.attachments.max_per_message）。 */
 const MAX_ATTACHMENTS = 5;
+
+/** 提问请求：问题文本 + 本条 @ 的文献。 */
+interface AskRequest {
+  question: string;
+  mentions: AgentMention[];
+}
 
 /** 待发送附件（上传完成后持有 attachment_id）。 */
 interface PendingAttachment {
@@ -68,6 +98,12 @@ export function ChatPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [scopeOverride, setScopeOverride] = useState<string[] | null>(null);
+  // @ 文献：待发送的 chip + 输入框里 `@关键词` 触发态
+  const [mentions, setMentions] = useState<MentionDoc[]>([]);
+  const [caret, setCaret] = useState(0);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionDismissed, setMentionDismissed] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   // 草稿对话（P5.6）：/chat?project=<目录> 仅展示对话 UI；项目行内「新建对话」
   // 都落到同一 URL，重复点击不产生新草稿。首条消息发出时才创建真实会话。
   const draftProject = sessionId ? '' : (searchParams.get('project') ?? '');
@@ -101,6 +137,7 @@ export function ChatPage() {
       setErrorMsg(null);
       setScopeOverride(null);
       setAttachments([]);
+      setMentions([]);
     }
   }, [sessionId]);
 
@@ -109,6 +146,7 @@ export function ChatPage() {
     if (!streamingRef.current) {
       setInput('');
       setDraftScope([]);
+      setMentions([]);
     }
   }, [draftProject]);
 
@@ -120,6 +158,7 @@ export function ChatPage() {
           (m: HistoryItem): AgentMessage => ({
             role: m.role as 'user' | 'assistant',
             content: m.content,
+            mentions: m.mentions ?? [],
             citations: (m.citations ?? []).map(
               (c): ChatCitation => ({
                 ...(c as unknown as ChatCitation),
@@ -176,7 +215,7 @@ export function ChatPage() {
   };
 
   const ask = useMutation({
-    mutationFn: async (question: string) => {
+    mutationFn: async ({ question, mentions: asked }: AskRequest) => {
       let sid = sessionId;
       if (!sid) {
         // 草稿对话首条消息：此刻才创建真实会话（标题 = 问题前 60 字，
@@ -202,7 +241,7 @@ export function ChatPage() {
       setAttachments([]);
       setMsgs((prev) => [
         ...prev,
-        { role: 'user', content: question },
+        { role: 'user', content: question, mentions: asked },
         { role: 'assistant', content: '', streaming: true, toolCalls: [] },
       ]);
       streamingRef.current = true;
@@ -257,6 +296,7 @@ export function ChatPage() {
             },
           },
           pending.map((a) => a.attachment_id),
+          asked.map((m) => m.asset_id),
           controller.signal,
         );
       } finally {
@@ -293,8 +333,12 @@ export function ChatPage() {
     const q = input.trim();
     if (!q || ask.isPending || (!sessionId && !draftProject)) return;
     setInput('');
+    setMentions([]);
     setErrorMsg(null);
-    ask.mutate(q);
+    ask.mutate({
+      question: q,
+      mentions: mentions.map(({ asset_id, name }) => ({ asset_id, name })),
+    });
   };
 
   const currentSession = (sessions.data?.items ?? []).find((s) => s.session_id === sessionId);
@@ -309,6 +353,57 @@ export function ChatPage() {
       .filter((s) => s.linked)
       .map((s) => ({ value: s.id, label: t('publicOption', { name: s.name }) })),
   ];
+
+  // 检索范围缩小后，剔除已不在范围内的 @ 文献（服务端会拒绝范围外文献）
+  const scopeKey = scopeIds.join(',');
+  useEffect(() => {
+    const inScope = new Set(scopeKey ? scopeKey.split(',') : []);
+    setMentions((prev) =>
+      prev.some((m) => m.space_id && !inScope.has(m.space_id))
+        ? prev.filter((m) => !m.space_id || inScope.has(m.space_id))
+        : prev,
+    );
+  }, [scopeKey]);
+
+  const mentionTrigger =
+    !mentionDismissed && !agentDisabled && mentions.length < MAX_MENTIONS
+      ? findMentionTrigger(input, caret)
+      : null;
+  const mentionCandidates = useMentionCandidates(
+    scopeIds,
+    mentionTrigger?.query ?? '',
+    !!mentionTrigger,
+  );
+  const pickerItems = mentionCandidates.items.filter(
+    (c) => !mentions.some((m) => m.asset_id === c.asset_id),
+  );
+  const activeMention = Math.min(mentionIndex, Math.max(pickerItems.length - 1, 0));
+
+  const pickMention = (item: MentionCandidate) => {
+    if (!mentionTrigger) return;
+    const { start } = mentionTrigger;
+    setInput(removeMentionTrigger(input, start, caret));
+    setMentions((prev) => [
+      ...prev,
+      { asset_id: item.asset_id, name: item.name, space_id: item.space_id },
+    ]);
+    setMentionIndex(0);
+    setCaret(start);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(start, start);
+    });
+  };
+
+  // 「@」按钮：在末尾插入触发符（前面不是空白时补一个空格）
+  const insertAt = () => {
+    const next = input && !/\s$/.test(input) ? `${input} @` : `${input}@`;
+    setInput(next);
+    setCaret(next.length);
+    setMentionDismissed(false);
+    setMentionIndex(0);
+    inputRef.current?.focus();
+  };
 
   return (
     <div className="flex h-svh min-w-0 flex-col">
@@ -354,7 +449,7 @@ export function ChatPage() {
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-4">
+        <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-4">
           {agentDisabled && (
             <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               <ShieldAlert className="size-4" />
@@ -429,7 +524,23 @@ export function ChatPage() {
                     <AnswerMarkdown content={m.content} citations={m.citations} streaming={m.streaming} />
                   )
                 ) : (
-                  m.content
+                  <>
+                    {(m.mentions?.length ?? 0) > 0 && (
+                      <div className="mb-1 flex flex-wrap gap-1">
+                        {m.mentions!.map((d) => (
+                          <span
+                            key={d.asset_id}
+                            className="flex max-w-60 items-center gap-1 rounded-full bg-primary-foreground/15 px-2 py-0.5 text-xs"
+                            title={d.name}
+                          >
+                            <FileText className="size-3 shrink-0" />
+                            <span className="truncate">{d.name}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {m.content}
+                  </>
                 )}
 
                 {/* 引用列表（默认折叠，渲染与跳转沿用旧链路） */}
@@ -486,7 +597,8 @@ export function ChatPage() {
                 className="ml-2 text-primary hover:underline"
                 onClick={() => {
                   const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
-                  if (lastUser) ask.mutate(lastUser.content);
+                  if (lastUser)
+                    ask.mutate({ question: lastUser.content, mentions: lastUser.mentions ?? [] });
                 }}
               >
                 {t('action.retry', { ns: 'ui' })}
@@ -501,7 +613,28 @@ export function ChatPage() {
           P5.6 起新对话自侧栏项目内创建（目录在创建时绑定），
           无会话态输入框置灰并提示先去侧栏新建 */}
       <div className="border-t bg-background px-4 py-3">
-        <div className="mx-auto w-full max-w-3xl space-y-2">
+        <div className="mx-auto w-full max-w-5xl space-y-2">
+          {mentions.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {mentions.map((d) => (
+                <span
+                  key={d.asset_id}
+                  className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-xs"
+                  title={d.name}
+                >
+                  <FileText className="size-3 shrink-0 text-primary" />
+                  <span className="max-w-60 truncate">{d.name}</span>
+                  <button
+                    type="button"
+                    aria-label={t('mention.remove')}
+                    onClick={() => setMentions((prev) => prev.filter((x) => x.asset_id !== d.asset_id))}
+                  >
+                    <X className="size-3 hover:text-destructive" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {attachments.map((a) => (
@@ -528,7 +661,17 @@ export function ChatPage() {
               ))}
             </div>
           )}
-          <div className="flex items-center gap-2">
+          <div className="relative flex items-center gap-2">
+            {mentionTrigger && (
+              <MentionPicker
+                items={pickerItems}
+                loading={mentionCandidates.loading}
+                activeIndex={activeMention}
+                hasScope={scopeIds.length > 0}
+                onPick={pickMention}
+                onHover={setMentionIndex}
+              />
+            )}
             <input
               ref={fileRef}
               type="file"
@@ -547,7 +690,18 @@ export function ChatPage() {
             >
               <Paperclip className="size-4" />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t('mention.add')}
+              title={t('mention.add')}
+              disabled={agentDisabled || (!sessionId && !draftProject) || mentions.length >= MAX_MENTIONS}
+              onClick={insertAt}
+            >
+              <AtSign className="size-4" />
+            </Button>
             <Input
+              ref={inputRef}
               placeholder={
                 agentDisabled
                   ? t('inputUnavailable')
@@ -557,9 +711,35 @@ export function ChatPage() {
               }
               value={input}
               disabled={agentDisabled || (!sessionId && !draftProject)}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                setCaret(e.target.selectionStart ?? e.target.value.length);
+                setMentionDismissed(false);
+                setMentionIndex(0);
+              }}
+              onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit();
+                if (e.nativeEvent.isComposing) return;
+                if (mentionTrigger) {
+                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    if (pickerItems.length === 0) return;
+                    e.preventDefault();
+                    const step = e.key === 'ArrowDown' ? 1 : -1;
+                    setMentionIndex((activeMention + step + pickerItems.length) % pickerItems.length);
+                    return;
+                  }
+                  if ((e.key === 'Enter' || e.key === 'Tab') && pickerItems.length > 0) {
+                    e.preventDefault();
+                    pickMention(pickerItems[activeMention]);
+                    return;
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setMentionDismissed(true);
+                    return;
+                  }
+                }
+                if (e.key === 'Enter') submit();
               }}
             />
             {ask.isPending ? (
