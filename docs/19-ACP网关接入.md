@@ -44,7 +44,7 @@
 
 - **MCP token**：会话级（`issue_agent_token(..., session_id=agent_session.id.hex)`），以 `mcp_servers: [{name:"loomvec", type:"http", url: agent.mcp.url_sandbox, headers}]` 挂在网关会话上。每次提问前，`mcp_token_exp` 为空或剩余有效期低于 `max(agent.mcp.token_ttl_s // 2, 600)` 秒就重签并 `PATCH /v1/sessions/{id}`。会话 `scope_space_ids` 被修改时 `mcp_token_exp` 置空。
 - **@ 文献**：本轮 @ 的 asset_id 写 Redis `agent:mentions:{agent_session_id}`（TTL 24h），`routes/mcp.py` 检索时按会话 token 里的 `agent_session_id` 读取并强制收敛。
-- **审批策略**：`approvals.build_permission_policy()` 把审批矩阵翻译成网关 `PermissionPolicy`（`default: reject`；放行 `mcp__loomvec__*`、读取 / 检索 / 编辑类 kind 与矩阵里的编辑器工具名）。dsh 容器以 `danger-full-access` 运行，策略对它不生效。
+- **审批策略**：`approvals.build_permission_policy()` 把审批矩阵翻译成网关 `PermissionPolicy`（`default: reject`；放行 `mcp__loomvec__*`、读取 / 检索 / 编辑类 kind 与矩阵里的编辑器工具名）。dsh 容器以 `danger-full-access` 运行，策略对它不生效。对 claude 策略生效：每次被询问的工具调用在网关事件里是 `permission.resolved`（`decided_by: policy`），被拒的工具以失败结束、模型据此回复。Claude Code 自己判为安全的只读命令（如 `echo`）不会向网关发审批请求，直接执行；写文件、联网类 Bash（如 `touch`、`curl`）会被询问并按策略拒绝。
 - **附件**：`PUT /v1/workspaces/{ws}/files/.loomvec/uploads/{session_id}/{name}`；类型 / 大小白名单沿用 `agent.session.attachments`；`attachment_id` = 清洗后带短随机前缀的文件名。
 - **工作区浏览**：`/workspace/tree` 取网关 `tree` 后在适配层过滤（隐藏段不出树、最多 500 项、带 `prefix` 时含该目录自身）；`/workspace/file` 取前 256KB 预览并带 `truncated`。
 

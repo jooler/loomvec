@@ -124,7 +124,7 @@
 | 条件 | 状态 |
 |---|---|
 | dsh 真实模型冒烟 | 已通过（开发机，网关 local provider + 真实 dsh 0.1.5rc1 + 用户配置的 OpenCode Go 上游，经一层只补 `x-opencode-session` 头的本机转发）：检索 + 引用（8 条）、续问上下文、写文件、取消后继续、迁移会话继续对话 |
-| claude 真实模型冒烟 | **未做**：开发机没有 Anthropic key |
+| claude 真实模型冒烟 | 已通过（开发机，网关 local provider + `claude-agent-acp` 0.89.1，用的是用户订阅登录：包装脚本去掉网关塞入的 `ANTHROPIC_*` 变量并指向复制了凭据的临时配置目录，冒烟后删除；仅限开发冒烟，生产仍需网关持有 Anthropic key）：检索 + 引用（8 条）、流式（65 个 delta）、token 用量与会话统计、续问上下文、写文件放行、`touch` / `curl` 被审批策略拒绝、取消后继续、AGENTS.md 规范注入 |
 | 旧会话迁移演练 | 开发机真实数据已演练；生产环境未演练 |
 | docker provider + 防火墙冒烟 | **未做**：无 root，无法下发沙箱防火墙规则；网关 `local` provider 路径已验证 |
 | 观察期 | 未开始 |
