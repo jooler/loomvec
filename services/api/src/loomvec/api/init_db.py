@@ -51,6 +51,12 @@ async def _ensure_extensions(engine: AsyncEngine) -> None:
 _ADDITIVE_COLUMNS: list[tuple[str, str]] = [
     # P5.5a：会话绑定项目目录（docs/Research/01 §6.1）
     ("agent_session", "ADD COLUMN IF NOT EXISTS project_path VARCHAR(512) NOT NULL DEFAULT ''"),
+    # P2 acp-gateway：env ↔ 网关 workspace、会话所用 agent / 网关 session / MCP token 过期时间
+    # （存量会话都是 dsh 时代创建，agent 默认值 dsh）
+    ("agent_environment", "ADD COLUMN IF NOT EXISTS gateway_workspace_id VARCHAR(64)"),
+    ("agent_session", "ADD COLUMN IF NOT EXISTS agent VARCHAR(16) NOT NULL DEFAULT 'dsh'"),
+    ("agent_session", "ADD COLUMN IF NOT EXISTS gateway_session_id VARCHAR(64)"),
+    ("agent_session", "ADD COLUMN IF NOT EXISTS mcp_token_exp TIMESTAMPTZ"),
     # API Key 绑定用户（PAT）：非空即按用户语义鉴权。新库由 create_all 建全
     # （含 FK/索引）；既有库补列 + 索引，FK 省略（列可空，历史行全空）
     ("api_key", "ADD COLUMN IF NOT EXISTS user_id UUID"),

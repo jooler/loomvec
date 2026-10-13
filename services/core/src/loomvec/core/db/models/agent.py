@@ -1,7 +1,8 @@
 """智能体工作环境域：环境与会话元数据（迁移 0011，14 文档 §7）。
 
-消息事实源在 env 目录树内的 dsh session.jsonl，本域只存 UI 元数据与治理
-字段（列表/重命名/软删归档）；env_id 与账号解耦，交接 = owner 重绑。
+消息事实源在 acp-gateway 的事件日志（历史会话迁移前在 env 目录树内的 dsh
+session.jsonl），本域只存 UI 元数据与治理字段（列表/重命名/软删归档）与到网关
+workspace / session 的映射；env_id 与账号解耦，交接 = owner 重绑。
 """
 
 from __future__ import annotations
@@ -58,6 +59,8 @@ class AgentEnvironment(UuidPkMixin, TenantMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
     transferred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # acp-gateway 的 workspace id；首次使用时创建（external_ref = 本表 id），空 = 尚未创建
+    gateway_workspace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class AgentSession(UuidPkMixin, TenantMixin, TimestampMixin, Base):
@@ -93,6 +96,15 @@ class AgentSession(UuidPkMixin, TenantMixin, TimestampMixin, Base):
     message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     preview: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 会话所用 agent（claude | dsh）。存量行 = dsh（历史会话都是 dsh）；新建会话写生效的
+    # default_agent。server_default 与 init_db 的 ADD COLUMN DDL 对齐
+    agent: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="dsh", server_default="dsh"
+    )
+    # acp-gateway 的 session id；首个提问时懒创建，空 = 尚未创建
+    gateway_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 网关会话上当前 MCP token 的过期时间；空 = 需要（重新）签发并 PATCH mcp_servers
+    mcp_token_exp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AgentProject(UuidPkMixin, TenantMixin, TimestampMixin, Base):

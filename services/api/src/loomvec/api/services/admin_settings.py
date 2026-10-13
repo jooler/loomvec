@@ -5,7 +5,11 @@
 - effect="immediate" 经 effective_value() 即时生效（进程内 5s TTL 缓存）；
   effect="restart" 仅落库提示，需重启读取（infra 启动项单源仍在 Settings/env；
   ai 组经 core.config.apply_ai_overrides 在 api/worker 启动时合并，agent 的
-  llm 地址/密钥另做会话级即时读取）。
+  llm 地址/密钥另做会话级即时读取）；
+- agent 组（ACP 网关接入）：DB 有非空值即覆盖 config/loomvec.json 的 agent.* 文件值
+  （default_agent / gateway.models.*，注册默认值取自文件配置），业务侧按会话即时读取
+  （effect=immediate）；agent.gateway.api_key / admin_token 两个敏感项无文件回落
+  （空 = 未配置），admin_token 仅 /admin/acp-gateway/* 代理使用。
 
 配置来源唯一：DB 有值即生效；未配置回落 config/loomvec.json（AppConfig），
 不回落环境变量——应用参数（模型/检索/上传/图谱）不经 env 配置。
@@ -71,6 +75,24 @@ def _make_api_style_validator(allowed: tuple[str, ...]) -> Callable[[Any], None]
         raise ValidationError(reason=f"api_style 只能是 {' / '.join(allowed)}（留空回落文件配置）")
 
     return _validate
+
+
+_GATEWAY_AGENTS = ("claude", "dsh")
+
+
+def _validate_default_agent(value: Any) -> None:
+    if value in _GATEWAY_AGENTS:
+        return
+    raise ValidationError(reason=f"default_agent 只能是 {' / '.join(_GATEWAY_AGENTS)}")
+
+
+def _validate_model_name(value: Any) -> None:
+    """默认模型名：留空（null / ""）= 用 agent 自身默认，非空需为短字符串。"""
+    if value in (None, ""):
+        return
+    if isinstance(value, str) and len(value.strip()) <= 128 and "\n" not in value:
+        return
+    raise ValidationError(reason="模型名需为不超过 128 字符的单行字符串（留空用 agent 默认）")
 
 
 def _build_registry() -> dict[str, SettingDef]:
@@ -211,6 +233,54 @@ def _build_registry() -> dict[str, SettingDef]:
                 )
             )
 
+    # ACP 网关接入（P2）：agent.default_agent / gateway.models 的文件默认值取自 AgentSettings
+    agent_cfg = s.agent
+    gateway_models = agent_cfg.gateway.models
+    defs.extend(
+        [
+            SettingDef(
+                "agent.default_agent",
+                group="agent",
+                description="新建智能体会话使用的 agent（claude / dsh）",
+                default=agent_cfg.default_agent,
+                admin_only=True,
+                validate=_validate_default_agent,
+            ),
+            SettingDef(
+                "agent.gateway.models.claude",
+                group="agent",
+                description="claude agent 默认模型名（留空 = 用 agent 默认）",
+                default=gateway_models.claude,
+                admin_only=True,
+                validate=_validate_model_name,
+            ),
+            SettingDef(
+                "agent.gateway.models.dsh",
+                group="agent",
+                description="dsh agent 默认模型名（留空回落 agent.model.name）",
+                default=gateway_models.dsh,
+                admin_only=True,
+                validate=_validate_model_name,
+            ),
+            SettingDef(
+                "agent.gateway.api_key",
+                group="agent",
+                description="loomvec 租户的 ACP 网关 API Key（智能体对话用；只写）",
+                default=None,
+                sensitive=True,
+                admin_only=True,
+            ),
+            SettingDef(
+                "agent.gateway.admin_token",
+                group="agent",
+                description="ACP 网关管理 token（ACPGW_ADMIN_TOKEN，仅「ACP 服务」代理用；只写）",
+                default=None,
+                sensitive=True,
+                admin_only=True,
+            ),
+        ]
+    )
+
     defs.extend(
         [
             # SSO（敏感）
@@ -264,9 +334,8 @@ SETTING_REGISTRY = _build_registry()
 
 
 def mask(value: Any) -> Any:
-    if isinstance(value, str) and value:
-        return MaskedValue
-    if value is None:
+    """敏感值回显：未设置（None / 空串，写入 "" 即清除）回显 None，已设置回显 ******。"""
+    if value is None or value == "":
         return None
     return MaskedValue
 

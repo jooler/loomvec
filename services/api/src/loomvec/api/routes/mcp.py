@@ -10,7 +10,7 @@ per-session 短时 JWT（services/agent_tokens.py）。
 - `search_knowledge` 每批结果同时写 Redis 引用旁路
   `agent:citations:{session_id}:{batch_id}`（TTL 1h），网关在 tool_end 时
   按 batch_id 聚合（协议升级免疫，14 文档 §5.4）；
-- 本轮 @ 的文献（Redis `agent:mentions:{env_id}`，网关每轮提问前写入/清除）强制收敛
+- 本轮 @ 的文献（Redis `agent:mentions:{agent_session_id}`，agent 服务每轮提问前写入/清除）强制收敛
   `search_knowledge` 的 asset 范围，不依赖模型自觉传参；
 - 越权收敛：requested space_ids ∩ token scope ∩ 用户可检索空间
   （成员 ∪ 已链接公共空间），最后一道闸在检索层。
@@ -32,11 +32,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from loomvec.api.services.agent_tokens import (
     CITATIONS_PREFIX,
-    MENTIONS_PREFIX,
     AgentTokenClaims,
     decode_agent_token,
     is_token_revoked,
 )
+from loomvec.core.agent_tokens import mentions_key
 from loomvec.core.authz import (
     SpaceRole,
     decide_asset_visibility,
@@ -110,7 +110,7 @@ async def _effective_scope(
 
 async def _mentioned_asset_ids(ctx: McpAppState) -> list[uuid.UUID] | None:
     """本轮提问 @ 的文献（网关已校验可见性）；未 @ 返回 None = 不限文献。"""
-    raw = await ctx.redis.get(f"{MENTIONS_PREFIX}{_claims().env_id}")
+    raw = await ctx.redis.get(mentions_key(_claims().session_id))
     if not raw:
         return None
     try:

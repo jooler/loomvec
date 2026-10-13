@@ -12,6 +12,9 @@ from fastapi import APIRouter, Depends
 
 from loomvec.api.deps import admin_audit
 from loomvec.api.routes.admin import (
+    acp_gateway as acp_gateway_routes,
+)
+from loomvec.api.routes.admin import (
     audit as audit_routes,
 )
 from loomvec.api.routes.admin import (
@@ -67,5 +70,6 @@ for _r in (
     oauth_routes.router,
     webhooks_routes.router,
     audit_routes.router,
+    acp_gateway_routes.router,
 ):
     admin_api_router.include_router(_r)

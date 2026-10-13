@@ -4,6 +4,163 @@
  */
 
 export interface paths {
+    "/api/v1/admin/acp-gateway/api-keys/{key_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke Api Key */
+        post: operations["revoke_api_key_api_v1_admin_acp_gateway_api_keys__key_id__revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/acp-gateway/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Config
+         * @description 接入配置概览（页面提示用）：网关地址只读展示，两个凭据只告知「是否已配置」。
+         */
+        get: operations["get_config_api_v1_admin_acp_gateway_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/acp-gateway/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description 运行时状态卡：网关健康 + 活跃 runtime。网关故障降级为 200 + error，不抛错。
+         */
+        get: operations["get_status_api_v1_admin_acp_gateway_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/acp-gateway/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tenants */
+        get: operations["list_tenants_api_v1_admin_acp_gateway_tenants_get"];
+        put?: never;
+        /** Create Tenant */
+        post: operations["create_tenant_api_v1_admin_acp_gateway_tenants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/acp-gateway/tenants/{tenant_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Tenant */
+        get: operations["get_tenant_api_v1_admin_acp_gateway_tenants__tenant_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Tenant
+         * @description 修改租户 / 暂停 / 配额 / settings。`quotas`、`settings` 整体替换，需带完整对象。
+         */
+        patch: operations["patch_tenant_api_v1_admin_acp_gateway_tenants__tenant_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/acp-gateway/tenants/{tenant_id}/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Api Keys */
+        get: operations["list_api_keys_api_v1_admin_acp_gateway_tenants__tenant_id__api_keys_get"];
+        put?: never;
+        /**
+         * Issue Api Key
+         * @description 签发网关 API Key。响应里的 `api_key` 是明文唯一出现处，审计与日志不含它。
+         */
+        post: operations["issue_api_key_api_v1_admin_acp_gateway_tenants__tenant_id__api_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/acp-gateway/tenants/{tenant_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Usage
+         * @description 用量：配额口径当前占用 + 按天聚合（网关默认回看 30 天，`to` 为开区间上界）。
+         */
+        get: operations["get_usage_api_v1_admin_acp_gateway_tenants__tenant_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/acp-gateway/workspaces/{workspace_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Workspace
+         * @description 取消进行中的回合并停止该 workspace 的 agent 进程（对话数据保留，下次提问自动重启）。
+         */
+        post: operations["stop_workspace_api_v1_admin_acp_gateway_workspaces__workspace_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/assets/batch-rerun": {
         parameters: {
             query?: never;
@@ -2395,6 +2552,89 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AcpApiKeyIssueRequest */
+        AcpApiKeyIssueRequest: {
+            /** Expires At */
+            expires_at?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Rate Limit Rps */
+            rate_limit_rps?: number | null;
+            /** Reason */
+            reason: string;
+            /** Scopes */
+            scopes: ("sessions:write" | "sessions:read" | "files:read" | "files:write" | "chat:completions" | "acp:connect")[];
+        };
+        /** AcpMcpPolicy */
+        AcpMcpPolicy: {
+            /**
+             * Allow Stdio
+             * @default false
+             */
+            allow_stdio: boolean;
+            /** Allowed Hosts */
+            allowed_hosts?: string[];
+        };
+        /** AcpReasonRequest */
+        AcpReasonRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /** AcpTenantCreateRequest */
+        AcpTenantCreateRequest: {
+            /** Default Agent */
+            default_agent?: ("claude" | "dsh") | null;
+            /** Name */
+            name: string;
+            quotas?: components["schemas"]["AcpTenantQuotas"] | null;
+            /** Reason */
+            reason: string;
+            settings?: components["schemas"]["AcpTenantSettings"] | null;
+        };
+        /** AcpTenantPatchRequest */
+        AcpTenantPatchRequest: {
+            /** Default Agent */
+            default_agent?: ("claude" | "dsh") | null;
+            /** Name */
+            name?: string | null;
+            quotas?: components["schemas"]["AcpTenantQuotas"] | null;
+            /** Reason */
+            reason: string;
+            settings?: components["schemas"]["AcpTenantSettings"] | null;
+            /** Status */
+            status?: ("active" | "suspended") | null;
+        };
+        /**
+         * AcpTenantQuotas
+         * @description 网关租户配额（缺省 = 不限制）。PATCH 时整体替换，未列出的项即取消限制。
+         */
+        AcpTenantQuotas: {
+            /** Daily Tokens */
+            daily_tokens?: number | null;
+            /** Max Concurrent Turns */
+            max_concurrent_turns?: number | null;
+            /** Max Disk Bytes */
+            max_disk_bytes?: number | null;
+            /** Max Turn Seconds */
+            max_turn_seconds?: number | null;
+            /** Max Workspaces */
+            max_workspaces?: number | null;
+            /** Monthly Tokens */
+            monthly_tokens?: number | null;
+            /** Upstream Concurrency */
+            upstream_concurrency?: number | null;
+            /** Upstream Rpm */
+            upstream_rpm?: number | null;
+        };
+        /**
+         * AcpTenantSettings
+         * @description 网关租户 settings：mcp 段按规则校验，其余键原样保留（PATCH 时整体替换）。
+         */
+        AcpTenantSettings: {
+            mcp?: components["schemas"]["AcpMcpPolicy"] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** AdminMergeLogOut */
         AdminMergeLogOut: {
             /** Created At */
@@ -4411,6 +4651,413 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    revoke_api_key_api_v1_admin_acp_gateway_api_keys__key_id__revoke_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcpReasonRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_config_api_v1_admin_acp_gateway_config_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_status_api_v1_admin_acp_gateway_status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tenants_api_v1_admin_acp_gateway_tenants_get: {
+        parameters: {
+            query?: {
+                q?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_tenant_api_v1_admin_acp_gateway_tenants_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcpTenantCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_tenant_api_v1_admin_acp_gateway_tenants__tenant_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_tenant_api_v1_admin_acp_gateway_tenants__tenant_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcpTenantPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_api_keys_api_v1_admin_acp_gateway_tenants__tenant_id__api_keys_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    issue_api_key_api_v1_admin_acp_gateway_tenants__tenant_id__api_keys_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcpApiKeyIssueRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_usage_api_v1_admin_acp_gateway_tenants__tenant_id__usage_get: {
+        parameters: {
+            query?: {
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_workspace_api_v1_admin_acp_gateway_workspaces__workspace_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcpReasonRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     batch_rerun_api_v1_admin_assets_batch_rerun_post: {
         parameters: {
             query?: never;

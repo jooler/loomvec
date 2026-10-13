@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -20,12 +21,27 @@ from loomvec.core.config import Settings
 
 JTI_BLACKLIST_PREFIX = "agent:jti:"
 CITATIONS_PREFIX = "agent:citations:"
-# 本轮提问 @ 的文献（agent:mentions:{env_id} → JSON asset_id 列表）：token 是 runtime 级、
-# 挂载时求值一次，无法逐条消息变更，故每轮由网关写入、MCP 检索时读取并强制收敛
+# 本轮提问 @ 的文献（agent:mentions:{agent_session_id} → JSON asset_id 列表）：token 在
+# 网关会话上持有、无法逐条消息变更，故每轮由 services/agent 写入、MCP 检索时读取并强制收敛。
+# 键按会话（不是 env）：同一 workspace 的多个会话可并发回合，env 级的键会串
 MENTIONS_PREFIX = "agent:mentions:"
 # 每轮起点都会覆盖/删除，TTL 只做残留回收；须远长于单轮时长（回合无时长上限），
 # 否则长回合中途过期会让检索静默退回不限文献
 MENTIONS_TTL_S = 86400
+
+
+def mentions_key(session_id: str) -> str:
+    """本轮 @ 文献的 Redis 键（session_id = agent_session.id.hex，同 token 内的值）。"""
+    return f"{MENTIONS_PREFIX}{session_id}"
+
+
+async def publish_mentions(redis, session_id: str, asset_ids: list[str]) -> None:
+    """本轮 @ 的文献写入 Redis；无 @ 则清掉上一轮的残留（每轮起点覆盖，TTL 兜底）。"""
+    key = mentions_key(session_id)
+    if asset_ids:
+        await redis.set(key, json.dumps(asset_ids), ex=MENTIONS_TTL_S)
+    else:
+        await redis.delete(key)
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""MCP search_knowledge：本轮 @ 文献由网关写入 Redis，检索强制收敛（不依赖模型传参）。"""
+"""MCP search_knowledge：本轮 @ 文献按会话写入 Redis，检索强制收敛（不依赖模型传参）。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from loomvec.api.routes import mcp
 from loomvec.core.agent_tokens import MENTIONS_PREFIX, AgentTokenClaims
 
 ENV_ID = "env-1"
+SESSION_ID = "s"
 USER_ID = str(uuid.uuid4())
 
 
@@ -59,7 +60,9 @@ def _state(redis: _Redis, retriever: _Retriever) -> mcp.McpAppState:
 @pytest.fixture()
 def claims():
     token = mcp._current_claims.set(
-        AgentTokenClaims(user_id=USER_ID, env_id=ENV_ID, session_id="s", scope_space_ids=("x",))
+        AgentTokenClaims(
+            user_id=USER_ID, env_id=ENV_ID, session_id=SESSION_ID, scope_space_ids=("x",)
+        )
     )
     yield
     mcp._current_claims.reset(token)
@@ -81,7 +84,7 @@ def one_space(monkeypatch):
 
 async def test_mentioned_assets_are_forced_into_retrieval(claims, one_space):
     assets = [uuid.uuid4(), uuid.uuid4()]
-    redis = _Redis({f"{MENTIONS_PREFIX}{ENV_ID}": json.dumps([str(a) for a in assets])})
+    redis = _Redis({f"{MENTIONS_PREFIX}{SESSION_ID}": json.dumps([str(a) for a in assets])})
     retriever = _Retriever()
     await mcp.tool_search_knowledge(_state(redis, retriever), "方法是什么")
     assert retriever.calls[0]["asset_ids"] == assets
@@ -93,16 +96,16 @@ async def test_no_mentions_means_no_asset_filter(claims, one_space):
     assert retriever.calls[0]["asset_ids"] is None
 
 
-async def test_mentions_are_scoped_per_env(claims, one_space):
-    """别的 env 的 @ 不会影响本 env 的检索。"""
-    redis = _Redis({f"{MENTIONS_PREFIX}other-env": json.dumps([str(uuid.uuid4())])})
+async def test_mentions_are_scoped_per_session(claims, one_space):
+    """别的会话（同 env 下并发回合）的 @ 不会影响本会话的检索。"""
+    redis = _Redis({f"{MENTIONS_PREFIX}other-session": json.dumps([str(uuid.uuid4())])})
     retriever = _Retriever()
     await mcp.tool_search_knowledge(_state(redis, retriever), "q")
     assert retriever.calls[0]["asset_ids"] is None
 
 
 async def test_corrupt_mentions_value_does_not_break_search(claims, one_space):
-    redis = _Redis({f"{MENTIONS_PREFIX}{ENV_ID}": "not-json"})
+    redis = _Redis({f"{MENTIONS_PREFIX}{SESSION_ID}": "not-json"})
     retriever = _Retriever()
     await mcp.tool_search_knowledge(_state(redis, retriever), "q")
     assert retriever.calls[0]["asset_ids"] is None

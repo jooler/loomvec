@@ -254,6 +254,15 @@
     "retention_days": 365,
     "handover": {
       "archive_history_default": false
+    },
+    "default_agent": "claude",
+    "gateway": {
+      "url": "http://127.0.0.1:38095",
+      "request_timeout_s": 30,
+      "models": {
+        "claude": null,
+        "dsh": null
+      }
     }
   }
 }

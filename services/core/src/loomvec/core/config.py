@@ -568,6 +568,24 @@ class AgentHandoverSettings(BaseModel):
     archive_history_default: bool = False
 
 
+class AgentGatewayModelSettings(BaseModel):
+    """各 agent 的默认模型名；None = 用 agent 自己的默认。
+
+    dsh 缺省回落 `agent.model.name`（见 `AgentSettings.model_for`）。
+    """
+
+    claude: str | None = None
+    dsh: str | None = None
+
+
+class AgentGatewaySettings(BaseModel):
+    """acp-gateway 连接参数（API Key / 管理 token 是 system_config 敏感项，不在此处）。"""
+
+    url: str = "http://127.0.0.1:38095"  # 网关地址（admin 只读展示）
+    request_timeout_s: float = 30.0  # 普通请求超时；SSE 流不设总超时
+    models: AgentGatewayModelSettings = Field(default_factory=AgentGatewayModelSettings)
+
+
 class AgentSettings(BaseModel):
     """P5 智能体对话参数（14 文档 §10 config/loomvec.json agent 段）。
 
@@ -585,6 +603,16 @@ class AgentSettings(BaseModel):
     mcp: AgentMcpSettings = Field(default_factory=AgentMcpSettings)
     retention_days: int = 365
     handover: AgentHandoverSettings = Field(default_factory=AgentHandoverSettings)
+    # 新会话使用的 agent（经 acp-gateway 运行）；已有会话以 agent_session.agent 为准
+    default_agent: Literal["claude", "dsh"] = "claude"
+    gateway: AgentGatewaySettings = Field(default_factory=AgentGatewaySettings)
+
+    def model_for(self, agent: str) -> str | None:
+        """某个 agent 在网关会话上的默认模型名（None = 不指定，用 agent 默认）。"""
+        configured = getattr(self.gateway.models, agent, None)
+        if configured:
+            return configured
+        return self.model.name if agent == "dsh" else None
 
 
 class AuthSettings(BaseModel):
