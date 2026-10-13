@@ -13,9 +13,9 @@ from loomvec.agent.citations import (
     parse_search_result,
     strip_out_of_range_citations,
 )
+from loomvec.agent.mentions import build_mention_block
 from loomvec.agent.sessions.transcript import (
     aggregate_transcript,
-    build_mention_block,
     encode_segment,
     parse_transcript,
     physical_gen,
@@ -384,10 +384,11 @@ async def test_publish_mentions_overwrites_and_clears():
     redis = _FakeRedis()
     orch = PromptOrchestrator(None, None, redis)  # type: ignore[arg-type]
     await orch._publish_mentions(_ctx(_MENTIONS))
-    assert json.loads(redis.store[f"{MENTIONS_PREFIX}env1"]) == [m["asset_id"] for m in _MENTIONS]
+    # 键按会话（ctx.session_id = "s"），同 env 下并发会话互不串
+    assert json.loads(redis.store[f"{MENTIONS_PREFIX}s"]) == [m["asset_id"] for m in _MENTIONS]
     # 下一轮没有 @ → 清掉上一轮残留，检索不再被限定
     await orch._publish_mentions(_ctx([]))
-    assert f"{MENTIONS_PREFIX}env1" not in redis.store
+    assert f"{MENTIONS_PREFIX}s" not in redis.store
 
 
 def test_build_blocks_puts_mention_block_before_question():

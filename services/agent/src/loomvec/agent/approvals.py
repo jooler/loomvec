@@ -8,8 +8,10 @@ dsh 原生 fail-closed——沙箱升级类请求自动拒绝（unavailable → 
     workspace 内编辑器/白名单 shell     → 自动允许（沙箱限定范围）
     破坏性 shell / 越界路径 / 网络工具  → 自动拒绝（fail-closed，无审批通道）
 
-本模块承载矩阵的声明式表达（P2 桥接 `session/request_permission` 时，
-answerer 直接查这张表），并对 JSONL 中的 approval/* 事件做翻译辅助。
+本模块承载矩阵的声明式表达：旧 runtime 路径用 `decide()` 查表；经 acp-gateway 的
+会话由 `build_permission_policy()` 翻译成网关 `PermissionPolicy`，在建会话时传入
+（`default: reject` + 放行规则，语法见网关 docs/api.md「审批策略」）。
+**对 dsh 不生效**：docker 下 dsh 以 danger-full-access 运行、不发审批，隔离靠容器。
 """
 
 from __future__ import annotations
@@ -31,6 +33,11 @@ ALLOWED_TOOL_EXACT = frozenset(
         "grep",
     }
 )
+
+
+# 网关侧按 ACP 工具类别（kind）放行：读取 / 检索 / 编辑（沙箱=容器，范围限定在 workspace）。
+# 其余（execute / fetch / delete / move / other ...）默认拒绝，对应矩阵里「破坏性 shell / 网络工具」
+ALLOWED_KINDS = ("read", "search", "edit")
 
 
 @dataclass(frozen=True)
@@ -59,3 +66,20 @@ def translate_approval_event(event_type: str, data: dict[str, Any]) -> dict[str,
         "options": ["allow-once", "reject-once"],
         "p0_auto": True,
     }
+
+
+def build_permission_policy() -> dict[str, Any]:
+    """审批矩阵 → 网关 `PermissionPolicy`（建会话时传入；session 策略不能比 Key 策略更宽）。
+
+    规则按序、第一条匹配生效：`mcp__loomvec__*` 前缀 → 允许；读取 / 检索 / 编辑类
+    kind → 允许；矩阵里列出的编辑器工具名 → 允许；其余 `default: reject`。
+    """
+    rules: list[dict[str, Any]] = [
+        {"match": {"tool_name": f"{prefix}*"}, "decision": "allow"}
+        for prefix in ALLOWED_TOOL_PREFIXES
+    ]
+    rules.append({"match": {"kind": list(ALLOWED_KINDS)}, "decision": "allow"})
+    rules.extend(
+        {"match": {"tool_name": name}, "decision": "allow"} for name in sorted(ALLOWED_TOOL_EXACT)
+    )
+    return {"default": "reject", "rules": rules}

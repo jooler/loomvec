@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-import json
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -30,12 +29,13 @@ from loomvec.agent.citations import (
     strip_out_of_range_citations,
 )
 from loomvec.agent.config import AgentRuntimeConfig
+from loomvec.agent.mentions import build_mention_block
 from loomvec.agent.runtime.manager import ManagedRuntime, RuntimeManager
 from loomvec.agent.runtime.provider import SandboxUnavailableError
 from loomvec.agent.sessions import transcript
 from loomvec.agent.sessions.usage import TurnStats
 from loomvec.agent.sse import sse_event
-from loomvec.core.agent_tokens import MENTIONS_PREFIX, MENTIONS_TTL_S, issue_agent_token
+from loomvec.core.agent_tokens import issue_agent_token, publish_mentions
 from loomvec.core.logging import get_logger
 
 logger = get_logger("loomvec.agent.orchestrator")
@@ -218,18 +218,8 @@ class PromptOrchestrator:
             yield frame
 
     async def _publish_mentions(self, ctx: PromptContext) -> None:
-        """本轮 @ 文献写入 Redis（MCP 检索时强制收敛）；无 @ 则清掉上一轮的残留。
-
-        token 是 runtime 级、无法逐条消息变更；prompt_lock 保证同 env 同一时刻只有一轮，
-        每轮起点覆盖即可，无需轮末清理（TTL 兜底）。
-        """
-        key = f"{MENTIONS_PREFIX}{ctx.env_id}"
-        if ctx.mentions:
-            await self._redis.set(
-                key, json.dumps([m["asset_id"] for m in ctx.mentions]), ex=MENTIONS_TTL_S
-            )
-        else:
-            await self._redis.delete(key)
+        """本轮 @ 文献写入 Redis（MCP 检索时强制收敛，键按会话）；无 @ 则清掉上一轮的残留。"""
+        await publish_mentions(self._redis, ctx.session_id, [m["asset_id"] for m in ctx.mentions])
 
     def _build_blocks(self, ctx: PromptContext, replay_note: str) -> list[dict[str, Any]]:
         """prompt contentBlocks：重放前缀 + 工作目录说明 + 附件说明/图片 + 问题。"""
@@ -265,7 +255,7 @@ class PromptOrchestrator:
                     }
                 )
         if ctx.mentions:
-            blocks.append({"type": "text", "text": transcript.build_mention_block(ctx.mentions)})
+            blocks.append({"type": "text", "text": build_mention_block(ctx.mentions)})
         blocks.append({"type": "text", "text": ctx.question})
         return blocks
 

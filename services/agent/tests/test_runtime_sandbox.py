@@ -1,5 +1,5 @@
 """P5.5a 沙箱单测（docs/Research/01）：docker provider argv 组装、fail-closed、
-envs.py 按 provider 渲染 MCP url、项目目录入参校验、project_path 注入前缀。
+envs.py 按 provider 渲染 MCP url、项目目录入参校验（纯校验）、project_path 注入前缀。
 
 路径恒等原则是本模块的第一断言：cwd/runtime_cwd/挂载/DSH_HOME 全部为宿主真实
 路径且容器内值 == 宿主值（F13/F14 零改动的前提）。
@@ -150,19 +150,16 @@ def test_envs_renders_mcp_url_by_provider(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_project_path(tmp_path):
-    cfg = _cfg(tmp_path)
-    env_id = "ef" * 16
+def test_normalize_project_path():
+    """纯校验（P2 起目录由网关 dirs 接口创建，不再落本地盘）。"""
+    assert normalize_project_path(None) == ""
+    assert normalize_project_path("  ") == ""
+    assert normalize_project_path("projects/report-2026Q3") == "projects/report-2026Q3"
+    assert normalize_project_path("/leading/slash/") == "leading/slash"
 
-    assert normalize_project_path(cfg, env_id, None) == ""
-    assert normalize_project_path(cfg, env_id, "  ") == ""
-    assert normalize_project_path(cfg, env_id, "projects/report-2026Q3") == "projects/report-2026Q3"
-    assert normalize_project_path(cfg, env_id, "/leading/slash/") == "leading/slash"
-    assert (cfg.workspace(env_id) / "projects" / "report-2026Q3").is_dir()
-
-    for bad in ("../escape", "a/../../b", ".hidden/x", "/.."):
+    for bad in ("../escape", "a/../../b", ".hidden/x", "/..", "a/\x00b"):
         with pytest.raises(ValidationError):
-            normalize_project_path(cfg, env_id, bad)
+            normalize_project_path(bad)
 
 
 # ---------------------------------------------------------------------------

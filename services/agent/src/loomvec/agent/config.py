@@ -5,6 +5,10 @@
 - Settings（env/.env，基础设施）：PG/Redis/auth 密钥、agent_service 段；
 - `LOOMVEC_AGENT_STORAGE_ROOT`（env）优先于 json 的 storage_root（K8s PVC 场景）。
 
+P2 起对话 / 文件 / 历史经 acp-gateway：网关地址等在 `agent.gateway`，API Key 与
+default_agent / 默认模型的动态覆盖在 system_config（`load_gateway_connection`）。
+以下 dsh 协议事实仅供旧 runtime 路径（L3 删除）参考。
+
 dsh 协议事实（third_party 源码核实，影响实现）：
 - `--profile sdk` 仅 initialize/session/prompt/shutdown 四方法；无 cancel/resume；
 - 跨进程同 session_id 再 prompt 报 SessionAlreadyExistsError → 逻辑会话与
@@ -31,8 +35,7 @@ class AgentRuntimeConfig:
 
     settings: Settings
     agent: AgentSettings
-    # 运维端「AI 供方配置」写入 system_config（DB），优先于 config/loomvec.json；
-    # 由 routes 在提问时读出，manager spawn 时经 dataclasses.replace 注入
+    # 旧 runtime 路径（L3 删除）的 LLM 覆盖；经网关后 ai.llm.* 对 agent 不再生效
     llm_base_url_override: str | None = None
     llm_api_key_override: str | None = None
 
@@ -84,20 +87,61 @@ def load_agent_config() -> AgentRuntimeConfig:
     return AgentRuntimeConfig(settings=get_settings(), agent=get_app_config().agent)
 
 
-async def load_llm_overrides(session: AsyncSession) -> tuple[str | None, str | None]:
-    """读运维端写入的 ai.llm.base_url / ai.llm.api_key（DB 有非空值即覆盖文件配置）。"""
+# system_config 里与网关相关的键（admin「设置 → agent」写入；单源见
+# services/api/.../admin_settings.py 注册表）。敏感项在库里是明文存储（回显才脱敏），直接读即可
+KEY_GATEWAY_API_KEY = "agent.gateway.api_key"
+KEY_GATEWAY_ADMIN_TOKEN = "agent.gateway.admin_token"  # 仅 services/api 的 ACP 服务代理使用
+KEY_DEFAULT_AGENT = "agent.default_agent"
+KEY_MODEL_CLAUDE = "agent.gateway.models.claude"
+KEY_MODEL_DSH = "agent.gateway.models.dsh"
+_GATEWAY_KEYS = (
+    KEY_GATEWAY_API_KEY,
+    KEY_DEFAULT_AGENT,
+    KEY_MODEL_CLAUDE,
+    KEY_MODEL_DSH,
+)
+AGENTS = ("claude", "dsh")
+
+
+@dataclass(frozen=True)
+class GatewayConnection:
+    """一次请求内生效的网关配置：文件默认值 + system_config（DB 非空值优先，即时生效）。"""
+
+    url: str
+    api_key: str | None  # 无文件回落：空 = 未配置
+    request_timeout_s: float
+    default_agent: str
+    models: dict[str, str | None]  # agent -> 默认模型名（None = 用 agent 默认）
+
+    def model_for(self, agent: str) -> str | None:
+        return self.models.get(agent)
+
+
+def _clean(value: object) -> str | None:
+    return value.strip() or None if isinstance(value, str) else None
+
+
+async def load_gateway_connection(session: AsyncSession, agent: AgentSettings) -> GatewayConnection:
+    """读 system_config 的网关键并与 `agent.*` 文件配置合并。"""
     from loomvec.core.db.models import SystemConfig
 
     rows = (
-        (
-            await session.execute(
-                select(SystemConfig).where(
-                    SystemConfig.key.in_(("ai.llm.base_url", "ai.llm.api_key"))
-                )
-            )
-        )
+        (await session.execute(select(SystemConfig).where(SystemConfig.key.in_(_GATEWAY_KEYS))))
         .scalars()
         .all()
     )
-    vals = {r.key: (r.value.strip() if isinstance(r.value, str) else "") for r in rows}
-    return vals.get("ai.llm.base_url") or None, vals.get("ai.llm.api_key") or None
+    vals = {r.key: _clean(r.value) for r in rows}
+    default_agent = vals.get(KEY_DEFAULT_AGENT)
+    if default_agent not in AGENTS:
+        default_agent = agent.default_agent
+    models = {
+        "claude": vals.get(KEY_MODEL_CLAUDE) or agent.model_for("claude"),
+        "dsh": vals.get(KEY_MODEL_DSH) or agent.model_for("dsh"),
+    }
+    return GatewayConnection(
+        url=agent.gateway.url,
+        api_key=vals.get(KEY_GATEWAY_API_KEY),
+        request_timeout_s=agent.gateway.request_timeout_s,
+        default_agent=default_agent,
+        models=models,
+    )

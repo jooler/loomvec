@@ -1,17 +1,21 @@
 """内部 REST `/internal/agent/*`（仅 services/api 可达，X-Internal-Token 闸门）。
 
-职责：会话元数据 CRUD（PG agent_session）、SSE 提问（orchestrator）、
-附件落盘、取消、工作区浏览。身份经转发头（X-Loomvec-User-Id 等）注入。
+职责：会话元数据 CRUD（PG agent_session）、SSE 提问、附件、取消、工作区浏览。
+对话 / 文件 / 历史经 acp-gateway（gateway/ 子包）；本模块保留业务适配：
+身份、会话元数据、@ 文献校验、检索范围（scope）与 MCP token。
+身份经转发头（X-Loomvec-User-Id 等）注入。
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request, UploadFile
@@ -22,9 +26,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.agent.attachments import AttachmentError, resolve_attachment, store_attachment
-from loomvec.agent.config import AgentRuntimeConfig, load_llm_overrides
-from loomvec.agent.runtime.manager import RuntimeManager, new_logical_session_id
-from loomvec.agent.sessions.orchestrator import PromptContext, PromptOrchestrator
+from loomvec.agent.config import AgentRuntimeConfig, load_gateway_connection
+from loomvec.agent.gateway.errors import (
+    GatewayConfigError,
+    GatewayError,
+    GatewayPathError,
+    GatewayTransportError,
+    to_domain_error,
+)
+from loomvec.agent.gateway.files import (
+    FILE_PREVIEW_BYTES,
+    TREE_DEPTH,
+    flatten_tree,
+    is_hidden,
+    prefix_node,
+)
+from loomvec.agent.gateway.history import fold_history
+from loomvec.agent.gateway.orchestrator import AskContext, GatewayOrchestrator, Outcome
+from loomvec.agent.gateway.service import (
+    GatewayService,
+    OwnerContext,
+    new_session_id,
+    session_stats,
+)
 from loomvec.agent.sessions.transcript import aggregate_transcript
 from loomvec.core.authz import (
     SpaceRole,
@@ -48,7 +72,7 @@ from loomvec.core.db.repos import (
     AgentSessionRepo,
     SpaceMemberRepo,
 )
-from loomvec.core.errors import NotFoundError, ValidationError
+from loomvec.core.errors import NotFoundError, UpstreamUnavailableError, ValidationError
 from loomvec.core.logging import get_logger
 
 logger = get_logger("loomvec.agent.routes")
@@ -117,6 +141,7 @@ def _session_out(row: AgentSession) -> dict[str, Any]:
         "message_count": row.message_count,
         "preview": row.preview,
         "archived_at": row.archived_at,
+        "agent": row.agent,
     }
 
 
@@ -142,6 +167,47 @@ async def _own_env(
     return env, user_id
 
 
+async def _owner(
+    session: AsyncSession, identity: InternalIdentity, env: AgentEnvironment
+) -> OwnerContext:
+    """token 签发 / AGENTS.md 渲染用的身份信息（`_own_env` 刚取过，多为 identity map 命中）。"""
+    user = await session.get(User, uuid.UUID(identity.user_id))
+    tenant = await session.get(Tenant, env.tenant_id) if env.tenant_id else None
+    return OwnerContext(
+        user_id=identity.user_id,
+        tenant_id=str(env.tenant_id) if env.tenant_id else None,
+        tenant_name=tenant.name if tenant else "LoomVec",
+        user_display_name=(user.display_name if user else None) or identity.username,
+    )
+
+
+@contextlib.contextmanager
+def _gateway_errors() -> Iterator[None]:
+    """网关异常 → 领域异常（HTTP 路由层统一出口；SSE 内部另有出帧逻辑）。"""
+    try:
+        yield
+    except (GatewayError, GatewayTransportError) as e:
+        raise to_domain_error(e) from e
+    except GatewayPathError as e:
+        raise ValidationError("路径越界") from e
+
+
+def _gateway(request: Request) -> GatewayService:
+    return request.app.state.gateway
+
+
+async def _workspace(
+    request: Request, session: AsyncSession, identity: InternalIdentity, env: AgentEnvironment
+):
+    """(网关客户端, 生效配置, workspace id)：首次使用时创建 workspace 并写 AGENTS.md。"""
+    svc = _gateway(request)
+    client, conn = await svc.connect(session)
+    owner = await _owner(session, identity, env)
+    with _gateway_errors():
+        ws_id = await svc.ensure_workspace(client, session, env, owner)
+    return client, conn, ws_id
+
+
 class SessionCreate(BaseModel):
     title: str | None = None
     scope_space_ids: list[uuid.UUID] | None = None
@@ -153,10 +219,10 @@ class SessionUpdate(BaseModel):
     scope_space_ids: list[uuid.UUID] | None = None
 
 
-def normalize_project_path(cfg: AgentRuntimeConfig, env_id: str, raw: str | None) -> str:
-    """项目目录入参校验（P5.5a §6.1）：workspace 相对路径、防穿越、目录可建。
+def normalize_project_path(raw: str | None) -> str:
+    """项目目录入参校验（P5.5a §6.1）：workspace 相对路径、防穿越。
 
-    返回规范化后的 POSIX 相对路径（空串 = workspace 根）；目录不存在则创建。
+    返回规范化后的 POSIX 相对路径（空串 = workspace 根）。目录由调用方经网关 `dirs` 创建。
     """
     if raw is None:
         return ""
@@ -166,11 +232,8 @@ def normalize_project_path(cfg: AgentRuntimeConfig, env_id: str, raw: str | None
     parts = [p for p in rel.split("/") if p not in ("", ".")]
     if not parts or any(p == ".." or p.startswith(".") for p in parts):
         raise ValidationError("项目目录须为 workspace 下的相对路径，且不含 .. 与隐藏段")
-    target = cfg.workspace(env_id) / Path(*parts)
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-    except (OSError, ValueError) as e:
-        raise ValidationError(f"项目目录创建失败：{e}") from e
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in rel):
+        raise ValidationError("项目目录不能包含控制字符")
     return "/".join(parts)
 
 
@@ -229,15 +292,15 @@ async def open_project(
 ) -> dict:
     """打开/新建项目：目录已存在则直接打开，否则在工作区根创建后打开。"""
     env, user_id = await _own_env(session, identity)
-    cfg: AgentRuntimeConfig = request.app.state.agent_config
     name = normalize_project_name(body.name)
-    target = cfg.workspace(str(env.id)) / name
-    try:
-        if target.exists() and not target.is_dir():
-            raise ValidationError(f"工作区已存在同名文件：{name}")
-        target.mkdir(parents=True, exist_ok=True)
-    except (OSError, ValueError) as e:
-        raise ValidationError(f"项目目录创建失败：{e}") from e
+    client, _, ws_id = await _workspace(request, session, identity, env)
+    with _gateway_errors():
+        try:
+            await client.mkdir(ws_id, name)  # mkdir -p：已存在的目录直接打开
+        except GatewayError as e:
+            if e.status == 409:  # 路径中有一段是文件
+                raise ValidationError(f"工作区已存在同名文件：{name}") from e
+            raise
 
     repo = AgentProjectRepo(session)
     row = await repo.find_by_path(env.id, name)
@@ -327,8 +390,15 @@ async def _resolve_mentions(
 
 @router.get("/health")
 async def health(request: Request) -> dict:
-    manager: RuntimeManager = request.app.state.runtime_manager
-    return {"ok": True, "runtimes": manager.active_count}
+    """网关可用性：已配置 API Key 且 `GET /healthz` 通。`runtimes` 网关侧不可得，恒为 0。"""
+    cfg: AgentRuntimeConfig = request.app.state.agent_config
+    async with request.app.state.session_factory() as db:
+        conn = await load_gateway_connection(db, cfg.agent)
+    if not conn.api_key:
+        raise GatewayConfigError("未配置 ACP 网关 API Key，请在管理后台「设置 → agent」填写")
+    if not await _gateway(request).client_for(conn).healthz():
+        raise UpstreamUnavailableError("acp-gateway", "无法连接 ACP 网关")
+    return {"ok": True, "runtimes": 0}
 
 
 @router.get("/sessions")
@@ -354,15 +424,21 @@ async def create_session(
     if scope:
         await _assert_member_spaces(session, user_id, scope)
     cfg: AgentRuntimeConfig = request.app.state.agent_config
-    project_path = normalize_project_path(cfg, str(env.id), body.project_path if body else None)
+    project_path = normalize_project_path(body.project_path if body else None)
+    if project_path:
+        client, _, ws_id = await _workspace(request, session, identity, env)
+        with _gateway_errors():
+            await client.mkdir(ws_id, project_path)  # 项目目录不存在则创建
+    conn = await load_gateway_connection(session, cfg.agent)
     row = await AgentSessionRepo(session).create(
-        id=uuid.UUID(new_logical_session_id()),
+        id=new_session_id(),
         env_id=env.id,
         created_by_user_id=user_id,
         tenant_id=env.tenant_id,
         title=(body.title if body and body.title else None) or "新会话",
         project_path=project_path,
         scope_space_ids=[str(s) for s in scope] if scope else [],
+        agent=conn.default_agent,  # 新会话用当前生效的 default_agent；已有会话不受后续切换影响
     )
     return _session_out(row)
 
@@ -379,47 +455,19 @@ async def get_session(
     if row is None:
         raise NotFoundError(resource="agent_session", id=str(session_id))
     out = _session_out(row)
-    out["stats"] = await _session_stats(request, env, row)
+    out["stats"] = await _session_stats(request, session, row)
     return out
 
 
-async def _session_stats(request: Request, env: AgentEnvironment, row: AgentSession) -> dict:
-    """会话级统计（§5.8：usage 折叠到全会话，从 JSONL 事实源聚合）。"""
-
-    cfg: AgentRuntimeConfig = request.app.state.agent_config
-    # JSONL 可能很大：解析放线程池，避免阻塞事件循环
-    return await asyncio.to_thread(_fold_session_stats, cfg, env, row)
-
-
-def _fold_session_stats(cfg: AgentRuntimeConfig, env: AgentEnvironment, row: AgentSession) -> dict:
-    from loomvec.agent.sessions.usage import UsageFold
-
-    fold = UsageFold()
-    turns = 0
-    for path in _physical_files(cfg, env, row):
-        import json
-
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                env_line = json.loads(line)
-            except ValueError:
-                continue
-            data = env_line.get("data") or {}
-            if env_line.get("type") == "assistant/message":
-                fold.add(data.get("usage"))
-            elif env_line.get("type") == "turn/end":
-                turns += 1
-    stats = fold.to_event()
-    stats["turns"] = turns
-    return stats
-
-
-def _physical_files(cfg: AgentRuntimeConfig, env: AgentEnvironment, row: AgentSession):
-    from loomvec.agent.sessions import transcript
-
-    return transcript.physical_session_files(
-        cfg.sessions_root(str(env.id)), cfg.workspace(str(env.id)), row.id.hex
-    )
+async def _session_stats(request: Request, db: AsyncSession, row: AgentSession) -> dict:
+    """会话级统计（§5.8）：网关各回合 usage 聚合。尽力而为：网关不可用返回空对象，不拖垮详情。"""
+    try:
+        client, _ = await _gateway(request).connect(db)
+        with _gateway_errors():
+            return await session_stats(client, row.gateway_session_id)
+    except (GatewayConfigError, UpstreamUnavailableError, NotFoundError) as e:
+        logger.warning("session_stats_unavailable", session_id=row.id.hex, error=str(e))
+        return {}
 
 
 @router.patch("/sessions/{session_id}")
@@ -440,7 +488,8 @@ async def update_session(
         row,
         **({"title": body.title} if body.title is not None else {}),
         **(
-            {"scope_space_ids": [str(s) for s in body.scope_space_ids]}
+            # scope 随 MCP token 下发：改范围后须在下次提问前重签并 PATCH 到网关会话
+            {"scope_space_ids": [str(s) for s in body.scope_space_ids], "mcp_token_exp": None}
             if body.scope_space_ids is not None
             else {}
         ),
@@ -451,6 +500,7 @@ async def update_session(
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(
     session_id: uuid.UUID,
+    request: Request,
     identity: InternalIdentity = Depends(_identity),
     session: AsyncSession = Depends(_session_ctx),
 ) -> None:
@@ -461,6 +511,13 @@ async def delete_session(
     if row is None:
         raise NotFoundError(resource="agent_session", id=str(session_id))
     await repo.update(row, archived_at=datetime.now(UTC))
+    if row.gateway_session_id:
+        # 网关侧同步归档（释放 agent 会话；历史仍可读）。尽力而为：网关不可用不影响本地删除
+        try:
+            client, _ = await _gateway(request).connect(session)
+            await _gateway(request).archive_gateway_session(client, row)
+        except GatewayConfigError:
+            logger.warning("gateway_archive_skipped_no_key", session_id=row.id.hex)
 
 
 @router.get("/sessions/{session_id}/messages")
@@ -470,15 +527,28 @@ async def list_messages(
     session: AsyncSession = Depends(_session_ctx),
     request: Request = None,
 ) -> dict:
-    """历史读取：解析 JSONL 事实源（聚合全部物理段）。"""
+    """历史读取：网关消息视图折成「一问一答」。
+
+    尚未迁移 / 尚未在网关建会话的存量会话（`gateway_session_id` 为空）回落读旧 dsh JSONL，
+    迁移脚本导入后读网关。
+    """
     env, _ = await _own_env(session, identity)
     row = await AgentSessionRepo(session).get_in_env(session_id, env.id, include_archived=True)
     if row is None:
         raise NotFoundError(resource="agent_session", id=str(session_id))
-    cfg: AgentRuntimeConfig = request.app.state.agent_config
-    items = await asyncio.to_thread(
-        aggregate_transcript, cfg.sessions_root(str(env.id)), cfg.workspace(str(env.id)), row.id.hex
-    )
+    if not row.gateway_session_id:
+        cfg: AgentRuntimeConfig = request.app.state.agent_config
+        items = await asyncio.to_thread(
+            aggregate_transcript,
+            cfg.sessions_root(str(env.id)),
+            cfg.workspace(str(env.id)),
+            row.id.hex,
+        )
+        return {"items": items, "total": len(items)}
+    client, _ = await _gateway(request).connect(session)
+    with _gateway_errors():
+        messages = await client.all_messages(row.gateway_session_id)
+    items = fold_history(messages)
     return {"items": items, "total": len(items)}
 
 
@@ -494,8 +564,13 @@ async def ask(
     request: Request,
     identity: InternalIdentity = Depends(_identity),
 ) -> StreamingResponse:
-    """提问（SSE）。DB 会话在端点内显式开关：流期间不悬挂请求级事务。"""
+    """提问（SSE）。DB 会话在端点内显式开关：流期间不悬挂请求级事务。
+
+    事务内完成全部「落库 + 网关准备」（workspace / session 懒创建、MCP token 续签）：
+    这些失败直接是 HTTP 错误（尚未开始流）；流本身的失败以 error + done 帧收尾。
+    """
     cfg: AgentRuntimeConfig = request.app.state.agent_config
+    svc = _gateway(request)
     question = body.question.strip()[: cfg.agent.session.max_question_chars]
     if not question:
         raise ValidationError("问题不能为空")
@@ -512,16 +587,20 @@ async def ask(
         mentions = await _resolve_mentions(
             session, user_id, list(row.scope_space_ids or []), body.mention_asset_ids or []
         )
-        user_row = await session.get(User, user_id)
-        tenant_row = await session.get(Tenant, env.tenant_id) if env.tenant_id else None
-        attachments = []
-        for att_id in (body.attachment_ids or [])[: cfg.agent.session.attachments.max_per_message]:
-            meta = resolve_attachment(cfg, str(env.id), str(row.id), att_id)
-            if meta is None:
-                raise ValidationError(f"附件不存在：{att_id}")
-            attachments.append(meta)
+        owner = await _owner(session, identity, env)
+        client, conn = await svc.connect(session)
+        with _gateway_errors():
+            ws_id = await svc.ensure_workspace(client, session, env, owner)
+            attachments = []
+            att_ids = (body.attachment_ids or [])[: cfg.agent.session.attachments.max_per_message]
+            for att_id in att_ids:
+                meta = await resolve_attachment(client, ws_id, str(row.id), att_id)
+                if meta is None:
+                    raise ValidationError(f"附件不存在：{att_id}")
+                attachments.append(meta)
 
-        # 提问侧元数据先行落库（断连也不丢会话列表新鲜度）
+        # 提问侧元数据先行落库（断连也不丢会话列表新鲜度）；同时持有会话行锁，
+        # 串行化同一会话的并发提问（网关 session 懒创建不会重复）
         first_question = row.message_count == 0
         await repo.update(
             row,
@@ -529,39 +608,25 @@ async def ask(
             last_message_at=datetime.now(UTC),
             **({"title": question[:32]} if first_question and row.title == "新会话" else {}),
         )
+        with _gateway_errors():
+            prepared = await svc.prepare_session(client, session, conn, env, row, owner)
 
-        ctx = PromptContext(
+        ctx = AskContext(
             env_id=str(env.id),
-            tenant_id=str(env.tenant_id) if env.tenant_id else None,
-            tenant_name=tenant_row.name if tenant_row else "LoomVec",
-            user_id=identity.user_id,
-            user_display_name=(user_row.display_name if user_row else None) or identity.username,
             session_id=row.id.hex,
-            session_title=row.title,
-            # 会话检索范围随 token 下发（严格遵循用户设置；空 = 未设置 → 不检索）
-            scope_space_ids=[str(s) for s in (row.scope_space_ids or [])],
             question=question,
+            prepared=prepared,
             attachments=attachments,
             mentions=mentions,
-            project_path=row.project_path or "",
         )
-        ctx.llm_base_url, ctx.llm_api_key = await load_llm_overrides(session)
-    orchestrator: PromptOrchestrator = request.app.state.orchestrator
+    orchestrator: GatewayOrchestrator = request.app.state.orchestrator
+    outcome = Outcome()
 
     async def _gen():
-        answer = ""
-        async for frame in orchestrator.stream(ctx):
-            if frame.startswith("event: done"):
-                import json as _json
-
-                try:
-                    data_line = frame.split("\ndata: ", 1)[1].rsplit("\n", 1)[0]
-                    answer = _json.loads(data_line).get("answer") or ""
-                except (ValueError, IndexError):
-                    answer = ""
+        async for frame in orchestrator.stream(client, ctx, outcome):
             yield frame
-        # 回答侧元数据收尾（best-effort；事实源在 JSONL，失败不影响流）
-        if answer:
+        # 回答侧元数据收尾（best-effort；事实源在网关事件日志，失败不影响流）
+        if outcome.answer:
             try:
                 async with request.app.state.session_factory() as db, db.begin():
                     fresh = await AgentSessionRepo(db).get_in_env(
@@ -571,7 +636,7 @@ async def ask(
                         await AgentSessionRepo(db).update(
                             fresh,
                             message_count=fresh.message_count + 1,
-                            preview=answer[:200],
+                            preview=outcome.answer[:200],
                             last_message_at=datetime.now(UTC),
                         )
             except Exception:
@@ -591,14 +656,17 @@ async def cancel(
     identity: InternalIdentity = Depends(_identity),
     session: AsyncSession = Depends(_session_ctx),
 ) -> dict:
-    """停止生成：终止该 env 的 runtime（协议无 session/cancel；进程级取消）。"""
+    """停止生成：取消该会话进行中的回合（只取消回合，不杀 agent 进程）。"""
     env, _ = await _own_env(session, identity)
     row = await AgentSessionRepo(session).get_in_env(session_id, env.id)
     if row is None:
         raise NotFoundError(resource="agent_session", id=str(session_id))
-    manager: RuntimeManager = request.app.state.runtime_manager
-    terminated = await manager.terminate(str(env.id), reason="user_cancel")
-    return {"cancelled": terminated is not None}
+    if not row.gateway_session_id:
+        return {"cancelled": False}  # 还没提过问，没有回合可取消
+    client, _ = await _gateway(request).connect(session)
+    with _gateway_errors():
+        cancelled = await client.cancel_turn(row.gateway_session_id)
+    return {"cancelled": cancelled}
 
 
 @router.post("/sessions/{session_id}/attachments")
@@ -614,21 +682,22 @@ async def upload_attachment(
     row = await AgentSessionRepo(session).get_in_env(session_id, env.id)
     if row is None:
         raise NotFoundError(resource="agent_session", id=str(session_id))
-    # 预检大小（multipart 解析出的实际字节数），避免无谓的大文件落盘
+    # 预检大小（multipart 解析出的实际字节数），避免无谓的上传
     att = cfg.agent.session.attachments
     if file.size is not None and file.size > att.max_file_mb * 1024 * 1024:
         raise ValidationError(f"附件超过 {att.max_file_mb}MB 上限")
-    # 分块流式落盘（file.file 为 Starlette spooled file，大文件已在磁盘缓冲）
+    client, _, ws_id = await _workspace(request, session, identity, env)
     try:
-        stored = await asyncio.to_thread(
-            store_attachment,
-            cfg,
-            str(env.id),
-            str(row.id),
-            file.filename or "attachment",
-            file.file,
-            file.content_type,
-        )
+        with _gateway_errors():
+            stored = await store_attachment(
+                cfg,
+                client,
+                ws_id,
+                str(row.id),
+                file.filename or "attachment",
+                file.file,
+                file.content_type,
+            )
     except AttachmentError as e:
         raise ValidationError(str(e)) from e
     return {
@@ -640,16 +709,8 @@ async def upload_attachment(
 
 
 # ---------------------------------------------------------------------------
-# 工作区浏览（P1 WorkspacePage 数据面；tree/file 均限 env 目录内）
+# 工作区浏览（P1 WorkspacePage 数据面；tree/file 均限 workspace 内，路径校验在网关）
 # ---------------------------------------------------------------------------
-
-
-def _safe_workspace_path(cfg: AgentRuntimeConfig, env_id: str, rel: str) -> Path:
-    workspace = cfg.workspace(env_id).resolve()
-    target = (workspace / rel).resolve()
-    if target != workspace and workspace not in target.parents:
-        raise ValidationError("路径越界")
-    return target
 
 
 @router.get("/workspace/tree")
@@ -660,56 +721,31 @@ async def workspace_tree(
     session: AsyncSession = Depends(_session_ctx),
 ) -> dict:
     env, _ = await _own_env(session, identity)
-    cfg: AgentRuntimeConfig = request.app.state.agent_config
-    root = cfg.workspace(str(env.id)).resolve()
-    # prefix：仅返回该子树（项目文件树视图用），直接扫子树避免全 workspace 遍历
+    # prefix：仅返回该子树（项目文件树视图用）
     prefix = prefix.strip().strip("/")
     if any(part == ".." for part in prefix.split("/")) or any(
         ord(c) < 0x20 or ord(c) == 0x7F for c in prefix
     ):
         raise ValidationError("路径越界")
-    scan_root = root / prefix if prefix else root
-    if prefix:
-        # 候选集须含 prefix 条目本身（前端以其识别根节点）；顶层为符号链接时
-        # 不深入（rglob 对顶层 symlink 的跟随行为随 Python 版本而异，且可能越界）
-        if scan_root.is_symlink():
-            candidates: list[Path] = [scan_root]
-        elif scan_root.is_dir():
+    if prefix and is_hidden(prefix):
+        return {"items": []}  # 隐藏目录（.loomvec 等）不出树
+    client, _, ws_id = await _workspace(request, session, identity, env)
+    with _gateway_errors():
+        try:
+            tree = await client.tree(ws_id, prefix, TREE_DEPTH)
+        except GatewayError as e:
+            if e.status == 404:
+                return {"items": []}  # 前缀不存在：空树（与旧行为一致）
+            if e.status != 400 or not prefix:
+                raise
+            # 前缀指向文件：候选集仅含该文件本身
             try:
-                candidates = [scan_root, *sorted(scan_root.rglob("*"))]
-            except OSError:
-                candidates = [scan_root]  # 子树不可读：仍返回 prefix 条目本身
-        elif scan_root.is_file():
-            candidates = [scan_root]
-        else:
-            candidates = []
-    else:
-        try:
-            candidates = sorted(root.rglob("*"))
-        except OSError:
-            candidates = []
-    items: list[dict] = []
-    count = 0
-    for path in candidates:
-        if count >= 500:
-            break
-        rel = path.relative_to(root).as_posix()
-        if any(part.startswith(".") for part in path.relative_to(root).parts):
-            continue  # 隐藏目录/文件（.loomvec/.dsh）不出树（含根级隐藏目录本身）
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        items.append(
-            {
-                "path": rel,
-                "name": path.name,
-                "type": "dir" if path.is_dir() else "file",
-                "size": 0 if path.is_dir() else stat.st_size,
-            }
-        )
-        count += 1
-    return {"items": items}
+                st = await client.stat_file(ws_id, prefix)
+            except GatewayError:
+                return {"items": []}
+            size = int(st.get("size") or 0)
+            return {"items": [prefix_node(prefix, st.get("type", "file"), size)]}
+    return {"items": flatten_tree(prefix, tree.get("entries") or [])}
 
 
 @router.get("/workspace/file")
@@ -720,23 +756,22 @@ async def workspace_file(
     session: AsyncSession = Depends(_session_ctx),
 ) -> dict:
     env, _ = await _own_env(session, identity)
-    cfg: AgentRuntimeConfig = request.app.state.agent_config
-    target = _safe_workspace_path(cfg, str(env.id), path)
-    if not target.is_file():
-        raise NotFoundError(resource="workspace_file", id=path)
-    size = target.stat().st_size
-    content = None
-    truncated = False
-    read_limit = 256 * 1024  # 只取前 256KB 文本预览，杜绝大文件整读进内存
-    if size > 0:
-        with target.open("rb") as f:
-            raw = f.read(read_limit)
-        content = raw.decode("utf-8", errors="replace")
-        truncated = size > read_limit
+    client, _, ws_id = await _workspace(request, session, identity, env)
+    with _gateway_errors():
+        try:
+            raw, size, truncated = await client.read_file(
+                ws_id,
+                path,
+                max_bytes=FILE_PREVIEW_BYTES,  # 只取前 256KB 文本预览
+            )
+        except GatewayError as e:
+            if e.status == 404 or (e.status == 400 and e.code != "path_forbidden"):
+                raise NotFoundError(resource="workspace_file", id=path) from e  # 目录 / 非常规文件
+            raise
     return {
         "path": path,
-        "name": target.name,
+        "name": PurePosixPath(path).name,
         "size": size,
-        "content": content,
+        "content": raw.decode("utf-8", errors="replace") if size > 0 else None,
         "truncated": truncated,
     }
