@@ -344,7 +344,12 @@ async def migrate(args: argparse.Namespace) -> int:
                     res = await db.execute(
                         update(AgentSession)
                         .where(AgentSession.id == row.id, AgentSession.gateway_session_id.is_(None))
-                        .values(gateway_session_id=gw_id, agent="dsh", mcp_token_exp=None)
+                        .values(
+                            gateway_session_id=gw_id,
+                            agent="dsh",
+                            mcp_token_exp=None,
+                            replay_pending=True,
+                        )
                     )
                     await db.commit()
                 if res.rowcount != 1:  # 导入期间用户已提问并建了新的网关会话

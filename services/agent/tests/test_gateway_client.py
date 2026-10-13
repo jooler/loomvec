@@ -346,6 +346,16 @@ def test_credential_errors_do_not_become_401_for_the_frontend():
     assert to_domain_error(GatewayTransportError("ConnectError")).http_status == 502
 
 
+def test_specific_403_reason_is_surfaced_not_flattened_into_credentials():
+    """真实冒烟发现：MCP 地址不在租户白名单的 403 曾被说成「凭据无效」，误导排查方向。"""
+    msg = "MCP 服务器地址不在租户白名单内: host.docker.internal:38080"
+    err = to_domain_error(GatewayError(403, "forbidden", msg))
+    assert err.http_status == 503 and msg in err.message and "凭据无效" not in err.message
+    # 网关缺省的泛化 403（scope 不足等）仍给凭据 / scope 排查提示
+    generic = to_domain_error(GatewayError(403, "forbidden", "没有权限执行该操作"))
+    assert "凭据无效或权限不足" in generic.message
+
+
 def test_user_messages_are_readable_chinese():
     assert "今日 token" in user_message(
         GatewayError(429, "quota_exceeded", "x", {"quota": "daily_tokens"})

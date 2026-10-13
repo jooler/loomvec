@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from loomvec.agent.gateway.history import strip_replay_prefix
 from loomvec.agent.mentions import build_mention_block
 from loomvec.agent.sessions.transcript import (
     ToolCallEntry,
@@ -40,13 +42,27 @@ _FAILED_KINDS = frozenset({"error", "failed", "crashed"})
 _CANCELLED_KINDS = frozenset({"cancelled", "canceled", "aborted", "interrupted"})
 
 
-def iso_z(value: str | None) -> str | None:
-    """JSONL 时间戳 → 网关要求的 `YYYY-MM-DDTHH:MM:SS(.fff)Z`；解析不了返回 None（字段省略）。"""
-    if not value:
+_EPOCH_S = (1e9, 4e9)  # 2001 – 2096
+_EPOCH_MS = (1e12, 4e12)
+
+
+def iso_z(value: str | float | None) -> str | None:
+    """时间戳 → 网关要求的 `YYYY-MM-DDTHH:MM:SS(.fff)Z`；解析不了返回 None（字段省略）。
+
+    真实 dsh JSONL 的 `time` 是毫秒级 epoch（整数）；也接受秒级 epoch 和 ISO-8601 字符串。
+    """
+    if value is None or value == "":
         return None
     try:
-        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
+        text = str(value).strip()
+        epoch = float(text) if text.replace(".", "", 1).isdigit() else None
+        if epoch is not None and _EPOCH_S[0] <= epoch < _EPOCH_S[1]:
+            dt = datetime.fromtimestamp(epoch, tz=UTC)
+        elif epoch is not None and _EPOCH_MS[0] <= epoch < _EPOCH_MS[1]:
+            dt = datetime.fromtimestamp(epoch / 1000, tz=UTC)
+        else:  # 范围外的纯数字（如 `20260916`）也交给 ISO 解析
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (ValueError, OverflowError, OSError):
         return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
@@ -90,8 +106,22 @@ def _step_items(step: TranscriptMessage) -> list[dict[str, Any]]:
     return items
 
 
+# 旧 orchestrator 往用户消息前拼的两段内部文字（各是独立 text 块，旧解析器按块直接拼接）：
+# 1. runtime 重启后注入的「此前对话记录」重放前缀——历史本身会整段导入，前缀是重复内容；
+# 2. 项目目录说明——新体系由会话 `cwd` 承担。
+_DIR_NOTE_RE = re.compile(
+    r"\A本次会话绑定的工作目录为 `[^`]*`，交付物（文件、代码、报告等）一律写入该目录及其子目录；"
+    r"引用其中的文件时使用该目录下的相对路径。"
+)
+
+
+def strip_legacy_prefixes(text: str) -> str:
+    text = strip_replay_prefix(text)
+    return _DIR_NOTE_RE.sub("", text, count=1).strip()
+
+
 def _prompt_text(user: TranscriptMessage) -> str:
-    text = user.content.strip()
+    text = strip_legacy_prefixes(user.content)
     if user.mentions:
         block = build_mention_block(user.mentions)
         return f"{block}\n\n{text}" if text else block

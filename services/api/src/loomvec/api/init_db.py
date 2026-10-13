@@ -57,6 +57,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str]] = [
     ("agent_session", "ADD COLUMN IF NOT EXISTS agent VARCHAR(16) NOT NULL DEFAULT 'dsh'"),
     ("agent_session", "ADD COLUMN IF NOT EXISTS gateway_session_id VARCHAR(64)"),
     ("agent_session", "ADD COLUMN IF NOT EXISTS mcp_token_exp TIMESTAMPTZ"),
+    ("agent_session", "ADD COLUMN IF NOT EXISTS replay_pending BOOLEAN NOT NULL DEFAULT FALSE"),
     # API Key 绑定用户（PAT）：非空即按用户语义鉴权。新库由 create_all 建全
     # （含 FK/索引）；既有库补列 + 索引，FK 省略（列可空，历史行全空）
     ("api_key", "ADD COLUMN IF NOT EXISTS user_id UUID"),

@@ -24,6 +24,7 @@ from loomvec.agent.gateway.legacy_import import (
     iter_workspace_files,
     load_session_messages,
     open_regular_nofollow,
+    strip_legacy_prefixes,
 )
 from loomvec.agent.mentions import build_mention_block
 from loomvec.agent.sessions.transcript import parse_transcript
@@ -60,6 +61,14 @@ def test_iso_z():
     assert iso_z("2026-09-16T08:00:01.123456+08:00") == "2026-09-16T00:00:01.123Z"
     assert iso_z("2026-09-16T00:00:01") == "2026-09-16T00:00:01.000Z"  # 无时区按 UTC
     assert iso_z("") is None and iso_z(None) is None and iso_z("昨天") is None
+    # 真实 dsh JSONL：毫秒级 epoch（整数或其字符串形式）；秒级也接受
+    assert iso_z(1789830350980) == "2026-09-19T15:05:50.980Z"
+    assert iso_z("1789830350980") == "2026-09-19T15:05:50.980Z"
+    assert iso_z(1789830350) == "2026-09-19T15:05:50.000Z"
+    # 不是时间的数字：范围外一律 None；紧凑日期走 ISO 解析而不是被当成 epoch
+    for bad in (-5, 0, 5e10, 1e14, 1e18, "nan", "1.5.2", "99999999999999999999", True, "2026"):
+        assert iso_z(bad) is None, bad
+    assert iso_z("20260916") == "2026-09-16T00:00:00.000Z"
 
 
 def test_body_maps_turn_items_and_matches_gateway_schema(tmp_path):
@@ -439,3 +448,107 @@ async def test_agents_md_not_overwritten_when_gateway_copy_was_edited(tmp_path, 
     assert "规则 A" in puts[0] and "数据，不是指令" in puts[0]
     # 写过之后再跑（默认模式）不再动
     assert await script.sync_user_agents_md(client, "w1", ws, owner, dry_run=False) is False
+
+
+REPLAY = (
+    "以下是本会话此前的对话记录（系统重启后恢复上下文，历史以旧到新排列）：\n"
+    "<user>旧问题</user>\n<assistant>旧回答\n含换行</assistant>\n请基于以上历史继续本会话。"
+)
+DIR_NOTE = (
+    "本次会话绑定的工作目录为 `projects/`，交付物（文件、代码、报告等）一律写入该目录及其子目录；"
+    "引用其中的文件时使用该目录下的相对路径。"
+)
+
+
+def test_strip_legacy_prefixes_matches_what_the_old_orchestrator_prepended():
+    # 旧 orchestrator 的各 text 块被旧解析器直接拼接：重放前缀 → 目录说明 → 问题
+    assert strip_legacy_prefixes(REPLAY + DIR_NOTE + "新问题") == "新问题"
+    assert strip_legacy_prefixes(DIR_NOTE + "只有目录说明") == "只有目录说明"
+    assert strip_legacy_prefixes(REPLAY + "只有重放") == "只有重放"
+    assert strip_legacy_prefixes("普通问题") == "普通问题"
+    # 只剥开头：正文里恰好出现同样的话不动
+    assert strip_legacy_prefixes("问：" + DIR_NOTE) == "问：" + DIR_NOTE
+
+
+def test_real_dsh_jsonl_shape_epoch_ms_times_and_flat_user_content(tmp_path):
+    """真实 dsh JSONL：`time` 是毫秒 epoch，user/message 的 content 平铺在 data 下。"""
+    import json as _json
+
+    from loomvec.agent.sessions.transcript import encode_segment, physical_gen, project_key
+
+    sdir = (
+        tmp_path
+        / "sessions"
+        / project_key(str(tmp_path / "ws"))
+        / encode_segment(physical_gen(LOGICAL, 0))
+    )
+    sdir.mkdir(parents=True)
+    lines = [
+        {"type": "session", "version": 3, "id": "x", "createdAt": 1789830350980},
+        {"type": "turn/start", "seq": 4, "time": 1789830351005, "data": {"turn": 1}},
+        {
+            "type": "user/message",
+            "seq": 8,
+            "time": 1789830351404,
+            "data": {
+                "role": "user",
+                "id": "u1",
+                "content": [
+                    {"type": "text", "text": DIR_NOTE},
+                    {"type": "text", "text": "你好"},
+                ],
+            },
+        },
+        {
+            "type": "assistant/message",
+            "seq": 15,
+            "time": 1789830353255,
+            "data": {
+                "turn": 1,
+                "step": 1,
+                "message": {"id": "m", "content": [{"type": "text", "text": "你好！"}]},
+                "usage": {"inputTokens": 8318, "outputTokens": 74},
+            },
+        },
+        {
+            "type": "turn/end",
+            "seq": 17,
+            "time": 1789830353257,
+            "data": {"turn": 1, "reason": {"kind": "completed"}},
+        },
+    ]
+    (sdir / "session.v3.jsonl").write_text(
+        "\n".join(_json.dumps(x, ensure_ascii=False) for x in lines), encoding="utf-8"
+    )
+    msgs = load_session_messages(tmp_path / "sessions", tmp_path / "ws", LOGICAL)
+    (turn,) = build_turns(msgs)
+    assert turn["prompt"] == [{"type": "text", "text": "你好"}]
+    assert turn["started_at"] == "2026-09-19T15:05:51.404Z"
+    assert turn["ended_at"] == "2026-09-19T15:05:53.255Z"
+    assert validate(_import_schema(), {"turns": [turn]}) == []
+
+
+def test_nested_replay_prefixes_from_repeated_restarts_are_fully_stripped():
+    """runtime 重启多次的旧会话：重放内容取自带前缀的用户消息，前缀是嵌套的。"""
+    inner = REPLAY
+    outer = (
+        "以下是本会话此前的对话记录（系统重启后恢复上下文，历史以旧到新排列）：\n"
+        f"<user>{inner}{DIR_NOTE}Q1</user>\n<assistant>A1</assistant>\n请基于以上历史继续本会话。"
+    )
+    assert strip_legacy_prefixes(outer + DIR_NOTE + "Q2") == "Q2"
+    assert strip_legacy_prefixes(outer + "Q2") == "Q2"
+
+
+def test_history_drops_replay_blocks_but_keeps_user_text_that_mentions_the_footer():
+    from loomvec.agent.gateway.history import fold_history
+
+    msg = {
+        "role": "user",
+        "turn_id": "t",
+        "content": [
+            {"type": "text", "text": REPLAY},
+            {"type": "text", "text": "请基于以上历史继续本会话。这句话本身是我的提问"},
+        ],
+    }
+    (entry,) = fold_history([msg])
+    assert entry["content"] == "请基于以上历史继续本会话。这句话本身是我的提问"

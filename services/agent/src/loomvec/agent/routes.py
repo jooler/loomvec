@@ -626,19 +626,25 @@ async def ask(
         async for frame in orchestrator.stream(client, ctx, outcome):
             yield frame
         # 回答侧元数据收尾（best-effort；事实源在网关事件日志，失败不影响流）
-        if outcome.answer:
+        if outcome.answer or outcome.ok:
             try:
                 async with request.app.state.session_factory() as db, db.begin():
                     fresh = await AgentSessionRepo(db).get_in_env(
                         session_id, env.id, include_archived=True
                     )
                     if fresh is not None:
-                        await AgentSessionRepo(db).update(
-                            fresh,
-                            message_count=fresh.message_count + 1,
-                            preview=outcome.answer[:200],
-                            last_message_at=datetime.now(UTC),
-                        )
+                        fields: dict = {}
+                        if outcome.answer:
+                            fields.update(
+                                message_count=fresh.message_count + 1,
+                                preview=outcome.answer[:200],
+                                last_message_at=datetime.now(UTC),
+                            )
+                        if outcome.ok:
+                            # 重放前缀已随这个成功的回合交给 agent（失败的回合保留标记，重试仍补）
+                            fields["replay_pending"] = False
+                        if fields:
+                            await AgentSessionRepo(db).update(fresh, **fields)
             except Exception:
                 logger.warning("session_metadata_finalize_failed", session_id=str(session_id))
 

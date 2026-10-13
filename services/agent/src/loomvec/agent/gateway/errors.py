@@ -98,6 +98,9 @@ _QUOTA_TEXT = {
 }
 
 
+_GENERIC_FORBIDDEN = "没有权限执行该操作"  # 网关 ApiError.forbidden 的缺省文案
+
+
 def user_message(err: GatewayError) -> str:
     """面向用户的中文文案（SSE error 帧 / 领域异常共用）。"""
     code = err.code
@@ -117,6 +120,9 @@ def user_message(err: GatewayError) -> str:
     if code == "agent_unavailable":
         return f"智能体运行环境暂不可用，请稍后重试：{err.message}"
     if err.status in (401, 403) and code in ("unauthorized", "forbidden"):
+        if err.status == 403 and err.message and err.message != _GENERIC_FORBIDDEN:
+            # 网关给出了具体原因（如 MCP 地址不在租户白名单）：原样带上，别笼统说成凭据问题
+            return f"ACP 网关拒绝了请求：{err.message}"
         return "ACP 网关凭据无效或权限不足，请联系管理员检查 API Key 与 scope"
     if err.status >= 500:
         return f"ACP 网关内部错误：{err.message}"

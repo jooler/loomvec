@@ -100,7 +100,7 @@
 
 ## 6. L2 数据迁移脚本（`scripts/migrate_agent_to_gateway.py`）
 
-> 进度：已实现并通过真实网关 e2e（`test_e2e_gateway.py::test_legacy_migration_script_imports_history_and_files`）；用法与映射见 [docs/19-ACP网关接入.md](../docs/19-ACP网关接入.md) §6。尚未对生产数据做过演练（L3 前置条件之一）。
+> 进度：已实现并通过真实网关 e2e（`test_e2e_gateway.py::test_legacy_migration_script_imports_history_and_files`）；用法与映射见 [docs/19-ACP网关接入.md](../docs/19-ACP网关接入.md) §6。2026-10-14 在开发机用真实旧数据（1 个 env、7 个会话、5 个文件）对着临时网关演练通过：导入后助手文本逐会话一致、工具调用数一致、重跑幂等；演练暴露的问题（JSONL 时间戳是毫秒 epoch、旧重放前缀与目录说明混在用户消息里）已修。尚未对生产环境演练。
 
 可重入、可 `--dry-run`、可按 env 过滤：
 1. 每个 `agent_environment`：确保网关 workspace（`external_ref=env_id`），把 `{agent.storage_root}/envs/{env_id}/workspace/` 同步进网关 `files/`（走 files API，保留相对路径，跳过 `.loomvec/uploads` 以外的隐藏目录以及符号链接）。
@@ -118,3 +118,16 @@
 - 验收：`apps/web` 零改动，对话（SSE 帧序列）、引用、@ 文献、附件、项目目录、工作区浏览、取消、历史全部走网关；claude / dsh 可由 `agent.default_agent` 切换；单元 / 契约测试全过；e2e（环境具备时）全过；admin 能管理租户 / Key / 配额 / 用量。
 - **不做**：L3 删除（`runtime/*`、`orchestrator.py` 的 dsh 部分、`transcript.py` 的 JSONL 解析、`usage.py`、`deepseek-harness-sdk` 依赖、`agent-sandbox` 网络等）。前置条件：真实 Anthropic / DeepSeek key 冒烟通过；旧会话迁移演练通过；一个观察期。满足后单独开 L3。
 - **不做**：前端审批 UI、`/acp` 原生端点、L4 并入 `services/api`。
+
+### L3 前置条件进度（2026-10-14）
+
+| 条件 | 状态 |
+|---|---|
+| dsh 真实模型冒烟 | 已通过（开发机，网关 local provider + 真实 dsh 0.1.5rc1 + 用户配置的 OpenCode Go 上游，经一层只补 `x-opencode-session` 头的本机转发）：检索 + 引用（8 条）、续问上下文、写文件、取消后继续、迁移会话继续对话 |
+| claude 真实模型冒烟 | **未做**：开发机没有 Anthropic key |
+| 旧会话迁移演练 | 开发机真实数据已演练；生产环境未演练 |
+| docker provider + 防火墙冒烟 | **未做**：无 root，无法下发沙箱防火墙规则；网关 `local` provider 路径已验证 |
+| 观察期 | 未开始 |
+
+冒烟暴露的两项（已修）：迁移会话继续对话时模型不记得历史（补了重放前缀）；403 的具体原因被说成「凭据无效」。
+遗留决策：OpenCode Go 这类要求自报会话头的供方不能直接作为网关 deepseek 上游（网关代理只转发 `content-type`/`accept`），生产要么换官方 DeepSeek key，要么在网关侧支持上游附加头。

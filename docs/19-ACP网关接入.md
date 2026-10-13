@@ -26,7 +26,9 @@
 | `agent.gateway.api_key` | 租户 API Key（scope：`sessions:read/write`、`files:read/write`），对话与文件用 |
 | `agent.gateway.admin_token` | 网关 `ACPGW_ADMIN_TOKEN`，仅「ACP 服务」菜单与迁移脚本使用 |
 
-网关租户的 `settings.mcp.allowed_hosts` 必须包含 `agent.mcp.url_sandbox` 的主机。
+网关租户的 `settings.mcp.allowed_hosts` 必须包含 `agent.mcp.url_sandbox` 的主机；不在白名单内时网关返回 403，提问会带着网关给出的具体原因报错（`MCP 服务器地址不在租户白名单内: …`）。适配层挂载 MCP 时始终用 `agent.mcp.url_sandbox`（空则回落 `agent.mcp.url`）；网关用 `local` provider（开发）时 agent 进程在宿主上，需把它设成本机可达的地址（如 `http://127.0.0.1:38080/api/v1/mcp`）。
+
+模型凭据在网关：dsh 经网关的 `/upstream/deepseek` 代理访问 `upstream.deepseek.base_url`，代理只转发 `content-type`、`accept` 两个请求头，`ai.llm.headers` 不适用于 agent。要求调用方自报会话的供方（如 OpenCode Go 的 `x-opencode-session`）因此不能直接作为网关的 deepseek 上游，会以 `模型调用失败：… missing x-opencode-session …` 报错。
 
 ## 3. 数据映射
 
@@ -36,6 +38,7 @@
 | `agent_session.agent` | `claude` / `dsh`，默认 `dsh`（存量） |
 | `agent_session.gateway_session_id` | 网关会话；首个提问时懒创建，`cwd` = `project_path` |
 | `agent_session.mcp_token_exp` | 网关会话上当前 MCP token 的过期时间；空 = 需要签发 / 续签 |
+| `agent_session.replay_pending` | 迁移导入的会话、尚无成功回合：下次提问补重放前缀；默认 `false` |
 
 建表走 `init_db._ADDITIVE_COLUMNS`（幂等 `ADD COLUMN IF NOT EXISTS`），不用 Alembic。
 
@@ -66,9 +69,11 @@ dsh 不报用量（`usage` 为空对象）；`message.delta` 原样转发，不�
 
 其他会话生命周期：创建会话带 `project_path` 时先在 workspace 里 `mkdir` 该目录；删除会话（软删）时尽力归档网关会话（网关不可用不影响本地删除）。
 
+迁移导入的会话：网关为它新建的 agent 会话看不到导入的历史，所以迁移脚本把 `agent_session.replay_pending` 置位，`prepare_session` 把它带进 `PreparedSession.imported`，`build_prompt_blocks` 在 prompt 的第一个文本块补「此前的对话记录」前缀——取 `fold_history` 最近 20 条有文字的消息，超过 8000 字符保尾部，以 `<user>` / `<assistant>` 标签排列。标记在一个回合成功收尾（`Outcome.ok`）后清除；回合失败则保留，重试仍补（不依赖网关的会话状态：网关在 agent 会话建好、发 prompt 之前就把 `imported` 转成 `active`）。前缀是独立的文本块，只给模型看，历史展示时按块剔除。
+
 历史（`GET .../messages`）：有 `gateway_session_id` 的读网关 `GET /v1/sessions/{id}/messages`，每个回合折成一条 user + 一条 assistant，会话统计由各回合 usage 折叠；`gateway_session_id` 为空的存量会话回落读旧 dsh JSONL。
 
-错误映射：401 / 403 → 「ACP 网关凭据无效」，未配置 Key → 「未配置」，404 → NotFound，429 / `quota_exceeded` → 可读文案，5xx / 连接失败 → `UpstreamUnavailableError`；`/internal/agent/health` 探测网关 `GET /healthz`，返回的 `runtimes` 恒为 0。
+错误映射：401 / 403 → 「ACP 网关凭据无效或权限不足」（403 且网关给了具体原因时改为「ACP 网关拒绝了请求：…」），未配置 Key → 「未配置」，404 → NotFound，429 / `quota_exceeded` → 可读文案，5xx / 连接失败 → `UpstreamUnavailableError`；`/internal/agent/health` 探测网关 `GET /healthz`，返回的 `runtimes` 恒为 0。
 
 ## 5. admin 管理面
 
@@ -101,11 +106,11 @@ uv run python scripts/migrate_agent_to_gateway.py --include-archived # 同时导
 
 1. `ensure_workspace` 建 workspace 并写 AGENTS.md。`workspace/AGENTS.md` 与旧渲染的正文不同（租户 / 用户改名不影响判断）时，写成「新模板 + `## 迁移自旧版工作区的自定义内容` 附段（用户原文）」，不带模板标记（模板升级不会覆盖它）；网关上的 instructions 已被改写（无模板标记）时不覆盖；
 2. 把 `{storage_root}/envs/{env_id}/workspace/` 经 files API 同步进网关：保留相对路径，只迁文件（不迁空目录）；跳过符号链接、含隐藏段的目录（`.loomvec/uploads` 除外）、隐藏文件、`.loomvec/` 直属文件和根部 `AGENTS.md`；文件以不跟随符号链接的方式打开。网关上已有同名文件则不动，不比较内容；
-3. 对 `agent='dsh'` 且 `gateway_session_id` 为空的会话：解析 `dsh-home/sessions` 下全部物理段 JSONL，`POST /admin/v1/workspaces/{ws}/sessions:import`（`import_key = agent_session.id.hex`，`cwd = project_path`，`model` 取 `dsh` 的默认模型），成功后回填 `gateway_session_id`，`agent` 保持 `dsh`，`mcp_token_exp` 置空。单个文件 / 会话失败只计入失败汇总，不中断其余；库里 `message_count > 0` 却找不到可导入的对话时记为失败。
+3. 对 `agent='dsh'` 且 `gateway_session_id` 为空的会话：解析 `dsh-home/sessions` 下全部物理段 JSONL，`POST /admin/v1/workspaces/{ws}/sessions:import`（`import_key = agent_session.id.hex`，`cwd = project_path`，`model` 取 `dsh` 的默认模型），成功后回填 `gateway_session_id`，`agent` 保持 `dsh`，`mcp_token_exp` 置空，`replay_pending` 置位。单个文件 / 会话失败只计入失败汇总，不中断其余；库里 `message_count > 0` 却找不到可导入的对话时记为失败。
 
 `--overwrite` 用旧文件与旧 AGENTS.md 覆盖网关上的同名内容。`--dry-run` 不写网关与数据库（不建 workspace），文件数为本地全量，不与网关比对。
 
-导入映射：每条 user 消息开一个回合；一步内按 thought → text → tool 排列；@ 文献还原成 prompt 里的提示块；检索工具的 `ref_items` / `graph_evidence` 写入 `raw_output` 的 JSON，历史回读据此还原引用；无任何 assistant 输出的回合记为 `cancelled`，`turn/end` 为 `error` 的记为 `failed`，其余记为 `completed`；回合数超过 5000 保留最近的，单回合 items 超过 2000 保留结尾。dsh 用量不迁移。没有任何对话的会话不导入，留给首次提问时懒创建。导入的会话状态为 `imported`，首次继续对话时网关新建 agent 会话（agent 看不到导入的历史）。
+导入映射：每条 user 消息开一个回合（回合时间取自 JSONL 的毫秒 epoch `time`）；旧版拼在用户消息前的两段内部文字——runtime 重启后的「此前对话记录」重放前缀和项目目录说明——不进 prompt（目录由会话 `cwd` 承担）；一步内按 thought → text → tool 排列；@ 文献还原成 prompt 里的提示块；检索工具的 `ref_items` / `graph_evidence` 写入 `raw_output` 的 JSON，历史回读据此还原引用；无任何 assistant 输出的回合记为 `cancelled`，`turn/end` 为 `error` 的记为 `failed`，其余记为 `completed`；回合数超过 5000 保留最近的，单回合 items 超过 2000 保留结尾。dsh 用量不迁移。没有任何对话的会话不导入，留给首次提问时懒创建。导入的会话状态为 `imported`，首次继续对话时网关新建 agent 会话（agent 看不到导入的历史，由 `replay_pending` 机制补前缀，见 §4）。
 
 ## 7. 部署
 

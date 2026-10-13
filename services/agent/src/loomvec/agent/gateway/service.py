@@ -71,6 +71,9 @@ class PreparedSession:
     gateway_session_id: str
     agent: str
     model: str  # 展示用：配置的模型名，未配置回落 agent 名
+    imported: bool = (
+        False  # 迁移导入且尚无成功回合（agent_session.replay_pending）：提问需补重放前缀
+    )
 
 
 class GatewayService:
@@ -199,6 +202,7 @@ class GatewayService:
             gateway_session_id=row.gateway_session_id,
             agent=row.agent,
             model=conn.model_for(row.agent) or row.agent,
+            imported=bool(row.replay_pending),
         )
 
     def _session_body(

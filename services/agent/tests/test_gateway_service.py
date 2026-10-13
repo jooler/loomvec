@@ -284,10 +284,11 @@ async def test_prepare_session_creates_gateway_session_once():
     assert claims.env_id == str(env.id) and claims.user_id == OWNER.user_id
     assert list(claims.scope_space_ids) == scope and claims.tenant_id == OWNER.tenant_id
 
-    # 第二次提问：已建会话，token 远未过期 → 不再有任何网关写调用
+    # 第二次提问：已建会话，token 远未过期 → 不再有任何网关调用
     n = len(rec.requests)
     again = await svc.prepare_session(client, db, _conn("claude"), env, row, OWNER)
-    assert again.gateway_session_id == "ses_1" and len(rec.requests) == n
+    assert again.gateway_session_id == "ses_1" and again.imported is False
+    assert len(rec.requests) == n
     assert gw.sessions_created == 1
 
 
@@ -443,3 +444,24 @@ async def test_session_stats_folds_turn_usage_and_tolerates_dsh_null():
 
     empty = await session_stats(client, None)
     assert empty["turns"] == 0 and empty["output_tokens"] == 0
+
+
+async def test_replay_pending_row_is_flagged_and_does_not_depend_on_gateway_status():
+    """迁移导入的会话靠本地 replay_pending 标记补重放前缀。
+
+    网关在 agent 会话建好（发 prompt 之前）就把 imported 转 active，所以首个回合失败重试时
+    网关状态已不可靠；标记只在回合成功收尾后由 routes 清除。
+    """
+    env, db = _env("ws_1"), FakeDb()
+    row = _row(env, gateway_session_id="ses_9", mcp_token_exp=None, agent="dsh")
+    row.replay_pending = True
+    client, rec = make_client(Gateway())
+    svc = _svc()
+    first = await svc.prepare_session(client, db, _conn("dsh"), env, row, OWNER)
+    assert first.imported is True
+    assert "PATCH /v1/sessions/ses_9" in _calls(rec)  # 同时补上 MCP token
+    assert not any(c.startswith("GET /v1/sessions/") for c in _calls(rec))
+    # 首个回合失败（标记未清除）：重试仍标记
+    assert (await svc.prepare_session(client, db, _conn("dsh"), env, row, OWNER)).imported is True
+    row.replay_pending = False  # routes 在回合成功后清除
+    assert (await svc.prepare_session(client, db, _conn("dsh"), env, row, OWNER)).imported is False

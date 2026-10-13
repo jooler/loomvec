@@ -25,6 +25,7 @@ from urllib.parse import quote
 from loomvec.agent.attachments import AttachmentMeta
 from loomvec.agent.gateway.client import GatewayClient
 from loomvec.agent.gateway.errors import GatewayError, GatewayTransportError, user_message
+from loomvec.agent.gateway.history import fold_history, replay_context
 from loomvec.agent.gateway.service import PreparedSession
 from loomvec.agent.gateway.translate import CitationsLookup, Frame, TurnTranslator
 from loomvec.agent.mentions import build_mention_block
@@ -73,6 +74,11 @@ async def build_prompt_blocks(
     项目目录由会话 `cwd` 承担，不再往 prompt 拼目录说明。
     """
     blocks: list[dict[str, Any]] = []
+    if ctx.prepared.imported:
+        # 导入的历史会话：新的 agent 会话看不到导入的历史，把此前的对话作为文字前缀补给它
+        history = fold_history(await client.all_messages(ctx.prepared.gateway_session_id))
+        if note := replay_context(history):
+            blocks.append({"type": "text", "text": note})
     if ctx.mentions:
         blocks.append({"type": "text", "text": build_mention_block(ctx.mentions)})
     for att in ctx.attachments:

@@ -357,7 +357,7 @@ async def db_row(stack: Stack, session_id: str) -> dict:
     try:
         row = await conn.fetchrow(
             "SELECT s.agent, s.gateway_session_id, s.mcp_token_exp, e.gateway_workspace_id, "
-            "s.message_count, s.preview, s.title FROM agent_session s "
+            "s.message_count, s.preview, s.title, s.replay_pending FROM agent_session s "
             "JOIN agent_environment e ON e.id = s.env_id WHERE s.id = $1",
             uuid.UUID(session_id),
         )
@@ -749,6 +749,7 @@ async def test_legacy_migration_script_imports_history_and_files(agent, stack, m
     assert await script.migrate(args()) == 0
     row = await db_row(stack, sess["id"])
     assert row["agent"] == "dsh" and row["gateway_session_id"] and row["gateway_workspace_id"]
+    assert row["replay_pending"] is True  # 首次继续对话需要补重放前缀
     ws_id, gsid = row["gateway_workspace_id"], row["gateway_session_id"]
 
     # 文件：保留相对路径；隐藏目录（附件目录除外）不迁
@@ -787,3 +788,35 @@ async def test_legacy_migration_script_imports_history_and_files(agent, stack, m
     listing = gw(stack, "GET", f"/v1/workspaces/{ws_id}/sessions?status=imported").json()
     assert sum(1 for x in listing["items"] if x["id"] == gsid) == 1
     assert len(listing["items"]) == 1
+
+
+async def test_replay_pending_prefix_is_sent_cleared_on_success_and_hidden_in_history(agent, stack):
+    """迁移会话补前缀（真实网关）：标记置位 → 提问带前缀 → 成功后清除 → 历史不显示前缀。"""
+    import asyncpg
+
+    sess = await new_session(agent)
+    await ask(agent, sess["id"], "先问一句")
+    conn = await asyncpg.connect(stack.lv_dsn)
+    try:
+        await conn.execute(
+            "UPDATE agent_session SET replay_pending = TRUE WHERE id = $1", uuid.UUID(sess["id"])
+        )
+    finally:
+        await conn.close()
+
+    frames = await ask(agent, sess["id"], "你好")
+    assert frames[-1][1]["finish_reason"] == "end_turn"
+    # 假 agent 回显收到的 prompt：模型确实收到了此前的对话
+    echoed = "".join(f[1]["text"] for f in frames if f[0] == "delta")
+    assert "以下是本会话此前的对话记录" in echoed and "<user>先问一句</user>" in echoed
+    assert (await db_row(stack, sess["id"]))["replay_pending"] is False
+
+    items = (await agent.get(f"/internal/agent/sessions/{sess['id']}/messages")).json()["items"]
+    users = [i["content"] for i in items if i["role"] == "user"]
+    assert users == ["先问一句", "你好"]  # 前缀不进展示
+
+    # 之后不再补前缀
+    frames3 = await ask(agent, sess["id"], "第三问")
+    assert "以下是本会话此前的对话记录" not in "".join(
+        f[1]["text"] for f in frames3 if f[0] == "delta"
+    )

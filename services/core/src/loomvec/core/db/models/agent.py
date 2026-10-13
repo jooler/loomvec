@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -105,6 +106,12 @@ class AgentSession(UuidPkMixin, TenantMixin, TimestampMixin, Base):
     gateway_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 网关会话上当前 MCP token 的过期时间；空 = 需要（重新）签发并 PATCH mcp_servers
     mcp_token_exp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 迁移导入的会话：网关为它新建的 agent 会话看不到导入的历史，提问时需要补「此前对话」前缀。
+    # 迁移脚本置位；一个回合成功收尾后清除（回合失败则保留，重试仍补）。
+    # server_default 与 init_db 的 ADD COLUMN DDL 对齐
+    replay_pending: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
 
 class AgentProject(UuidPkMixin, TenantMixin, TimestampMixin, Base):

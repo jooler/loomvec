@@ -23,6 +23,7 @@ from ._gw import (
     FakeRedis,
     error_response,
     ev,
+    json_response,
     make_client,
     sse_response,
     sse_text,
@@ -400,3 +401,46 @@ async def test_prompt_has_no_project_directory_prefix_block():
     client, _ = make_client(lambda r: sse_response([]))
     blocks = await build_prompt_blocks(client, "ws_1", _ctx())
     assert blocks == [{"type": "text", "text": "问题"}]
+
+
+async def test_imported_session_first_prompt_carries_replay_prefix_and_history_hides_it():
+    """导入的历史会话：agent 看不到导入历史，首个提问把此前对话补成前缀；历史展示时剔除前缀。"""
+    from loomvec.agent.gateway.history import fold_history
+
+    history_view = {
+        "items": [
+            {"role": "user", "turn_id": "t1", "content": [{"type": "text", "text": "旧问题"}]},
+            {"role": "assistant", "turn_id": "t1", "text": "旧回答"},
+        ],
+        "next_cursor": None,
+    }
+    client, _ = make_client(lambda r: json_response(200, history_view))
+    ctx = _ctx(
+        prepared=PreparedSession(
+            workspace_id="ws_1",
+            gateway_session_id="ses_1",
+            agent="dsh",
+            model="m",
+            imported=True,
+        ),
+        question="新问题",
+    )
+    blocks = await build_prompt_blocks(client, "ws_1", ctx)
+    assert [b["text"] for b in blocks][1:] == ["新问题"]
+    note = blocks[0]["text"]
+    assert note.startswith("以下是本会话此前的对话记录") and "<user>旧问题</user>" in note
+    assert "<assistant>旧回答</assistant>" in note and note.endswith("请基于以上历史继续本会话。")
+
+    # 该 prompt 落进网关历史后，用户消息展示里不含前缀
+    stored = {
+        "role": "user",
+        "turn_id": "t2",
+        "content": blocks,
+    }
+    (entry,) = fold_history([stored])
+    assert entry["content"] == "新问题"
+
+    # 非导入会话不查历史、不加前缀
+    client2, rec2 = make_client(lambda r: json_response(500, {}))
+    plain = await build_prompt_blocks(client2, "ws_1", _ctx())
+    assert [b["text"] for b in plain] == ["问题"] and rec2.requests == []
