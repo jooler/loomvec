@@ -1,0 +1,23 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 38095,
+    "internal_base_url": "",
+    "admin_allowed_cidrs": ["127.0.0.1/32", "::1/128"]
+  },
+  "storage_root": "/data/acp-gateway",
+  "runtime": {
+    "provider": "docker",
+    "docker": {
+      "network": "acpgw-sandbox"
+    }
+  },
+  "agents": {
+    "claude": {
+      "image": "acpgw/agent-claude:0.89.1"
+    },
+    "dsh": {
+      "image": "acpgw/agent-dsh:0.1.5rc1"
+    }
+  }
+}

@@ -270,6 +270,73 @@ services:
       start_period: 30s
       retries: 10
 
+  # ---------- 可选：acp-gateway（智能体网关；agent.gateway.url 指向它） ----------
+  # 默认不启动。生产可把网关独立部署（见 acp-gateway 仓库 deploy/compose.example.yaml），此时本服务不用，
+  # 只需在 loomvec 配置 agent.gateway.url。同机一起跑：docker compose --profile gateway up -d acp-gateway
+  #
+  # 前置（一次性，均不会被本 compose 自动完成）：
+  #  1. 镜像：acpgw/gateway、acpgw/agent-claude、acpgw/agent-dsh 三个版本固定的镜像在本机可用
+  #     （当前未发布到公共仓库：在 acp-gateway 仓库按其 docs/operations.md「镜像」构建，或 docker load）；
+  #     升级时同步改下面的镜像 tag 与 acp-gateway/config.json 里 agents.*.image。
+  #  2. 网关库：复用本栈的 postgres / redis（127.0.0.1 发布口），网关用独立 database `acpgw`、redis db 1：
+  #       docker exec loomvec-postgres psql -U "${POSTGRES_USER:-loomvec}" -d postgres -c 'CREATE DATABASE acpgw'
+  #     密码含 URL 保留字符（@ : / # ?）时需手工在 ACPGW_DATABASE_URL 里做百分号编码。
+  #  3. 沙箱网络与防火墙：agent 容器由网关经 docker.sock 拉起，加入 acpgw-sandbox 网络（固定子网，见文末 networks）：
+  #       docker network create --subnet "${ACPGW_SANDBOX_SUBNET:-172.31.88.0/24}" acpgw-sandbox
+  #     宿主默认丢弃「容器 → 宿主」入站，必须放行沙箱网段 → 宿主上的两个端口（root）：
+  #       网关端口 38095（agent 回连上游代理）和 loomvec api 端口 LOOMVEC_API_PORT（agent 回调 MCP，同样走宿主 INPUT）。
+  #     对 acpgw-sandbox 子网**只跑本目录的 sandbox-firewall.sh**，端口传逗号分隔列表：
+  #       sudo deploy/compose/sandbox-firewall.sh "${ACPGW_SANDBOX_SUBNET:-172.31.88.0/24}" 38080,38095
+  #     不要再对该子网跑 acp-gateway 仓库的 sandbox-firewall.sh：两个脚本各带一条该子网的 INPUT DROP，
+  #     后跑的排在前面，会把另一个脚本放行的端口挡掉。
+  #     语义差异（务必知晓）：本脚本的外网策略是 loomvec 现有的——沙箱 → 公网放行，沙箱互访 / 私网 RFC1918 /
+  #     CGNAT 100.64.0.0/10 / 链路本地 169.254.0.0/16（含各云 metadata）DROP；它**不是**网关脚本的
+  #     upstream-only（出站只到上游代理）。需要 upstream-only 的部署应改用网关脚本，但它的 INPUT 目前只放网关端口、
+  #     没有放行 api 端口的参数，MCP 回调会被挡——这需要网关仓库先补参数，本期不涉及。
+  #     脚本本身仍未在真实内核上实测；上线前按交付说明的验证清单逐项确认。
+  #  4. 存储根目录 ACPGW_STORAGE_ROOT 必须是宿主上已存在、对 uid 1000（容器内 node 用户）可写的目录；
+  #     它以**同一路径**同时挂进网关容器和宿主（路径恒等），agent 容器才能挂到同一份工作区。
+  #  5. 密钥只走 deploy/compose/.env（已 gitignore）：ACPGW_SECRET_KEY（≥32 字符）、ACPGW_ADMIN_TOKEN、
+  #     ACPGW_ANTHROPIC_API_KEY、ACPGW_DEEPSEEK_API_KEY（两个上游 key 都要给，缺的那个上游对应 agent 全部 503）。
+  #     这里不用 ${VAR:?}：required 变量即使 profile 未启用也会让整个 compose 解析失败；
+  #     缺 ACPGW_SECRET_KEY / ACPGW_ADMIN_TOKEN 时网关在 NODE_ENV=production 下启动即报错。
+  #  6. loomvec 侧（config/loomvec.json 与 admin 设置，不在本目录）：agent.gateway.url 指向本服务
+  #     （同机：http://127.0.0.1:38095）；agent.mcp.url_sandbox 必须是沙箱容器能访问到的 api 地址
+  #     （同机：http://host.docker.internal:<LOOMVEC_API_PORT>/api/v1/mcp；deploy.sh 只在启用旧沙箱时才写它，需自行确认），
+  #     其端口必须在第 3 条的防火墙端口列表里，其主机还要加入网关租户的 settings.mcp.allowed_hosts；
+  #     agent.gateway.api_key / admin_token 在 admin 里填。
+  #
+  # 拓扑：network_mode: host（网关与宿主共享网络命名空间，防火墙脚本的 INPUT 规则才覆盖得到沙箱 → 网关；
+  # 监听 :38095，api 在宿主上直接用 127.0.0.1:38095 访问，沙箱经 host-gateway 访问）。因为是 host 网络，
+  # 本服务不能 ports 映射，也不能和 api 共用 compose 网络，api（宿主进程）与网关互访都走回环。
+  acp-gateway:
+    image: ${ACPGW_GATEWAY_IMAGE:-acpgw/gateway:0.1.0}
+    container_name: loomvec-acp-gateway
+    restart: unless-stopped
+    profiles: ["gateway"]
+    network_mode: host
+    environment:
+      NODE_ENV: production
+      ACPGW_CONFIG: /etc/acp-gateway/config.json
+      ACPGW_DATABASE_URL: ${ACPGW_DATABASE_URL:-postgres://${POSTGRES_USER:-loomvec}:${POSTGRES_PASSWORD:-loomvec}@127.0.0.1:${POSTGRES_PORT:-35433}/acpgw}
+      ACPGW_REDIS_URL: ${ACPGW_REDIS_URL:-redis://127.0.0.1:${REDIS_PORT:-36379}/1}
+      ACPGW_SECRET_KEY: ${ACPGW_SECRET_KEY:-}
+      ACPGW_ADMIN_TOKEN: ${ACPGW_ADMIN_TOKEN:-}
+      ACPGW_ANTHROPIC_API_KEY: ${ACPGW_ANTHROPIC_API_KEY:-}
+      ACPGW_DEEPSEEK_API_KEY: ${ACPGW_DEEPSEEK_API_KEY:-}
+    volumes:
+      - ${ACPGW_CONFIG_FILE:-./acp-gateway/config.json}:/etc/acp-gateway/config.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 路径恒等；config.json 的 storage_root 必须与此一致
+      - ${ACPGW_STORAGE_ROOT:-/data/acp-gateway}:${ACPGW_STORAGE_ROOT:-/data/acp-gateway}
+    group_add:
+      - "${DOCKER_GID:-999}" # 宿主 docker 组 gid：stat -c %g /var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
@@ -292,3 +359,13 @@ networks:
     ipam:
       config:
         - subnet: ${AGENT_SANDBOX_SUBNET:-172.31.77.0/24}
+
+  # acp-gateway 的 agent 沙箱网络（同 agent-sandbox：compose 栈不引用，仅作子网单源参考；
+  # 由 docker network create 预先创建，防火墙脚本按该子网下发）。网关 config.json 的
+  # runtime.docker.network 必须与 name 一致
+  acpgw-sandbox:
+    name: acpgw-sandbox
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${ACPGW_SANDBOX_SUBNET:-172.31.88.0/24}
