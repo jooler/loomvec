@@ -312,3 +312,92 @@ export const EMBEDDING_MODEL_OPTIONS = [
   'bge-m3',
   'mock',
 ];
+
+/** ACP 网关租户配额（缺省 = 不限制；以网关 docs/api.md 为准，PATCH 为整体替换）。 */
+export interface AcpQuotas {
+  max_workspaces?: number;
+  max_concurrent_turns?: number;
+  daily_tokens?: number;
+  monthly_tokens?: number;
+  upstream_rpm?: number;
+  upstream_concurrency?: number;
+  max_turn_seconds?: number;
+  max_disk_bytes?: number;
+}
+
+/** ACP 网关租户（/admin/acp-gateway/tenants）。settings 可含网关未来新增的键，故保留宽松。 */
+export interface AcpTenant {
+  id: string;
+  name: string;
+  status: 'active' | 'suspended';
+  default_agent: string;
+  quotas: AcpQuotas;
+  settings: { mcp?: { allowed_hosts?: string[]; allow_stdio?: boolean } } & Record<string, unknown>;
+  created_at: string;
+}
+
+/** ACP 网关 API Key（不含明文；签发响应额外带一次性 api_key）。 */
+export interface AcpApiKey {
+  id: string;
+  tenant_id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  rate_limit_rps: number | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface AcpIssuedApiKey extends AcpApiKey {
+  /** 明文 Key：仅签发响应出现一次 */
+  api_key: string;
+}
+
+/** GET /admin/acp-gateway/config：接入配置概览（不含任何密钥）。 */
+export interface AcpConfig {
+  url: string;
+  admin_token_configured: boolean;
+  api_key_configured: boolean;
+  required_key_scopes: string[];
+  mcp_sandbox: { url: string; hostname: string | null; host: string | null };
+}
+
+export interface AcpRuntime {
+  workspace_id: string;
+  agent: string;
+  agent_info: { name?: string; version?: string; title?: string } | null;
+  active_turns: number;
+  started_at: string;
+  last_activity: string;
+}
+
+/** GET /admin/acp-gateway/status：网关健康 + 活跃 runtime（网关故障时降级返回 error）。 */
+export interface AcpStatus {
+  url: string;
+  configured: boolean;
+  reachable: boolean;
+  healthy: boolean;
+  agents: string[];
+  provider: string | null;
+  running_turns: number;
+  runtimes: AcpRuntime[];
+  error: string | null;
+}
+
+export interface AcpUsageDay {
+  day: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  requests: number;
+}
+
+/** GET /admin/acp-gateway/tenants/{id}/usage。current 为配额口径 token（含缓存折算）。 */
+export interface AcpUsage {
+  quotas: AcpQuotas;
+  current: { day: number; month: number };
+  daily: AcpUsageDay[];
+}

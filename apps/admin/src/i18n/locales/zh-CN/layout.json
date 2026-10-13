@@ -25,6 +25,11 @@
     "apiKeys": "API Key",
     "oauth": "OAuth 应用",
     "webhooks": "Webhook",
+    "acpGroup": "ACP 服务",
+    "acpTenants": "租户与配额",
+    "acpKeys": "API Key",
+    "acpUsage": "用量报表",
+    "acpRuntime": "运行时状态",
     "settings": "系统配置",
     "settingsAi": "AI 供方",
     "settingsRetrieval": "检索参数",
@@ -32,6 +37,7 @@
     "settingsSso": "SSO/OIDC",
     "settingsExtensions": "扩展插件",
     "audit": "审计日志",
-    "system": "系统状态"
+    "system": "系统状态",
+    "settingsAgent": "智能体"
   }
 }

@@ -117,6 +117,9 @@ export function AiProvidersForm({ items }: { items: SettingItem[] }) {
       <Alert>
         <AlertDescription>{t('ai.form.restartHint')}</AlertDescription>
       </Alert>
+      <Alert>
+        <AlertDescription>{t('ai.form.agentNote')}</AlertDescription>
+      </Alert>
       {runtimeError && <Alert><AlertDescription>{t('ai.form.runtimeLoadFailed')}</AlertDescription></Alert>}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

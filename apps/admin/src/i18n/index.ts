@@ -5,6 +5,7 @@
  */
 import { initI18n, t as sharedT } from '@loomvec/ui/i18n';
 
+import acp from './locales/zh-CN/acp.json';
 import audit from './locales/zh-CN/audit.json';
 import auth from './locales/zh-CN/auth.json';
 import components from './locales/zh-CN/components.json';
@@ -22,6 +23,7 @@ import users from './locales/zh-CN/users.json';
 
 const i18n = initI18n({
   'zh-CN': {
+    acp,
     audit,
     auth,
     components,

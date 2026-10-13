@@ -10,6 +10,7 @@ import {
   HeartPulse,
   LayoutDashboard,
   Plug,
+  Server,
   Settings,
   Users,
   Workflow,
@@ -55,6 +56,18 @@ export const ADMIN_MENU: AdminMenuItem[] = [
     ],
   },
   {
+    // 网关租户 / Key / 配额 / 用量 / 运行时（services/api 代理 ACP 网关 /admin/v1；写操作仅 super_admin）
+    path: '/acp-group',
+    name: t('layout:menu.acpGroup'),
+    icon: Server,
+    children: [
+      { path: '/acp/tenants', name: t('layout:menu.acpTenants') },
+      { path: '/acp/api-keys', name: t('layout:menu.acpKeys') },
+      { path: '/acp/usage', name: t('layout:menu.acpUsage') },
+      { path: '/acp/runtime', name: t('layout:menu.acpRuntime') },
+    ],
+  },
+  {
     path: '/settings',
     name: t('layout:menu.settings'),
     icon: Settings,
@@ -63,6 +76,7 @@ export const ADMIN_MENU: AdminMenuItem[] = [
       { path: '/settings/ai', name: t('layout:menu.settingsAi') },
       { path: '/settings/retrieval', name: t('layout:menu.settingsRetrieval') },
       { path: '/settings/upload', name: t('layout:menu.settingsUpload') },
+      { path: '/settings/agent', name: t('layout:menu.settingsAgent') },
       { path: '/settings/sso', name: t('layout:menu.settingsSso') },
       { path: '/settings/extensions', name: t('layout:menu.settingsExtensions') },
     ],

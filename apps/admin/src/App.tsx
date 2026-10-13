@@ -61,6 +61,18 @@ const WebhooksPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('@/pages/settings/Settings').then((m) => ({ default: m.SettingsPage })),
 );
+const AcpTenantsPage = lazy(() =>
+  import('@/pages/acp/AcpTenants').then((m) => ({ default: m.AcpTenantsPage })),
+);
+const AcpApiKeysPage = lazy(() =>
+  import('@/pages/acp/AcpApiKeys').then((m) => ({ default: m.AcpApiKeysPage })),
+);
+const AcpUsagePage = lazy(() =>
+  import('@/pages/acp/AcpUsage').then((m) => ({ default: m.AcpUsagePage })),
+);
+const AcpRuntimePage = lazy(() =>
+  import('@/pages/acp/AcpRuntime').then((m) => ({ default: m.AcpRuntimePage })),
+);
 const AuditLogsPage = lazy(() =>
   import('@/pages/audit/AuditLogs').then((m) => ({ default: m.AuditLogsPage })),
 );
@@ -173,11 +185,23 @@ export default function App() {
         <Route path="/open/api-keys" element={<ApiKeysPage />} />
         <Route path="/open/oauth" element={<OauthClientsPage />} />
         <Route path="/open/webhooks" element={<WebhooksPage />} />
+        <Route path="/acp/tenants" element={<AcpTenantsPage />} />
+        <Route path="/acp/api-keys" element={<AcpApiKeysPage />} />
+        <Route path="/acp/usage" element={<AcpUsagePage />} />
+        <Route path="/acp/runtime" element={<AcpRuntimePage />} />
         <Route
           path="/settings/ai"
           element={
             <SuperAdminOnly>
               <SettingsPage group="ai" />
+            </SuperAdminOnly>
+          }
+        />
+        <Route
+          path="/settings/agent"
+          element={
+            <SuperAdminOnly>
+              <SettingsPage group="agent" />
             </SuperAdminOnly>
           }
         />

@@ -12,14 +12,28 @@ import { ReasonModal } from '@/components/ReasonModal';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Input } from '@loomvec/ui/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@loomvec/ui/components/ui/select';
 import { Switch } from '@loomvec/ui/components/ui/switch';
 import { Textarea } from '@loomvec/ui/components/ui/textarea';
 import type { SettingItem } from '@/types';
+import { AgentGatewayCard } from './AgentGatewayCard';
 import { AiProvidersForm } from './AiProvidersForm';
+
+/** 枚举型配置键 → 可选值（用下拉而不是自由文本）。 */
+const ENUM_OPTIONS: Record<string, readonly string[]> = {
+  'agent.default_agent': ['claude', 'dsh'],
+};
 
 // 模块级文案（分组标题字典）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const GROUP_TITLE: Record<string, string> = {
   ai: tt('settings:group.ai'),
+  agent: tt('settings:group.agent'),
   retrieval: tt('settings:group.retrieval'),
   upload: tt('settings:group.upload'),
   sso: tt('settings:group.sso'),
@@ -30,12 +44,30 @@ const GROUP_TITLE: Record<string, string> = {
  *  数组/对象 → JSON 文本）。仅结构化（数组/对象）值尝试 JSON.parse，
  *  避免字符串值被静默强转（"007"→7、"true"→true、"null"→null）。 */
 function ValueEditor(props: {
+  settingKey: string;
   value: unknown;
   /** 原始值是否为数组/对象（决定文本按 JSON 解析还是按纯字符串提交） */
   structured: boolean;
   onChange: (v: unknown) => void;
 }) {
   const { value } = props;
+  const options = ENUM_OPTIONS[props.settingKey];
+  if (options) {
+    return (
+      <Select value={String(value ?? '')} onValueChange={(v) => props.onChange(v)}>
+        <SelectTrigger className="w-60">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((o) => (
+            <SelectItem key={o} value={o}>
+              {o}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
   if (typeof value === 'boolean') {
     return <Switch checked={value} onCheckedChange={(v) => props.onChange(v)} />;
   }
@@ -53,7 +85,9 @@ function ValueEditor(props: {
     <Textarea
       rows={3}
       className="max-w-md"
-      value={typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
+      value={
+        typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value, null, 2)
+      }
       onChange={(e) => {
         const text = e.target.value;
         if (!props.structured) {
@@ -155,19 +189,9 @@ export function SettingsPage({ group }: { group: string }) {
       header: t('field.actions'),
       cell: ({ row }) => {
         const r = row.original;
-        return r.sensitive && r.value == null ? (
-          <Button
-            variant="link"
-            size="sm"
-            disabled={!isSuperAdmin}
-            onClick={() => {
-              setEditTarget(r);
-              setEditValue('');
-            }}
-          >
-            {t('set')}
-          </Button>
-        ) : (
+        // 敏感项只写不读：回显的是脱敏占位，编辑框从空开始（保存空值 = 清除）
+        const unset = r.value == null;
+        return (
           <Button
             variant="link"
             size="sm"
@@ -175,10 +199,10 @@ export function SettingsPage({ group }: { group: string }) {
             title={isSuperAdmin ? undefined : t('superAdminOnlyHint')}
             onClick={() => {
               setEditTarget(r);
-              setEditValue(r.value);
+              setEditValue(r.sensitive || unset ? '' : r.value);
             }}
           >
-            {t('action.edit')}
+            {r.sensitive && unset ? t('set') : t('action.edit')}
           </Button>
         );
       },
@@ -205,13 +229,18 @@ export function SettingsPage({ group }: { group: string }) {
       <PageHeader
         title={GROUP_TITLE[group] ?? group}
         description={
-          group === 'sso' || group === 'extensions' ? t('superAdminOnly') : undefined
+          group === 'sso' || group === 'extensions' || group === 'agent'
+            ? t('superAdminOnly')
+            : undefined
         }
       />
+
+      {group === 'agent' && <AgentGatewayCard />}
 
       <DataTable
         columns={columns}
         data={items}
+        getRowId={(r) => r.key}
         loading={isLoading}
         error={isError ? error : undefined}
       />
@@ -238,6 +267,7 @@ export function SettingsPage({ group }: { group: string }) {
               {t('newValue', { description: editTarget.description })}
             </p>
             <ValueEditor
+              settingKey={editTarget.key}
               value={editValue}
               structured={editTarget.value != null && typeof editTarget.value === 'object'}
               onChange={setEditValue}

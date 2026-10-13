@@ -5,6 +5,7 @@
  */
 import type common from '@loomvec/ui/i18n/locales/zh-CN/common.json';
 import type ui from '@loomvec/ui/i18n/locales/zh-CN/ui.json';
+import type acp from './locales/zh-CN/acp.json';
 import type audit from './locales/zh-CN/audit.json';
 import type auth from './locales/zh-CN/auth.json';
 import type components from './locales/zh-CN/components.json';
@@ -28,6 +29,7 @@ declare module 'i18next' {
     resources: {
       common: typeof common;
       ui: typeof ui;
+      acp: typeof acp;
       audit: typeof audit;
       auth: typeof auth;
       components: typeof components;

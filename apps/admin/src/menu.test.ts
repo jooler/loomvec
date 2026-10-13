@@ -16,7 +16,12 @@ describe('admin menu', () => {
     expect(paths).toContain('/open/api-keys');
     expect(paths).toContain('/open/oauth');
     expect(paths).toContain('/open/webhooks');
+    expect(paths).toContain('/acp/tenants');
+    expect(paths).toContain('/acp/api-keys');
+    expect(paths).toContain('/acp/usage');
+    expect(paths).toContain('/acp/runtime');
     expect(paths).toContain('/settings/ai');
+    expect(paths).toContain('/settings/agent');
     expect(paths).toContain('/settings/retrieval');
     expect(paths).toContain('/settings/upload');
     expect(paths).toContain('/settings/sso');
@@ -42,6 +47,12 @@ describe('admin menu', () => {
     };
     walk(ADMIN_MENU);
     expect(new Set(allPaths).size).toBe(allPaths.length);
+  });
+
+  it('shows the ACP service group to every platform role (read-only for non-super_admin)', () => {
+    const acp = ADMIN_MENU.find((m) => m.path === '/acp-group');
+    expect(acp?.children?.length).toBe(4);
+    expect(acp?.superAdminOnly).toBeFalsy();
   });
 
   it('marks system settings as super_admin only', () => {

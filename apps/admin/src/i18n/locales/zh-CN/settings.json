@@ -9,14 +9,15 @@
   "superAdminOnlyHint": "仅 super_admin 可修改系统配置",
   "editTitle": "修改配置：{{key}}",
   "restartDescription": "该配置需重启服务后生效。",
-  "sensitiveDescription": "敏感配置写入后仅回显脱敏值。",
+  "sensitiveDescription": "敏感配置只写不读：输入新值覆盖；留空保存将清除该配置。",
   "newValue": "新值（{{description}}）",
   "group": {
     "ai": "AI 供方配置",
     "retrieval": "检索参数",
     "upload": "上传策略",
     "sso": "SSO / OIDC",
-    "extensions": "扩展插件"
+    "extensions": "扩展插件",
+    "agent": "智能体（ACP 网关）"
   },
   "channel": {
     "llm": "对话 LLM",
@@ -58,7 +59,22 @@
       "saveDescription": "写入选中的配置项；需重启 api/agent/worker 后生效。",
       "savedToast": "已写入 {{count}} 项配置，重启后生效",
       "runtimeLoadFailed": "本地推理探测不可用（API 版本过旧或网络异常）。",
-      "restartHint": "所有 AI 供方变更在重启 api / agent / worker 后生效（./dev.sh stop && ./dev.sh start）。"
+      "restartHint": "所有 AI 供方变更在重启 api / agent / worker 后生效（./dev.sh stop && ./dev.sh start）。",
+      "agentNote": "对话 LLM（llm）通道不再作用于智能体对话：智能体的模型凭据在 ACP 网关（ACPGW_* 环境变量）管理。"
     }
+  },
+  "agent": {
+    "gatewayTitle": "ACP 网关接入",
+    "gatewayDescription": "智能体对话经 ACP 网关运行；网关凭据配置在下表，租户 / Key / 配额在「ACP 服务」菜单管理。",
+    "url": "网关地址",
+    "urlHint": "来自 config/loomvec.json 的 agent.gateway.url，此处只读。",
+    "apiKey": "租户 API Key",
+    "adminToken": "管理 token",
+    "configured": "已配置",
+    "unconfigured": "未配置",
+    "apiKeyHint": "agent.gateway.api_key：loomvec 租户的 Key，需要 scope：{{scopes}}。到「ACP 服务 → API Key」签发后填入下表。",
+    "adminTokenHint": "agent.gateway.admin_token：网关的 ACPGW_ADMIN_TOKEN，仅「ACP 服务」菜单使用。",
+    "mcpHint": "每个租户的 settings.mcp.allowed_hosts 必须包含 agent.mcp.url_sandbox 的主机（{{host}}），在「ACP 服务 → 租户与配额」中检查。",
+    "configLoadFailed": "无法读取 ACP 接入配置"
   }
 }
