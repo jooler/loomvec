@@ -131,3 +131,49 @@
 
 冒烟暴露的两项（已修）：迁移会话继续对话时模型不记得历史（补了重放前缀）；403 的具体原因被说成「凭据无效」。
 遗留决策：OpenCode Go 这类要求自报会话头的供方不能直接作为网关 deepseek 上游（网关代理只转发 `content-type`/`accept`），生产要么换官方 DeepSeek key，要么在网关侧支持上游附加头。
+
+## 9. 交接：当前状态与下一步（2026-10-14）
+
+> 写给接手的人（或换账号后的自己）：只看本节和 [docs/19-ACP网关接入.md](../docs/19-ACP网关接入.md) 就能接着做。
+
+### 9.1 已完成并已推送 main（提交 `a54af0b` … `c1f6b8c`）
+
+- L1 网关适配层（`services/agent/src/loomvec/agent/gateway/`）、DB 补列（含 `replay_pending`）、admin「ACP 服务」菜单与代理、L2 迁移脚本、部署配置、docs/19。
+- 后端测试 301 个全过：`.venv/bin/python -m pytest -q services/agent/tests services/api/tests/test_admin_acp_gateway.py services/api/tests/test_mcp_mentions.py`（e2e 会自己起临时网关和临时库，缺 Node ≥ 22.9 / 网关仓库 / 开发 PG / Redis 时整组 skip）。
+- 前端（`apps/admin` 的 ACP 页面）的 vitest / tsc 没有在收尾时重跑过，接手后先跑一遍。
+
+### 9.2 还没做（按这个顺序）
+
+1. **生产环境迁移演练**：开发机已用真实旧数据演练通过，生产没做。步骤见 docs/19 §6。
+   - **必须在放开用户提问之前完成**：未迁移的旧会话一旦被提问，适配层会为它新建空的网关会话，旧历史不再可见，脚本之后也把它当已迁移跳过。
+   - 先 `--dry-run`，再跑；跑之前确认 storage_root 指对（脚本开头会打印；运行中的 agent 进程靠环境变量 `LOOMVEC_AGENT_STORAGE_ROOT` 指向存量目录，shell 里不设会找不到数据）。
+   - 迁移前备份 PG 与 `{storage_root}/envs/`。
+2. **docker provider + 防火墙冒烟**：需要有 root 的预发环境。`deploy/compose/sandbox-firewall.sh` 只用桩 iptables 验证过逻辑，没在真实内核上跑过；清单见网关仓库 `docs/operations.md`「上线前验证清单」。冒烟里 MCP 回调（容器 → 宿主 api）也要在这一步验证——开发机冒烟走的是 local provider，没覆盖。
+3. **观察期**：切换后观察一段时间。
+4. 以上满足后，单独开 **L3 删除**（见 `planning/acp-gateway.md` §11.4）。
+
+### 9.3 待决策
+
+- **LLM 上游**：当前 `config/loomvec.json` 的 `ai.llm` 是 OpenCode Go，它要求请求带 `x-opencode-session` 头；网关的 deepseek 代理只转发 `content-type` / `accept`，所以 dsh 经网关会报 `missing x-opencode-session`。生产要么换官方 DeepSeek key（不用改代码），要么让网关支持上游附加头（改网关仓库）。倾向前者。
+- **claude 是否启用**：生产要用 claude 需要网关持有 Anthropic key（`ACPGW_ANTHROPIC_API_KEY`）或 Anthropic 兼容上游。只用 dsh 则不需要；`agent.default_agent` 现在可设 `dsh`。
+- **重放前缀的窗口**：迁移会话首次继续对话时补的是最近 20 条、8000 字符（保尾部），长回答多的会话会从某条回答中间截断。需要更完整的上下文就调 `history.replay_context` 的两个参数。
+
+### 9.4 上线前检查
+
+- `agent.mcp.url_sandbox`：适配层挂 MCP 时始终用它（空则回落 `agent.mcp.url`）；local provider（agent 在宿主上）要设成本机可达地址，docker provider 用 `host.docker.internal`；且其主机必须在网关租户 `settings.mcp.allowed_hosts` 内，否则 403。
+- `deploy/compose/acp-gateway/config.json` 的 `server.admin_allowed_cidrs` 已限回环；api 不在网关同机时要改成它的来源网段。
+- 两个密钥在 admin「设置 → agent」填：`agent.gateway.api_key`（租户 Key，scope：`sessions:read/write`、`files:read/write`）、`agent.gateway.admin_token`（网关 `ACPGW_ADMIN_TOKEN`）。
+
+### 9.5 开发机冒烟怎么复现（脚本没入库，这里记方法）
+
+共同做法：脚本在一次性目录里，临时起 ① 网关子进程（`/home/jyy/acp-gateway`，`tsx src/index.ts`，`runtime.provider=local`，独立端口，存储目录在临时目录，数据库在开发 PG `acpgw-dev-postgres` 里临时建）；② loomvec 库的**只读副本**（`pg_dump -n public` 导出真实库，恢复到临时库，再跑 `init_db.init_database` 补列）；③ 进程内 agent 服务（`create_app()` + `ASGITransport`，`LOOMVEC_APP_CONFIG` 指向复制并改写过的配置：`agent.gateway.url`、`agent.mcp.url_sandbox=http://127.0.0.1:38080/api/v1/mcp`、`agent.default_agent`）；API Key 与管理 token 写进临时库的 `system_config`；检索走开发机正在跑的真实 api（38080）。用完删除临时库和进程。**不要碰真实库和真实凭据。** 改动测试路径参考 `services/agent/tests/test_e2e_gateway.py` 的 `stack` fixture。
+
+- **dsh**：网关配置 `agents.dsh.local_command=[".venv/bin/dsh","--profile","acp"]`、`upstream.deepseek.base_url` 指向上游，`ACPGW_DEEPSEEK_API_KEY` 用环境变量传给网关进程（不要打印）。上游是 OpenCode Go 时，需要一层本机转发补头：一个几十行的 Starlette/uvicorn 反向代理，把请求原样（流式）转到 `ai.llm.base_url` 的 origin，并加上 `x-opencode-session: <任意值>`，网关的 `upstream.deepseek.base_url` 指向它（路径保留 `ai.llm.base_url` 的 path 部分）。
+- **claude**：只限开发冒烟。网关的 `agents.claude.local_command` 指向一个包装脚本，脚本做三件事：删掉所有 `CLAUDE*` / `ANTHROPIC*` 环境变量（含外层 Claude Code 会话带来的）；把 `CLAUDE_CONFIG_DIR` 指向一个临时目录（里面放复制来的 `~/.claude/.credentials.json`，权限 600，冒烟后删除，不要指向真实的 `~/.claude`）；`exec <node 绝对路径> .../node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js`。node 路径必须写绝对路径（网关不透传自定义环境变量）。复制前看一眼 `expiresAt`，剩余时间要远大于冒烟时长，避免 OAuth 刷新把原登录挤掉。生产不能这样用：多租户必须由网关持有 Anthropic key。
+- 场景清单：检索 + 引用（会话要设 `scope_space_ids`，否则 MCP 按设计 fail-closed 返回「无可检索空间」；用户必须是该空间成员）、续问上下文、写文件、取消后继续、迁移会话继续对话（dsh）、token 用量 / 流式 / 审批策略（claude）。
+
+### 9.6 已知取舍与限制
+
+- 迁移不带 dsh 用量；迁移会话的历史在网关里是 `imported` 态，agent 看不到，靠 `replay_pending` 补前缀（docs/19 §4）。
+- 工具调用没有结果、回合没有 `turn/end` 的旧数据，导入时按 `completed` 记。
+- 网关 `local` provider 下 claude 的 Bash 只读命令（如 `echo`）不向网关请求审批，直接执行；写 / 联网类才被策略拒绝。
