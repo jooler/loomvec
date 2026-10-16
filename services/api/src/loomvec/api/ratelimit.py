@@ -1,7 +1,7 @@
 """P4-INF-04 安全配置：全局限流中间件（策略定稿）。
 
 限流（定稿）：
-- 全局：按身份（JWT sub / API Key id / 客户端 IP 兜底）固定窗口，
+- 全局：按身份（JWT sub / API Key 哈希 / 客户端 IP 兜底）固定窗口，
   `LOOMVEC_SECURITY__RATE_LIMIT_PER_MIN`（默认 300 req/min），Redis 计数；
 - Redis 不可用时 fail-open（不阻塞业务），仅记 warning；
 - API Key 级限流维持 P1 语义（key 行 rate_limit_per_min，位于 identity 层，
@@ -20,6 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from loomvec.api.identity import API_KEY_PREFIX
 from loomvec.core.config import Settings
 from loomvec.core.logging import get_logger
 
@@ -27,6 +28,13 @@ logger = get_logger("loomvec.api.ratelimit")
 
 RATE_LIMIT_KEY_PREFIX = "loomvec:rl:global"
 RATE_WINDOW_SECONDS = 60
+
+
+def _bearer_api_key(request: Request) -> str | None:
+    """Authorization: Bearer 里携带的 API Key（lv_ 前缀）；JWT / agent token 返回 None。"""
+    auth = request.headers.get("authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    return token if token.startswith(API_KEY_PREFIX) else None
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -48,7 +56,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         identity = getattr(request.state, "identity", None)
         subject = getattr(identity, "user_id", None)
         if subject is None:
-            api_key = request.headers.get("x-api-key")
+            # 本中间件在鉴权之前执行（此处 identity 恒为空）：API Key 无论放在 X-API-Key 还是
+            # Bearer 里都按 key 分桶，否则同一出口 IP（反向代理）后的 PAT 调用方共用一个桶
+            api_key = request.headers.get("x-api-key") or _bearer_api_key(request)
             if api_key:
                 # 不以明文 key 作 Redis 键，落哈希前缀
                 subject = hashlib.sha256(api_key.encode()).hexdigest()[:16]

@@ -88,29 +88,93 @@ const createSchema = z.object({
 
 type CreateValues = z.infer<typeof createSchema>;
 
-function SecretOnceDialog(props: { open: boolean; value: string; onClose: () => void }) {
+/** MCP 端点（与 Web 同源，/api 经反向代理/dev proxy 转发到 api）。 */
+const mcpEndpoint = () => `${window.location.origin}/api/v1/mcp/`;
+
+/** VS Code 用户级 mcp.json：Key 走 promptString 输入，不写进 mcp.json 文本。 */
+const vscodeMcpConfig = () =>
+  JSON.stringify(
+    {
+      inputs: [
+        { type: 'promptString', id: 'loomvec-key', description: 'Loomvec API Key', password: true },
+      ],
+      servers: {
+        loomvec: {
+          type: 'http',
+          url: mcpEndpoint(),
+          headers: { Authorization: 'Bearer ${input:loomvec-key}' },
+        },
+      },
+    },
+    null,
+    2,
+  );
+
+const claudeCodeMcpCommand = (key: string) =>
+  `claude mcp add --transport http loomvec ${mcpEndpoint()} --header "Authorization: Bearer ${key}"`;
+
+function copyText(value: string, ok: string, fail: string) {
+  void navigator.clipboard
+    .writeText(value)
+    .then(() => toast.success(ok))
+    .catch(() => toast.error(fail));
+}
+
+function CopyBlock(props: { value: string; multiline?: boolean }) {
   const { t } = useTranslation('profile');
-  const copy = () => {
-    void navigator.clipboard
-      .writeText(props.value)
-      .then(() => toast.success(t('apiKey.copied')))
-      .catch(() => toast.error(t('apiKey.copyFailed')));
-  };
+  return (
+    <div className="flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2">
+      {props.multiline ? (
+        <pre className="min-w-0 flex-1 overflow-x-auto font-mono text-xs">{props.value}</pre>
+      ) : (
+        <code className="min-w-0 flex-1 break-all font-mono text-sm">{props.value}</code>
+      )}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7 shrink-0"
+        onClick={() => copyText(props.value, t('apiKey.copied'), t('apiKey.copyFailed'))}
+      >
+        <Copy />
+      </Button>
+    </div>
+  );
+}
+
+function SecretOnceDialog(props: {
+  open: boolean;
+  value: string;
+  scopes: string[];
+  onClose: () => void;
+}) {
+  const { t } = useTranslation('profile');
   return (
     <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t('apiKey.issuedTitle')}</DialogTitle>
           <DialogDescription className="text-amber-600 dark:text-amber-400">
             {t('apiKey.warning')}
           </DialogDescription>
         </DialogHeader>
-        <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
-          <code className="min-w-0 flex-1 break-all font-mono text-sm">{props.value}</code>
-          <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={copy}>
-            <Copy />
-          </Button>
-        </div>
+        <CopyBlock value={props.value} />
+        {/* MCP 工具全部只读：只有 read 权限的 Key 能用，否则不展示接入说明 */}
+        {props.scopes.includes('read') && (
+          <div className="min-w-0 space-y-3 border-t pt-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">{t('apiKey.mcpTitle')}</p>
+              <p className="text-sm text-muted-foreground">{t('apiKey.mcpHint')}</p>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">{t('apiKey.mcpVscode')}</p>
+              <CopyBlock value={vscodeMcpConfig()} multiline />
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">{t('apiKey.mcpClaudeCode')}</p>
+              <CopyBlock value={claudeCodeMcpCommand(props.value)} />
+            </div>
+          </div>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={props.onClose}>
             {t('apiKey.acknowledge')}
@@ -349,6 +413,7 @@ export function ApiKeysCard() {
       <SecretOnceDialog
         open={createdKey !== null}
         value={createdKey?.key ?? ''}
+        scopes={createdKey?.scopes ?? []}
         onClose={() => setCreatedKey(null)}
       />
     </Card>

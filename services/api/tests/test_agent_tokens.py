@@ -88,12 +88,12 @@ async def test_agent_token_rejected_as_platform_credential():
 async def test_agent_token_without_authorization_header_rejected_by_mcp_asgi():
     """MCP ASGI 包裹层：无 Authorization 头 → 401 JSON（不抛 TypeError）。"""
 
-    from loomvec.api.routes.mcp import _AgentAuthASGI
+    from loomvec.api.routes.mcp import _McpAuthASGI
 
     async def _downstream(scope, receive, send):  # pragma: no cover — 不应到达
         raise AssertionError("请求不应透传到下游")
 
-    app = _AgentAuthASGI(_downstream, ctx=None)
+    app = _McpAuthASGI(_downstream, ctx=None)
     sent: list = []
 
     async def _receive():

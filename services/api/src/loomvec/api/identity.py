@@ -1,6 +1,6 @@
 """P1/P2 身份解析（deps 的职责切片）：API Key 认证、dev JWT 用户落库、scope 校验。
 
-- API Key（P1-API-04）：`X-API-Key: lv-...` → sha256 查库 → 过期校验 → Redis 固定
+- API Key（P1-API-04）：`X-API-Key: lv_...` → sha256 查库 → 过期校验 → Redis 固定
   窗口限流；scopes 即 read/write 两类；绑定用户的 Key（PAT，user_id 非空）按
   绑定用户派生身份（用户语义：空间列表/公共空间/聚合检索可用）；
 - dev JWT（P2）：首次请求 get_or_create User（挂种子租户）并加入默认空间为 editor
@@ -49,9 +49,13 @@ from loomvec.core.errors import PermissionDeniedError, RateLimitedError, Unauthe
 logger = structlog.get_logger("loomvec.api.identity")
 
 
+# 明文 API Key 前缀（MCP 鉴权层据此区分 Bearer 里的 PAT 与 agent JWT）
+API_KEY_PREFIX = "lv_"
+
+
 def generate_api_key() -> tuple[str, str]:
     """返回 (明文 key, sha256 hash)。明文只在签发响应中出现一次。"""
-    raw = f"lv_{secrets.token_urlsafe(32)}"
+    raw = f"{API_KEY_PREFIX}{secrets.token_urlsafe(32)}"
     return raw, hash_api_key(raw)
 
 

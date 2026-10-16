@@ -59,13 +59,18 @@ def _state(redis: _Redis, retriever: _Retriever) -> mcp.McpAppState:
 
 @pytest.fixture()
 def claims():
-    token = mcp._current_claims.set(
-        AgentTokenClaims(
-            user_id=USER_ID, env_id=ENV_ID, session_id=SESSION_ID, scope_space_ids=("x",)
+    token = mcp._current_caller.set(
+        mcp.McpCaller.from_agent_claims(
+            AgentTokenClaims(
+                user_id=USER_ID,
+                env_id=ENV_ID,
+                session_id=SESSION_ID,
+                scope_space_ids=(str(uuid.uuid4()),),
+            )
         )
     )
     yield
-    mcp._current_claims.reset(token)
+    mcp._current_caller.reset(token)
 
 
 @pytest.fixture()

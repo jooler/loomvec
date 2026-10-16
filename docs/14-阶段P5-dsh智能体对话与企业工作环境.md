@@ -343,7 +343,7 @@ Provider 接口只暴露 `spawn(env, token_env) / terminate(handle)`，网关其
 
 **@ 文献（`mention_asset_ids`）**：body 另可带 `mention_asset_ids: uuid[]`（≤10），表示本条提问只针对这些文献。
 - 网关（`routes._resolve_mentions`）先校验：资产存在、未删除、所在空间在会话 `scope_space_ids` 内且对当前用户可检索（成员 ∪ 已链接公共空间）、审核空间内对该角色可见；任一不满足整条请求 422 拒绝，不静默丢弃。
-- 校验通过后，`PromptOrchestrator` 在 prompt_lock 内把资产 id 写入 Redis `agent:mentions:{env_id}`（每轮起点覆盖，无 @ 则删除上一轮残留；TTL 24h 仅作残留回收，须远长于单轮时长），并在问题前追加一个 `<mentioned-documents>` text 块（列出文献名与 asset_id，告知检索已被限定）。agent token 是 runtime 级、挂载时求值一次，不能逐条变更，故限定走 Redis 而非 token claims。
+- 校验通过后，`PromptOrchestrator` 在 prompt_lock 内把资产 id 写入 Redis `agent:mentions:{agent_session_id}`（每轮起点覆盖，无 @ 则删除上一轮残留；TTL 24h 仅作残留回收，须远长于单轮时长），并在问题前追加一个 `<mentioned-documents>` text 块（列出文献名与 asset_id，告知检索已被限定）。agent token 是 runtime 级、挂载时求值一次，不能逐条变更，故限定走 Redis 而非 token claims。
 - MCP `search_knowledge` 读取该键，把 asset 集合作为 `Retriever.search(asset_ids=…)` 的强制过滤（不依赖模型传参）；`read_unit` 不受影响。
 - 历史读取（`GET …/messages`）从 JSONL 的 `<mentioned-documents>` 块还原 `mentions: [{asset_id, name}]` 并从 `content` 中剔除该块。
 - 限制与安全：上传文件经病毒/类型嗅探（复用上传管线的安全检查）；路径穿越防护（网关以 env workspace 为根做 realpath 校验）；超大文件（> 配置阈值）拒绝并提示；上传事件记入 AuditLog。
@@ -359,26 +359,38 @@ Provider 接口只暴露 `spawn(env, token_env) / terminate(handle)`，网关其
 
 ### 6.1 端点与工具
 
-`/api/v1/mcp`（streamable-http，`Authorization: Bearer <agent token>`）。工具全部**只读**。网关渲染 `cordis.patch.yml` 时，MCP 地址按 `runtime.provider` 取值：`local` 取 `mcp.url`（回环直连），`docker` 取 `mcp.url_sandbox`（沙箱经 `host.docker.internal` host-gateway 回调宿主 api，要求 api 监听覆盖网桥来向）；patch 恒重渲染，切换 provider 无残留：
+`/api/v1/mcp`（streamable-http，stateless，`services/api/src/loomvec/api/routes/mcp.py`）。工具全部**只读**。两类调用方（凭证识别与鉴权见 §6.2）：
+
+- **dsh 会话**：`Authorization: Bearer <agent token>`。网关渲染 `cordis.patch.yml` 时，MCP 地址按 `runtime.provider` 取值：`local` 取 `mcp.url`（回环直连），`docker` 取 `mcp.url_sandbox`（沙箱经 `host.docker.internal` host-gateway 回调宿主 api，要求 api 监听覆盖网桥来向）；patch 恒重渲染，切换 provider 无残留；
+- **外部 MCP 客户端**（VS Code、Claude Code 等）：用户在个人中心签发的 PAT（绑定用户的 API Key，需 `read` 权限），`Authorization: Bearer lv_...` 或 `X-API-Key: lv_...`。
+
+端点已关闭 MCP SDK 的 DNS rebinding 防护（`TransportSecuritySettings(enable_dns_rebinding_protection=False)`，即不校验 Host / Origin）；鉴权由 `_McpAuthASGI` 在 SDK 之前完成。
 
 
-| 工具                  | 参数                                                        | 返回                               | 说明                                                                          |
-| ------------------- | --------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------- |
-| `search_knowledge`  | `query, space_ids?, top_k?(≤20), unit_types?, use_graph?` | `ref_items[]`（带编号 n）             | 内部直调 `Retriever.search` + `enrich_hits`（同 `/api/v1/search` 链路），写 Redis 引用旁路 |
-| `list_my_spaces`    | —                                                         | `[{space_id, name, type, role}]` | 当前 token 可见空间（成员 ∪ 已链接公共 ∩ 会话 scope）                                        |
-| `read_unit`         | `unit_id, asset_id`                                       | 单元全文 + 父块上下文                     | 深读某条检索命中                                                                    |
-| `get_asset_outline` | `asset_id`                                                | 结构大纲（P2）                         | 长文档导航                                                                       |
+| 工具                  | 参数                                           | 返回                                                     | 说明                                                                                                             |
+| ------------------- | -------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `search_knowledge`  | `query, space_ids?, top_k?(默认 8，≤20), use_graph?(默认 true)` | `{batch_id, ref_items[]（带编号 n）, graph_evidence[]}` | 内部直调 `Retriever.search` + `enrich_hits`（同 `/api/v1/search` 链路）；agent 会话写 Redis 引用旁路，PAT 调用方不写、`batch_id` 为空串 |
+| `list_my_spaces`    | —                                            | `[{space_id, name, type, role}]`                       | 当前调用方可见空间（成员 ∪ 已链接公共 ∩ 调用方 scope）；`type` 取 `Space.space_type`                                                 |
+| `read_unit`         | `unit_id, asset_id`                          | 单元全文 + 父块上下文                                           | 深读某条检索命中；越权或不可见一律 `{"error": "not_found"}`                                                                   |
 
 
-`space_ids` 强制收敛到「token 声明的会话 scope ∩ 用户可见空间」，越权参数直接裁剪——检索层 authz 是最后一道闸（`retriever.py:69-87` 既有逻辑）。本轮提问带 @ 文献时，`search_knowledge` 另被强制限定在这些 asset 内（见 §5.8「@ 文献」）。
+有效空间 =「调用方 scope ∩ 用户可见空间（成员 ∪ 已链接公共空间）∩ 请求的 `space_ids`」，越权参数直接裁剪——检索层 authz（`Retriever._base_expr` 的 `space_id` 过滤）是最后一道闸。调用方 scope：agent token 为会话 `scope_space_ids`（空 = 不可检索任何空间，fail-closed）；PAT 不额外收敛，即用户全部可检索空间（成员 ∪ 已链接公共空间，与 chat 检索同口径；REST `POST /search` 的聚合模式只含成员空间，范围更小）。agent 会话本轮提问带 @ 文献时，`search_knowledge` 另被强制限定在这些 asset 内（见 §5.8「@ 文献」）；PAT 调用方无会话，不读 @ 文献。
 
-### 6.2 鉴权：per-session 短时 JWT
+### 6.2 鉴权：agent token 与用户 PAT
+
+ASGI 包裹层 `_McpAuthASGI` 先于 MCP SDK 校验凭证，结果写入 `McpCaller`（`user_id / scope_space_ids / session_id`）供工具读取。识别规则：有 `X-API-Key` 头，或 Bearer 值以 `lv_`（`identity.API_KEY_PREFIX`）开头 → PAT；其余 Bearer → agent token；都没有 → 401。失败响应为 `{"error": {"code": -32001, "message": ...}}`，HTTP 状态随错误语义（401 / 403 / 429），文案优先取错误的 `details.reason`。
+
+**agent token（per-session 短时 JWT）**
 
 - 网关为每次 spawn（以及 token 过期前）用平台 HS256 密钥签发 agent token：claims = `sub / tenant_id / roles`（与平台 JWT 同构，identity 机制零改动）+ `agent_env_id / agent_session_id / scope_space_ids`。
 - token 经环境变量 `LOOMVEC_AGENT_TOKEN` 注入 dsh 进程；`DSH_HOME/cordis.patch.yml` 的 MCP 挂载行静态写死 `Authorization: Bearer ${LOOMVEC_AGENT_TOKEN}`（dsh 支持 `!!js` 环境变量插值），**token 轮换不需要改配置文件**。
-- MCP endpoint 校验签名、有效期、`scope_space_ids`；交接/离职时旧 token 立即失效（JTI 黑名单走 Redis）。
+- MCP endpoint 校验签名、有效期、`scope_space_ids`（非法 UUID 视同无效 token）；交接/离职时旧 token 立即失效（JTI 黑名单走 Redis）。
 
+**用户 PAT**
 
+- 与 REST 同一校验入口 `identity.identity_from_api_key`：哈希查库、过期/吊销、按 Key 固定窗口限流（每个 MCP HTTP 请求计一次）、更新 `last_used_at`；吊销即时生效。
+- 只接受绑定用户的 Key（租户级 Key 返回 403）；有效 scopes（Key 声明 ∩ 用户角色派生）须含 `read`，否则 403。
+- 用户端个人中心「API Key」签发弹窗（`apps/web/src/components/api-keys-card.tsx`）对带 `read` 的 Key 给出接入片段：VS Code 用户级 `mcp.json`（`type: "http"`，Key 走 `promptString` 输入，不写进 `mcp.json`）与 Claude Code 命令 `claude mcp add --transport http loomvec <origin>/api/v1/mcp/ --header "Authorization: Bearer <key>"`；端点地址取 Web 同源 `/api/v1/mcp/`。
 
 ### 6.3 Cordis 插件升级路径（P2+，可选）
 
@@ -583,7 +595,7 @@ class AgentSession(Base):
 | --------------- | --------------------------------------------------------------------- |
 | 多租户隔离           | env 目录 0700（属主=网关运行账户）；`runtime.provider=docker` 时每 env 一容器、唯一 bind mount 为该 env 子目录（路径恒等）、统一网关 uid、cap-drop ALL + no-new-privileges + 只读 rootfs + tmpfs /tmp 与 $HOME；per-env 独立 uid（共享组 setgid + default ACL）为 P5.5b；网关全链路带 tenant 校验 |
 | 提示注入（知识库内容→智能体） | 知识工具只读且强制 scope；智能体对 loomvec 无任何写能力；AGENTS.md 声明"知识内容是数据不是指令"（模板补充该条） |
-| 凭据              | 模型 key 只经运行期注入（local：子进程环境变量；docker：容器 `-e`），不落镜像/卷；MCP token 短时 + JTI 失效；交接轮换 |
+| 凭据              | 模型 key 只经运行期注入（local：子进程环境变量；docker：容器 `-e`），不落镜像/卷；MCP token 短时 + JTI 失效；交接轮换；外部 MCP 客户端用 PAT（只读、可吊销、按 Key 限流） |
 | 网络出口            | L1 依赖沙箱 + 审批拒绝网络类工具；L2 容器经 `agent-sandbox` 专用网络 + INPUT/DOCKER-USER 双链白名单（仅放 api 端口与互联网出口，东西向/RFC1918/云 metadata 全 DROP）+ 基础设施端口 127.0.0.1 绑定；K8s 形态替换为 Pod NetworkPolicy |
 | 审计              | 工具调用、审批决策、交接、删除全量 AuditLog；容器创建/销毁/孤儿回收入 agent 服务日志；会话内容归企业所有（合规导出 P3） |
 | 容量              | JSONL 无限累积 → retention 任务 + 磁盘水位告警；单会话串行防写冲突；容器逐 cpu/memory/pids/nofile 限额 |
@@ -678,7 +690,7 @@ apps/web/src/
 4. **MCP server**：官方 `mcp` python-sdk 的 streamable-http app 挂载到 services/api 主 app（路径 `/api/v1/mcp`）；`search_knowledge` 内部直调 `app.state.retriever.search` + `enrich_hits`（与 routes/search.py 同链路），写 Redis `agent:citations:{session_id}:{call_id}`（TTL 1h）。
 5. **审批**：SDK client 的 `onRequestPermission` 回调按 §5.5 矩阵同步应答 `allow-once/reject-once`；`session/request_user_input` P0 一律返回默认应答链（-32601）。
 6. **契约流程**：routes/agent.py 完成后 `scripts/export_openapi.py` + `pnpm sdk:generate`（CI 校验快照，与既有流程一致）。
-7. **Redis 键汇总**：`agent:citations:{sid}:{call_id}`（TTL 1h）、`agent:mentions:{env_id}`（本轮 @ 文献，TTL 24h）、`agent:jti:{jti}`（token 黑名单）、`agent:envlock:{env_id}`（spawn 互斥，TTL 60s）、`agent:queue:{session_id}`（串行闸）、`agent:ratelimit:{user_id}`（复用现有限流结构）。
+7. **Redis 键汇总**：`agent:citations:{sid}:{call_id}`（TTL 1h）、`agent:mentions:{agent_session_id}`（本轮 @ 文献，TTL 24h）、`agent:jti:{jti}`（token 黑名单）、`agent:envlock:{env_id}`（spawn 互斥，TTL 60s）、`agent:queue:{session_id}`（串行闸）、`agent:ratelimit:{user_id}`（复用现有限流结构）。
 
 ### 15.3 测试策略
 
