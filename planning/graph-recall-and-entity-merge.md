@@ -43,3 +43,32 @@
 
 - `MilvusStore.fetch_entity_vectors` / `async_fetch_entity_vectors` 已无调用方（原用于合并的向量候选），可删。
 - 检索质量评测集缺失：无法量化图谱开/关的差异，上面第 3 点只是少量手测。
+
+## 交接（2026-10-17 00:30）
+
+### 当前线上状态
+
+- 代码：本地 `main` 已有 5 个相关提交（`771053e` MCP PAT、`9288e1a` 图谱召回/合并修复、`1423688` 抽取领域配置、`628ac89` 实体链接超取、`e6df266` 社区时间修复，另有一个 docs 提交），**均未推送远程**。api 热加载、worker 已于 00:14 重启，线上跑的就是这些代码。
+- 重抽进度（只做了试跑，**没有整批开跑**）：
+  - 「单细胞文章」（1 篇）：已重抽并已 `gc_entities --apply`；
+  - 「最新文章」（54 篇）：5 篇已是 `chunk-graph-v5`，49 篇仍是 `chunk-graph-v4`，全部 `ready`、无在途。**不要对这个空间跑 `gc_entities --apply`**，要等 54 篇全部重抽完；
+  - 「虚拟细胞」68、「合成致死」67、「论文自动入库」约 240 篇 ready + 250 在途，均未动。
+- 试跑结果（单细胞文章，1 篇）：v4→v5，实体 88→78、关系 87→81，166 秒，无失败批次；新抽取无人名/机构类噪音，恢复了 ProtBAG/MetBAG/MRIBAG 等核心概念；也丢了 GDF15、brain age 等孤立实体（v5 只保留参与关系的实体）。重抽 + gc 后，问「血浆蛋白组学衰老」的结果带上了关系证据（`biological aging clock → EVALUATED_ON → FinnGen`）；但 4 个关系型问题里图谱对排序的增益仍有限，需要更多空间重抽后再评估。
+- 线上测试残留已清理（9 个测试租户、14 个 epf 用户、7 个 epf 空间、`search.rrf_k=42`、`ai.embedding.api_key=sk-secret-123` 两个旧测试值）；`rrf_k` 已回到默认 60。
+
+### 明天接着做
+
+1. 决定是否继续重抽，以及范围。命令（默认 dry-run，`--apply` 才执行；同一命令可续跑）：
+   `.venv/bin/python scripts/reextract_graph.py --space <uuid>`（先看列表）
+   `.venv/bin/python scripts/reextract_graph.py --space <uuid> --apply --limit N --inflight 2`
+   并发 `--inflight × llm_concurrency` 上限 16；约 170 秒/篇，`--inflight 2` 时 54 篇约 75 分钟。重抽期间该论文处于「处理中」，暂时搜不到。
+2. 某个空间**全部**重抽完、且没有失败批次后，再 `.venv/bin/python scripts/gc_entities.py --space <uuid>`（dry-run）→ `--apply`。
+3. 用 `scripts/audit_entities.py` 复核噪音命中率，用 dev 用户 JWT 调 `/api/v1/search`（`use_graph` true/false）对比增益。
+4. 历史错并（`auto_vector` 1488 + `auto_name` 约 11000 条）不回滚，靠重抽整体替换；`LLM分片与图谱试验` 空间里还有旧实体向量，重抽/清理该空间后才会消失（检索侧已对残留向量容错）。
+
+### 注意事项
+
+- **跑 api / worker 测试前必须覆盖数据库地址**：`export LOOMVEC_POSTGRES__URL=postgresql+asyncpg://x:x@127.0.0.1:1/none`；`env -u` 无效（`.env` 会重新加载）。api 测试已加硬防护，worker 和 agent 的测试没有。
+- 重启 worker：用 `tmp/dev.pids` 里记录的 pid 发 `kill -TERM`（温和重启，在跑的任务做完、未开始的放回队列），再用 `.venv/bin/celery -A loomvec.worker.celery_app:celery_app worker -l info -B -Q pipeline,pipeline_high,pipeline_low` 起新的。**不要用 `pgrep -f`/`pkill -f` 找 pid**：会匹配到自己的 shell 命令行而被误杀。
+- 「派致_售前」空间被设成了 biomedical 配置（会过滤员工、供应商），用户决定不改；若它其实是售前资料，重抽它之前要先确认。
+- 已知遗留（与这批改动无关）：`test_create_unit_sync_embed` 在提交前就失败；`wizardly_khayyam` 是个不明来源的 Docker 测试容器；ACP 网关会话的 18 个改动仍未提交（`docs/19`、`services/agent/**`、`local_gateway.py` 等）。
