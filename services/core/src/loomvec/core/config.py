@@ -383,7 +383,8 @@ class UploadSettings(BaseModel):
 class IngestWatchSettings(BaseModel):
     """目录监听自动入库（worker beat 周期任务 `ingest.watch_scan`，worker/ingest_watch.py）。
 
-    dir 为空即关闭；只扫描 dir 单层（不递归子目录）。dir / space_id 的真实值只写本机
+    dir 为空即关闭；从 dir 起向下最多扫描 max_depth 层子目录（有目录数 / 文件数上限，
+    监听目录可能挂在 NFS 上，不做无界递归）。dir / space_id 的真实值只写本机
     config/loomvec.json，入库模板只放占位。
     """
 
@@ -394,6 +395,16 @@ class IngestWatchSettings(BaseModel):
     # 应不小于 2×poll_interval_seconds，否则实际只由「连续两轮不变」决定
     stability_seconds: int = 120
     extensions: list[str] = Field(default_factory=lambda: [".pdf"])  # 后缀白名单（不区分大小写）
+    # 向下进入子目录的最大层数：0 = 只扫 dir 本层，1 = 再进一层子目录，以此类推
+    max_depth: int = Field(default=4, ge=0, le=8)
+    # 每轮最多进入的子目录数 / 列出的白名单文件数 / 累计读取的目录项数（含非白名单文件与
+    # 子目录，防大目录被同步进来后每轮整读）；触及上限只扫到上限为止并告警
+    max_dirs: int = Field(default=500, ge=1, le=5000)
+    max_files: int = Field(default=20000, ge=1, le=100000)
+    max_entries: int = Field(default=50000, ge=1, le=500000)
+    # 每轮最多读取处理的稳定文件数（读文件、算 sha256、上传、入队；等在途资产等不读文件的
+    # 不计）；其余留到下轮，一次同步进大批文件时分批读 NFS、分批压管线
+    max_ingest_per_scan: int = Field(default=20, ge=1, le=1000)
 
 
 class ImageSettings(BaseModel):

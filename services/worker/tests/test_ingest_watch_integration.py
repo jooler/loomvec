@@ -735,3 +735,57 @@ async def test_ingest_watch_space_id_change(session_factory, tmp_path, monkeypat
         new_asset = await session.get(Asset, row.asset_id)
     assert row.status == IngestFileStatus.DONE
     assert new_asset.space_id == new_space_id != old_space_id
+
+
+async def test_ingest_watch_subdirs_and_per_scan_cap(session_factory, tmp_path, monkeypatch):
+    """子目录（max_depth 以内）里的文件照常入库；每轮最多处理 max_ingest_per_scan 个，
+    其余留到下轮；列表不完整（子目录读不到）时不清理消失的台账行。"""
+    from sqlalchemy import select, update
+
+    from loomvec.core.db.models import IngestFile, IngestFileStatus
+    from loomvec.worker import ingest_watch
+
+    deps, sent, _, _ = _harness(session_factory, tmp_path, monkeypatch)
+    cfg = deps.settings.ingest_watch
+    cfg.max_depth = 2
+    cfg.max_ingest_per_scan = 2
+    (tmp_path / "top.pdf").write_bytes(_pdf("top"))
+    topic = tmp_path / "01_主题"
+    (topic / "子类").mkdir(parents=True)
+    (topic / "a.pdf").write_bytes(_pdf("a"))
+    (topic / "子类" / "b.pdf").write_bytes(_pdf("b"))
+    (topic / "子类" / "深一层").mkdir()
+    (topic / "子类" / "深一层" / "too-deep.pdf").write_bytes(_pdf("deep"))
+    (tmp_path / "@eaDir").mkdir()
+    (tmp_path / "@eaDir" / "thumb.pdf").write_bytes(_pdf("thumb"))
+
+    first = await ingest_watch.scan_watch_dir(deps)
+    assert (first["scanned"], first["stable"]) == (3, 0)
+    second = await ingest_watch.scan_watch_dir(deps)
+    assert (second["stable"], second["ingested"], second["deferred"]) == (3, 2, 1)
+    third = await ingest_watch.scan_watch_dir(deps)
+    assert (third["stable"], third["ingested"]) == (1, 1) and "deferred" not in third
+    rows = await _ledger(session_factory)
+    assert set(rows) == {"top.pdf", "a.pdf", "b.pdf"}
+    assert {r.status for r in rows.values()} == {IngestFileStatus.DONE}
+    assert rows["b.pdf"].file_path == str(topic / "子类" / "b.pdf")
+    assert len(sent) == 3
+
+    # 子目录本轮读不到：列表不完整，长期未见的行也不清理
+    async with session_factory() as session:
+        await session.execute(
+            update(IngestFile).values(last_checked_at=datetime.now(UTC) - timedelta(days=30))
+        )
+        await session.commit()
+    real_scandir = os.scandir
+
+    def flaky_scandir(path):
+        if os.path.basename(path) == "01_主题":
+            raise PermissionError("nfs hiccup")
+        return real_scandir(path)
+
+    monkeypatch.setattr(ingest_watch.os, "scandir", flaky_scandir)
+    result = await ingest_watch.scan_watch_dir(deps)
+    assert result["incomplete"] == 1
+    async with session_factory() as session:
+        assert len((await session.execute(select(IngestFile))).all()) == 3

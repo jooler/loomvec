@@ -1,15 +1,17 @@
-"""目录监听自动入库：单层扫描 ingest_watch.dir，把写完整的新文件上传登记并入队管线。
+"""目录监听自动入库：扫描 ingest_watch.dir（及有限层子目录），把写完整的新文件上传登记并入队管线。
 
 beat 周期任务 `ingest.watch_scan` 调用 scan_watch_dir，每轮（docs/18）：
-1. 单层列目录（os.scandir，**不进入子目录**：监听目录可能挂在 NFS 上，递归遍历会
-   打满带宽），只看 ingest_watch.extensions 白名单后缀的普通文件；跳过隐藏文件、
-   软链接（不跟随，防止把目录外的文件带进来）和非 UTF-8 文件名；
+1. 按层列目录（os.scandir 广度优先，最多向下 max_depth 层，子目录数 / 文件数有上限：
+   监听目录可能挂在 NFS 上，无界递归会打满带宽），只看 ingest_watch.extensions 白名单
+   后缀的普通文件；跳过隐藏文件 / 目录、NAS 系统目录、软链接（文件和目录都不跟随，防止把
+   目录外的文件带进来）和非 UTF-8 文件名；
 2. 台账 ingest_file 比对 (size, mtime)：新文件登记 pending_stable；有变化即刷新稳定计时；
-   每行在独立保存点中写入，单行异常不拖垮整轮；长期不在目录中的行按保留期清理；
-   duplicate 行指向的资产已不可用时回到 pending_stable 重新判定；
+   每行在独立保存点中写入，单行异常不拖垮整轮；长期不在目录中的行按保留期清理（本轮列表
+   不完整时不清理）；duplicate 行指向的资产已不可用时回到 pending_stable 重新判定；
 3. 补偿入队：已登记资产但未入队（uploaded）的行重新入队；
-4. 稳定的文件：目标空间或同租户已发布的公共空间（大家都看得到的）有同大小、尚未算出 sha256
-   的在途资产则本轮不读不传、等它算出再判；否则读入（O_NOFOLLOW，不持有数据库事务）、PDF
+4. 稳定的文件（每轮最多 max_ingest_per_scan 个，其余留到下轮）：目标空间或同租户已发布的
+   公共空间（大家都看得到的）有同大小、尚未算出 sha256 的在途资产则本轮不读不传、等它
+   算出再判；否则读入（O_NOFOLLOW，不持有数据库事务）、PDF
    头尾校验、算 sha256；上述空间已有可用的同内容资产则记 duplicate（不上传、不入队）；否则
    写对象存储 → register_file_asset（台账 uploaded、预分配的 asset_id 与资产同事务提交）→
    enqueue_pipeline → done；
@@ -19,11 +21,12 @@ beat 周期任务 `ingest.watch_scan` 调用 scan_watch_dir，每轮（docs/18�
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import os
 import stat
 import uuid
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -64,10 +67,6 @@ logger = get_logger("loomvec.worker.ingest_watch")
 # 管理权限按 authz.can_manage_asset 的系统入库规则（人类 editor 可管，API Key 不可）
 SYSTEM_USER_ID = "apikey:ingest-watch"
 
-# 已入库（可作为去重依据）的台账状态
-_INGESTED = tuple(
-    s.value for s in (IngestFileStatus.UPLOADED, IngestFileStatus.DONE, IngestFileStatus.DUPLICATE)
-)
 # 终态行「最近在目录中见到」时间（last_checked_at）的刷新间隔：控制每轮写入量
 _SEEN_REFRESH = timedelta(days=1)
 # 文件从目录消失超过该时长即删除台账行（uploaded 行等补偿入队完成后再清）
@@ -77,6 +76,10 @@ _INFLIGHT_WAIT = timedelta(hours=1)
 # 扫描锁 TTL 下限（秒）；每处理完一个文件续期
 _LOCK_TTL_MIN_SECONDS = 300
 _PDF_PROBE_BYTES = 1024
+# 不读文件内容的处理结果：不占每轮 max_ingest_per_scan 配额
+_NO_READ_OUTCOMES = frozenset({"awaiting_inflight", "skipped"})
+# 不进入的子目录名：NAS（群晖等）的缩略图 / 回收站 / 快照系统目录
+_SKIP_DIRS = frozenset({"@eaDir", "#recycle", "#snapshot", "@Recycle", "@Recently-Snapshot"})
 
 
 @dataclass(frozen=True)
@@ -87,34 +90,109 @@ class ScannedFile:
     mtime: float
 
 
-def list_candidates(watch_dir: str, extensions: list[str]) -> list[ScannedFile]:
-    """单层列出白名单后缀的普通文件：不进入子目录、不跟随软链接；隐藏文件多为同步客户端
-    的临时文件，跳过；非 UTF-8 文件名无法入库（数据库与对象存储 key 都要求 UTF-8），跳过。"""
+def _utf8_name(name: str, path: str) -> bool:
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        logger.warning("ingest_watch_skip_undecodable_name", path=ascii(path))
+        return False
+    return True
+
+
+def list_candidates(
+    watch_dir: str,
+    extensions: list[str],
+    *,
+    max_depth: int = 0,
+    max_dirs: int = 500,
+    max_files: int = 20000,
+    max_entries: int = 50000,
+) -> tuple[list[ScannedFile], bool]:
+    """从 watch_dir 起按层（广度优先，同层按名字排序）列出白名单后缀的普通文件，最多向下
+    max_depth 层子目录。
+
+    返回 (文件列表, 是否完整)。不跟随软链接（文件和目录都不跟）；隐藏文件 / 目录多为同步
+    客户端的临时文件，跳过；NAS 系统目录（_SKIP_DIRS）跳过；非 UTF-8 文件名无法入库（数据库
+    与对象存储 key 都要求 UTF-8），跳过。watch_dir 本身不可读时抛 OSError；子目录或目录项
+    不可读、子目录数超过 max_dirs、白名单文件数超过 max_files、或累计读到的目录项（含非白名单
+    文件与子目录）达到 max_entries 时只列到此为止并告警，返回不完整（调用方据此本轮不清理
+    「已消失」的台账行）。max_entries 防止大目录（如解压的数据集）被同步进监听树后每轮整读。
+    """
     allowed = {e.lower() if e.startswith(".") else f".{e.lower()}" for e in extensions}
     found: list[ScannedFile] = []
-    with os.scandir(watch_dir) as entries:
+    complete = True
+    dir_limit_hit = False
+    queue: deque[tuple[str, int]] = deque([(watch_dir, 0)])
+    subdirs = 0
+    seen_entries = 0
+    while queue:
+        if seen_entries >= max_entries:  # 截断后不再打开任何目录（空目录也不开）
+            logger.warning("ingest_watch_entry_limit", max_entries=max_entries)
+            complete = False
+            break
+        path, depth = queue.popleft()
+        entries: list[os.DirEntry] = []
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    if seen_entries >= max_entries:
+                        complete = False
+                        break
+                    seen_entries += 1
+                    entries.append(entry)
+        except OSError as e:
+            if depth == 0:
+                raise
+            logger.warning("ingest_watch_subdir_unavailable", path=ascii(path), error=str(e))
+            complete = False
+            continue
+        entries.sort(key=lambda e: e.name)
         for entry in entries:
             name = entry.name
-            if name.startswith(".") or os.path.splitext(name)[1].lower() not in allowed:
+            if name.startswith("."):
                 continue
-            try:
-                name.encode("utf-8")
-            except UnicodeEncodeError:
-                logger.warning("ingest_watch_skip_undecodable_name", name=ascii(name))
-                continue
+            is_allowed = os.path.splitext(name)[1].lower() in allowed
             try:
                 if entry.is_symlink():
-                    logger.warning("ingest_watch_skip_symlink", name=name)
+                    if is_allowed:
+                        logger.warning("ingest_watch_skip_symlink", path=ascii(entry.path))
                     continue
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError as e:  # NFS 不给 d_type 时退化为 lstat，可能 ESTALE 等
+                logger.warning(
+                    "ingest_watch_entry_unavailable", path=ascii(entry.path), error=str(e)
+                )
+                complete = False
+                continue
+            if is_dir:
+                if depth >= max_depth or name in _SKIP_DIRS or not _utf8_name(name, entry.path):
+                    continue
+                if subdirs >= max_dirs:
+                    if not dir_limit_hit:
+                        logger.warning("ingest_watch_dir_limit", max_dirs=max_dirs)
+                    dir_limit_hit = True
+                    complete = False
+                    continue
+                subdirs += 1
+                queue.append((entry.path, depth + 1))
+                continue
+            if not is_allowed:
+                continue
+            try:
                 if not entry.is_file(follow_symlinks=False):
                     continue
                 st = entry.stat(follow_symlinks=False)
             except OSError:  # 列目录与 stat 之间被删除/改名
                 continue
+            if not _utf8_name(name, entry.path):
+                continue
+            if len(found) >= max_files:
+                logger.warning("ingest_watch_file_limit", max_files=max_files)
+                return found, False
             found.append(
                 ScannedFile(path=entry.path, name=name, size=st.st_size, mtime=st.st_mtime)
             )
-    return found
+    return found, complete
 
 
 def _read_regular_file(path: str) -> tuple[bytes, os.stat_result]:
@@ -179,24 +257,46 @@ async def _scan(deps: PipelineDeps, watch_dir: str, lock) -> dict:
         )
         return {"status": "misconfigured"}
     try:
-        files = await asyncio.to_thread(list_candidates, watch_dir, cfg.extensions)
+        files, complete = await asyncio.to_thread(
+            functools.partial(
+                list_candidates,
+                watch_dir,
+                cfg.extensions,
+                max_depth=cfg.max_depth,
+                max_dirs=cfg.max_dirs,
+                max_files=cfg.max_files,
+                max_entries=cfg.max_entries,
+            )
+        )
     except OSError as e:
         logger.warning("ingest_watch_dir_unavailable", watch_dir=watch_dir, error=str(e))
         return {"status": "dir_unavailable"}
 
     reopened = await _reopen_orphaned_duplicates(deps, space, watch_dir)
-    stable = await _observe(deps, space, watch_dir, files)
+    stable = await _observe(deps, space, watch_dir, files, prune_missing=complete)
+    n_stable = len(stable)
     outcomes: Counter[str] = await _resume_uploaded(deps, watch_dir)
     if reopened:
         outcomes["reopened"] = reopened
-    for scanned in stable:
-        outcomes[await _process(deps, space, watch_dir, scanned)] += 1
+    if not complete:
+        outcomes["incomplete"] = 1
+    # 每轮最多读 max_ingest_per_scan 个文件；不读文件的结果（等在途、已非待处理）不占配额。
+    # 超出配额的稳定文件保持 pending_stable，下轮仍判定为稳定、按列目录顺序接着处理
+    read_count = 0
+    for i, scanned in enumerate(stable):
+        if read_count >= cfg.max_ingest_per_scan:
+            outcomes["deferred"] = len(stable) - i
+            break
+        outcome = await _process(deps, space, watch_dir, scanned)
+        outcomes[outcome] += 1
+        if outcome not in _NO_READ_OUTCOMES:
+            read_count += 1
         try:
             await lock.reacquire()
         except LockError:
             logger.warning("ingest_watch_lock_lost", detail="续期失败，停止本轮剩余文件")
             break
-    return {"status": "ok", "scanned": len(files), "stable": len(stable), **outcomes}
+    return {"status": "ok", "scanned": len(files), "stable": n_stable, **outcomes}
 
 
 async def _target_space(session, space_id: str) -> Space | None:
@@ -266,11 +366,18 @@ def _observe_one(
 
 
 async def _observe(
-    deps: PipelineDeps, space: Space, watch_dir: str, files: list[ScannedFile]
+    deps: PipelineDeps,
+    space: Space,
+    watch_dir: str,
+    files: list[ScannedFile],
+    *,
+    prune_missing: bool = True,
 ) -> list[ScannedFile]:
     """台账比对：登记新文件、刷新变化文件的稳定计时、清理长期消失的文件；返回稳定文件。
 
     每个文件在独立保存点中写入：单行写入失败（如异常文件名）只跳过该文件。
+    prune_missing=False（本轮列表不完整：子目录不可读或触及上限）时不清理消失的行，
+    免得把只是本轮没列到的文件当成已删除。
     """
     now = datetime.now(UTC)
     stability = timedelta(seconds=deps.settings.ingest_watch.stability_seconds)
@@ -306,7 +413,7 @@ async def _observe(
             if is_stable:
                 stable.append(scanned)
         # 只看目录中已不存在的行（本轮未触碰，属性仍已加载）
-        present = {f.path for f in files}
+        present = {f.path for f in files} if prune_missing else set(records)
         for path, record in records.items():
             if (
                 path not in present
@@ -536,8 +643,10 @@ async def _find_duplicate(
     优先、其次最早入库的。
 
     判定来源：管线已算出相同 sha256 的资产（含人工上传）/ 本路径上次入库的资产 / 同目录
-    其它路径入库的资产（刚登记、管线尚未写 checksum 的也能认出）。须在改写 record.checksum
-    前调用。
+    其它路径入库的资产（刚登记、管线尚未写 checksum 的也能认出）。台账行的 checksum 与
+    asset_id 总是成对写入，文件变化回到 pending_stable / 记 error 时两者保留，所以同目录候选
+    不看行状态：同一轮里副本排在已变化的原文件之前处理时也能认出原资产。须在改写
+    record.checksum 前调用。
     """
     candidates: list[uuid.UUID] = []
     if record.asset_id is not None and record.checksum == checksum:
@@ -548,7 +657,6 @@ async def _find_duplicate(
                 select(IngestFile.asset_id).where(
                     IngestFile.watch_dir == watch_dir,
                     IngestFile.checksum == checksum,
-                    IngestFile.status.in_(_INGESTED),
                     IngestFile.asset_id.is_not(None),
                 )
             )

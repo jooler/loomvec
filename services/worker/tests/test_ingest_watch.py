@@ -1,4 +1,4 @@
-"""目录监听入库：单层扫描过滤、PDF 完整性检查与关闭语义；LLM 建议新知识库的采纳闸门。"""
+"""目录监听入库：有限层扫描与过滤、PDF 完整性检查与关闭语义；LLM 建议新知识库的采纳闸门。"""
 
 from __future__ import annotations
 
@@ -31,14 +31,134 @@ def test_list_candidates_is_single_level_and_filters(tmp_path):
         fh.write(b"%PDF-1.4 gbk")
 
     try:
-        found = ingest_watch.list_candidates(str(tmp_path), ["pdf"])
+        found, complete = ingest_watch.list_candidates(str(tmp_path), ["pdf"])
     finally:
         outside.unlink()
 
+    assert complete
     assert sorted(f.name for f in found) == ["B.PDF", "a.pdf"]
     a = next(f for f in found if f.name == "a.pdf")
     assert a.path == str(tmp_path / "a.pdf")
     assert a.size == len(b"%PDF-1.4 a")
+
+
+def test_list_candidates_descends_up_to_max_depth(tmp_path):
+    (tmp_path / "top.pdf").write_bytes(b"%PDF-1.4")
+    d1 = tmp_path / "01_主题"
+    d2 = d1 / "子类"
+    d3 = d2 / "更深"
+    d3.mkdir(parents=True)
+    (d1 / "one.pdf").write_bytes(b"%PDF-1.4")
+    (d2 / "two.pdf").write_bytes(b"%PDF-1.4")
+    (d3 / "three.pdf").write_bytes(b"%PDF-1.4")
+    for skipped in ("@eaDir", ".sync", "#recycle"):  # NAS 系统目录与隐藏目录不进入
+        (tmp_path / skipped).mkdir()
+        (tmp_path / skipped / "x.pdf").write_bytes(b"%PDF-1.4")
+    elsewhere = tmp_path.parent / f"elsewhere-{uuid.uuid4().hex}"
+    elsewhere.mkdir()
+    (elsewhere / "outside.pdf").write_bytes(b"%PDF-1.4")
+    (tmp_path / "linked").symlink_to(elsewhere, target_is_directory=True)  # 目录软链接不跟随
+
+    try:
+        by_depth = {
+            depth: ingest_watch.list_candidates(str(tmp_path), [".pdf"], max_depth=depth)
+            for depth in (0, 1, 2, 3)
+        }
+    finally:
+        (elsewhere / "outside.pdf").unlink()
+        elsewhere.rmdir()
+
+    names = {d: sorted(f.name for f in files) for d, (files, _) in by_depth.items()}
+    assert names[0] == ["top.pdf"]
+    assert names[1] == ["one.pdf", "top.pdf"]
+    assert names[2] == ["one.pdf", "top.pdf", "two.pdf"]
+    assert names[3] == ["one.pdf", "three.pdf", "top.pdf", "two.pdf"]
+    assert all(complete for _, complete in by_depth.values())
+    three = next(f for f in by_depth[3][0] if f.name == "three.pdf")
+    assert three.path == str(d3 / "three.pdf")
+
+
+def test_list_candidates_limits_mark_incomplete(tmp_path):
+    for i in range(3):
+        sub = tmp_path / f"d{i}"
+        sub.mkdir()
+        (sub / f"f{i}.pdf").write_bytes(b"%PDF-1.4")
+    (tmp_path / "top.pdf").write_bytes(b"%PDF-1.4")
+
+    scan = ingest_watch.list_candidates
+    files, complete = scan(str(tmp_path), [".pdf"], max_depth=1, max_dirs=2)
+    assert not complete
+    # 按名字排序，只进前 2 个目录
+    assert sorted(f.name for f in files) == ["f0.pdf", "f1.pdf", "top.pdf"]
+
+    files, complete = scan(str(tmp_path), [".pdf"], max_depth=1, max_files=2)
+    assert not complete
+    assert len(files) == 2
+
+    files, complete = scan(str(tmp_path), [".pdf"], max_depth=1, max_files=4)
+    assert complete and len(files) == 4  # 恰好等于上限：已列完，不算不完整
+
+    # 目录项累计上限：根目录 4 项读完即停，不再进入子目录
+    files, complete = scan(str(tmp_path), [".pdf"], max_depth=1, max_entries=4)
+    assert not complete
+    assert [f.name for f in files] == ["top.pdf"]
+
+
+def test_list_candidates_entry_type_error_is_incomplete(tmp_path, monkeypatch):
+    (tmp_path / "a.pdf").write_bytes(b"%PDF-1.4")
+    (tmp_path / "sub").mkdir()
+    real_scandir = os.scandir
+
+    class StaleEntry:
+        def __init__(self, entry):
+            self._entry = entry
+            self.name, self.path = entry.name, entry.path
+
+        def is_symlink(self):
+            return False
+
+        def is_dir(self, follow_symlinks=True):
+            raise OSError(116, "Stale file handle")
+
+    def scandir(path):
+        it = real_scandir(path)
+
+        class Wrapped:
+            def __enter__(self):
+                return (StaleEntry(e) if e.name == "sub" else e for e in it.__enter__())
+
+            def __exit__(self, *exc):
+                return it.__exit__(*exc)
+
+        return Wrapped()
+
+    monkeypatch.setattr(ingest_watch.os, "scandir", scandir)
+    files, complete = ingest_watch.list_candidates(str(tmp_path), [".pdf"], max_depth=1)
+    assert not complete
+    assert [f.name for f in files] == ["a.pdf"]
+
+
+def test_list_candidates_unreadable_subdir_is_incomplete(tmp_path, monkeypatch):
+    (tmp_path / "ok").mkdir()
+    (tmp_path / "ok" / "a.pdf").write_bytes(b"%PDF-1.4")
+    (tmp_path / "bad").mkdir()
+    real_scandir = os.scandir
+
+    def flaky_scandir(path):
+        if os.path.basename(path) == "bad":
+            raise PermissionError("denied")
+        return real_scandir(path)
+
+    monkeypatch.setattr(ingest_watch.os, "scandir", flaky_scandir)
+    files, complete = ingest_watch.list_candidates(str(tmp_path), [".pdf"], max_depth=1)
+    assert not complete
+    assert [f.name for f in files] == ["a.pdf"]
+
+    monkeypatch.setattr(
+        ingest_watch.os, "scandir", lambda path: (_ for _ in ()).throw(OSError("gone"))
+    )
+    with pytest.raises(OSError):  # 监听目录本身不可读：交给调用方记 dir_unavailable
+        ingest_watch.list_candidates(str(tmp_path), [".pdf"], max_depth=1)
 
 
 def test_read_regular_file_refuses_symlink(tmp_path):

@@ -4,7 +4,8 @@
   上游不可用（MinerU/AI/Milvus）自动指数退避重试，最终失败进死信记录；
   跑完后自动归类知识库（_auto_assign_knowledge_bases，可新建 pending 节点）；
 - `worker.heartbeat`：beat 每 30s 心跳写 Redis（存活与队列积压可观测）；
-- `ingest.watch_scan`：beat 周期单层扫描监听目录，自动上传入库（worker/ingest_watch.py）。
+- `ingest.watch_scan`：beat 周期扫描监听目录（含有限层子目录），自动上传入库
+  （worker/ingest_watch.py）。
 """
 
 from __future__ import annotations
@@ -918,7 +919,8 @@ def transcode_asset(self, asset_id: str) -> dict:
 
 @celery_app.task(name="ingest.watch_scan")
 def ingest_watch_scan() -> dict:
-    """单层扫描 ingest_watch.dir：稳定的新文件上传登记并入队管线；dir 为空时 no-op。"""
+    """扫描 ingest_watch.dir（含 max_depth 层子目录）：稳定的新文件上传登记并入队管线；
+    dir 为空时 no-op。"""
     if not get_settings().ingest_watch.dir:
         return {"status": "disabled"}
 

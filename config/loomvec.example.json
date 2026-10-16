@@ -113,14 +113,19 @@
     "presign_expires_seconds": 3600
   },
   "ingest_watch": {
-    "$comment": "目录监听自动入库（worker beat 任务 ingest.watch_scan，需 worker 带 -B 运行 beat）。dir 为空即关闭；dir（监听目录）与 space_id（入库目标空间 id）只在本机 config/loomvec.json 填真实值，本模板仅留空占位。只扫描 dir 单层、不递归子目录、不跟随软链接；后缀在 extensions 白名单内、大小与修改时间自首次观察起持续 stability_seconds 秒不变（且至少连续两轮扫描不变）的文件才上传入库；stability_seconds 应不小于 2 倍 poll_interval_seconds（扫描周期，秒）。",
+    "$comment": "目录监听自动入库（worker beat 任务 ingest.watch_scan，需 worker 带 -B 运行 beat）。dir 为空即关闭；dir（监听目录）与 space_id（入库目标空间 id）只在本机 config/loomvec.json 填真实值，本模板仅留空占位。从 dir 起向下最多扫描 max_depth 层子目录（0 = 只扫 dir 本层；每轮最多进入 max_dirs 个子目录、列出 max_files 个白名单文件、累计读取 max_entries 个目录项，触及上限只扫到上限为止），跳过隐藏目录与 NAS 系统目录（@eaDir、#recycle 等），文件和目录软链接都不跟随；后缀在 extensions 白名单内、大小与修改时间自首次观察起持续 stability_seconds 秒不变（且至少连续两轮扫描不变）的文件才上传入库；stability_seconds 应不小于 2 倍 poll_interval_seconds（扫描周期，秒）。每轮最多读取处理 max_ingest_per_scan 个稳定文件，其余留到下轮（大批文件同步进来时分批读取、分批入队）。",
     "dir": "",
     "space_id": "",
     "poll_interval_seconds": 60,
     "stability_seconds": 120,
     "extensions": [
       ".pdf"
-    ]
+    ],
+    "max_depth": 4,
+    "max_dirs": 500,
+    "max_files": 20000,
+    "max_entries": 50000,
+    "max_ingest_per_scan": 20
   },
   "image": {
     "thumbnail_max_width": 480,
