@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -158,7 +158,8 @@ async def run_space_communities(
     old_by_fp = {_fingerprint(_members_of(c, key_to_entity)): c for c in existing}
     seen_fps: set[str] = set()
     created = updated = 0
-    now = datetime.now(UTC)
+    # 与 TimestampMixin 同口径：updated_at 是不带时区的列（带时区的值会让 asyncpg 抛 DataError）
+    now = datetime.now()
     for cid in sorted(groups):
         members = sorted(groups[cid])
         fp = _fingerprint(members)
