@@ -87,9 +87,9 @@ class EntityGraphService:
             await self._finish(asset, version, written_nodes=0, written_edges=0)
             return {"entities": 0, "relations": 0}
 
-        # ---- 阶段一内联链接：精确（主表 norm+type）→ 向量（Milvus top-1）→ 新建 ----
+        # ---- 阶段一内联链接：精确（主表 norm+type）→ 新建；不做向量链接：近邻相似度
+        # 分不清 UBE2A/UBE2B、CD4+/CD8+ 这类「差一个字符的不同实体」，近似重复交给阶段二 ----
         await self._link_exact(clusters, asset)
-        await self._link_vector(clusters, asset)
 
         # ---- 关系解析与归并（head/tail 必须可解析；按端点+类型聚合溯源）----
         unit_by_order = {u.order_index: u for u in units}
@@ -230,48 +230,6 @@ class EntityGraphService:
         if current.deleted_at is not None:
             return None
         return current
-
-    async def _link_vector(self, clusters: list[_Cluster], asset: Asset) -> None:
-        """未精确命中的簇 → Milvus entities top-1 ≥ 阈值判同（跨写法链接）。"""
-        pending = [c for c in clusters if c.resolved_id is None]
-        if not pending:
-            return
-        deps = self._deps
-        try:
-            texts = [entity_embed_text(c.name, c.type, c.description) for c in pending]
-            vectors = await deps.ai.embed(texts)
-        except Exception as e:
-            logger.warning("entity_embed_failed", error=str(e))
-            return  # 全部按新建处理（重跑可再链接，主表唯一约束防重复）
-        threshold = deps.settings.graph.entity_link_threshold
-        for c, vec in zip(pending, vectors, strict=True):
-            try:
-                hits = await deps.milvus.async_search_entities(
-                    query_vector=vec, space_ids=[asset.space_id], top_k=1
-                )
-            except Exception as e:
-                logger.debug("entity_vector_link_unavailable", error=str(e))
-                continue
-            if hits and hits[0][1] >= threshold:
-                winner_key, score = hits[0]
-                existing = (
-                    await self._session.execute(
-                        select(Entity).where(
-                            Entity.entity_key == winner_key, Entity.deleted_at.is_(None)
-                        )
-                    )
-                ).scalar_one_or_none()
-                if existing is not None:
-                    logger.info(
-                        "entity_linked_by_vector",
-                        name=c.name,
-                        to=existing.name,
-                        score=round(score, 4),
-                    )
-                    c.key = existing.entity_key
-                    c.resolved_id = existing.id
-                    if not existing.aliases and c.name != existing.name:
-                        existing.aliases = [c.name]
 
     def _merge_relations(
         self,

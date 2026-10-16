@@ -95,7 +95,7 @@ class EntityMergeLog(UuidPkMixin, TenantMixin, TimestampMixin, Base):
         index=True,
     )
     reason: Mapped[str] = mapped_column(String(64), nullable=False, default="manual")
-    # 合并依据的相似度（向量余弦/编辑距离；人工为空）
+    # 合并依据的分数（自动合并恒为 1.0；历史向量/编辑距离合并为相似度；人工为空）
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -68,7 +68,7 @@ def deps(monkeypatch) -> PipelineDeps:
     settings.env = settings.env.__class__.TEST
     settings.postgres.url = "postgresql+asyncpg://loomvec:loomvec@localhost:35433/loomvec"
     settings.ai.mock = True
-    settings.graph.entity_link_threshold = -1.0  # mock 向量无语义：强制链接走通全链路
+    settings.graph.entity_link_threshold = -1.0  # mock 向量无语义：查询侧实体链接强制通过
     # 本文件断言 graph_status=ready：显式走 LLM 分片 + 开抽取（内置默认是 structural/关，
     # 也不依赖 config/loomvec.json 当前值——pipeline/graph 段是进程级单例，_env_file=None
     # 不隔离这层，故用 monkeypatch 改并在测试后复原）
@@ -229,32 +229,45 @@ async def _run_consistency(deps: PipelineDeps, space_id: uuid.UUID):
         )
         assert hits, "L1+L2+L3 融合检索无命中"
 
-    # ---- 阶段二合并：岭南资本管理有限公司 ↔ 岭南资本管理公司（编辑距离 2）----
-    from loomvec.core.graph.merge import run_space_merge
+    # ---- 阶段二合并：「有限公司/公司」不是确定的同物异写，自动合并不收；走人工合并路径 ----
+    from loomvec.core.constants import MERGE_REASON_MANUAL
+    from loomvec.core.graph.merge import merge_pair, run_space_merge
 
     async with deps.session_factory() as session, session.begin():
-        result = await run_space_merge(
-            session,
-            deps.settings,
-            space_id,
-            vector_fetch=None,  # mock 向量无语义：仅名称候选
-            created_by="integration-test",
-        )
-    assert result["merged"] >= 1, "名称候选合并未发生"
-
-    async with deps.session_factory() as session:
-        loser = (
-            (
+        await run_space_merge(session, deps.settings, space_id, created_by="integration-test")
+        by_name = {
+            e.name: e
+            for e in (
                 await session.execute(
                     select(Entity).where(
-                        Entity.space_id == space_id, Entity.merged_into.is_not(None)
+                        Entity.space_id == space_id,
+                        Entity.name.in_(["岭南资本管理有限公司", "岭南资本管理公司"]),
+                        Entity.merged_into.is_(None),
                     )
                 )
             )
             .scalars()
-            .first()
+            .all()
+        }
+        assert set(by_name) == {"岭南资本管理有限公司", "岭南资本管理公司"}, "自动合并不应并掉它们"
+        await merge_pair(
+            session,
+            deps.settings,
+            space_id=space_id,
+            winner=by_name["岭南资本管理有限公司"],
+            loser=by_name["岭南资本管理公司"],
+            reason=MERGE_REASON_MANUAL,
+            score=None,
+            created_by="integration-test",
         )
-        assert loser is not None
+
+    async with deps.session_factory() as session:
+        loser = (
+            await session.execute(
+                select(Entity).where(Entity.space_id == space_id, Entity.name == "岭南资本管理公司")
+            )
+        ).scalar_one()
+        assert loser.merged_into is not None
         loser_key = loser.entity_key
         nodes = await age.load_space_nodes(session, str(space_id))
         assert loser_key not in nodes, "合并后败者节点应已删除"

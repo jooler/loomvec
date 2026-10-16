@@ -633,17 +633,11 @@ def merge_space(space_id: str, created_by: str = "system") -> dict:
 
         deps = await build_deps()
         try:
-
-            async def vector_fetch(entities):
-                _ = entities
-                return await deps.milvus.async_fetch_entity_vectors(uuid.UUID(space_id))
-
             async with deps.session_factory() as session:
                 result = await run_space_merge(
                     session,
                     deps.settings,
                     uuid.UUID(space_id),
-                    vector_fetch=vector_fetch,
                     created_by=created_by,
                 )
                 await session.commit()

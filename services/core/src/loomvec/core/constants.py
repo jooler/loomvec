@@ -159,7 +159,7 @@ ENTITY_TYPES: tuple[str, ...] = (
 DEFAULT_ENTITY_TYPE = "other"
 
 # 实体合并发现途径（merge_log.reason）
-MERGE_REASON_VECTOR = "auto_vector"  # 阶段二向量近邻候选
+MERGE_REASON_VECTOR = "auto_vector"  # 历史合并日志的原因值（已无新产生）
 MERGE_REASON_NAME = "auto_name"  # 阶段二规范名归并候选
 MERGE_REASON_MANUAL = "manual"  # 人工触发
 

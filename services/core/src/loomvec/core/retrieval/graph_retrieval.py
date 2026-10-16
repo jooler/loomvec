@@ -109,9 +109,12 @@ class GraphRetriever:
         nodes: dict[str, GraphNode] = {}
         edges: list[GraphEdge] = []
         try:
-            for sid in space_ids:
-                nodes.update(await AGE.load_space_nodes(session, str(sid)))
-                edges.extend(await AGE.load_space_edges(session, str(sid)))
+            # 保存点：图读取失败只回滚到这里，不能把外层事务带进 aborted 状态
+            # （否则后续 enrich_hits 等 PG 查询全部 InFailedSQLTransaction → 500，降级失效）
+            async with session.begin_nested():
+                for sid in space_ids:
+                    nodes.update(await AGE.load_space_nodes(session, str(sid)))
+                    edges.extend(await AGE.load_space_edges(session, str(sid)))
         except Exception as e:
             logger.info("graph_expand_degraded", reason=str(e))
             return GraphRecall()
@@ -156,15 +159,16 @@ class GraphRetriever:
         seeds = set(seed_unit_ids)
         neighbors: dict[str, list[str]] = defaultdict(list)
         try:
-            for sid in space_ids:
-                edges = await AGE.load_space_edges(session, str(sid))
-                for e in edges:
-                    hit = seeds & set(e.chunk_ids)
-                    if not hit:
-                        continue
-                    extras = [c for c in e.chunk_ids if c not in seeds]
-                    for seed in hit:
-                        neighbors[seed].extend(c for c in extras if c not in neighbors[seed])
+            async with session.begin_nested():  # 保存点：理由同 recall
+                for sid in space_ids:
+                    edges = await AGE.load_space_edges(session, str(sid))
+                    for e in edges:
+                        hit = seeds & set(e.chunk_ids)
+                        if not hit:
+                            continue
+                        extras = [c for c in e.chunk_ids if c not in seeds]
+                        for seed in hit:
+                            neighbors[seed].extend(c for c in extras if c not in neighbors[seed])
         except Exception as e:
             logger.info("graph_adjacency_degraded", reason=str(e))
             return {}

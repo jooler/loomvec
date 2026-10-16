@@ -152,9 +152,7 @@
   "graph": {
     "enabled": true,
     "extraction_enabled": false,
-    "entity_link_threshold": 0.9,
-    "merge_threshold": 0.94,
-    "merge_name_distance": 2,
+    "entity_link_threshold": 0.65,
     "merge_min_candidates": 1,
     "merge_trigger_delta": 20,
     "expand_hops": 2,

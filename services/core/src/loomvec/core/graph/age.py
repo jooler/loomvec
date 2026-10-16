@@ -9,7 +9,11 @@
   写入幂等（先查后建），重跑不留半图；
 - 查询面刻意收窄为简单 Cypher（UNWIND/MATCH/CREATE/DELETE/RETURN map），
   图遍历（1~2 跳扩展、邻接补全、社区检测）在 Python 侧基于 load_space_edges()
-  的边表执行——空间规模（万级边）内往返成本低于复杂 Cypher，且可单测。
+  的边表执行——空间规模（万级边）内往返成本低于复杂 Cypher，且可单测；
+- 全空间扫边一律用**有向**匹配 `(a)-[r]->(b)`（按存储方向，每条边恰好一次）：
+  无向匹配会被 AGE 译成 `(start=a AND end=b) OR (end=a AND start=b)` 的连接条件，
+  PG 无法哈希/索引连接，只能「全图边 × 空间实体」嵌套循环（万级空间 100s+），
+  且每条边返回两次。锚定单个节点（{key: ...}）的定点查询规模小，保持无向。
 
 agtype 返回值为 JSON 文本，统一 json.loads 反序列化。
 """
@@ -28,12 +32,16 @@ from loomvec.core.constants import GRAPH_NAME
 
 logger = structlog.get_logger("loomvec.graph")
 
-# 预备语句：每条后端连接首个图操作前执行一次（LOAD 'age' 为会话级；
-# 失败容忍——search_path 缺失时所有引用已全限定 ag_catalog）
+_PREPPED_TXN_KEY = "loomvec_age_prepped_txn"
+
+# 预备语句：每个（子）事务首个图操作前执行（LOAD 'age' 为会话级；search_path 用 SET LOCAL）。
+# search_path 必须随事务重设：普通 SET 在事务回滚时会被撤销，而只读请求的事务总以回滚结束，
+# 按连接只设一次会让池里复用的连接丢失 search_path，参数化 Cypher 随机报
+# 「cannot cast agtype string to type boolean」。失败容忍——search_path 缺失时所有引用已全限定
+# ag_catalog。CREATE EXTENSION 不在此列：它失败会中止整个事务，仅 ensure_graph 兜底执行。
 _PREP_SQL = (
-    "CREATE EXTENSION IF NOT EXISTS age",
     "LOAD 'age'",
-    'SET search_path = ag_catalog, "$user", public',
+    'SET LOCAL search_path = ag_catalog, "$user", public',
 )
 
 
@@ -66,22 +74,25 @@ class AgeStore:
 
     def __init__(self, graph: str = GRAPH_NAME) -> None:
         self.graph = graph
-        self._prepped: set[int] = set()
 
     # ---------- 基础执行 ----------
 
     async def _prep(self, session: AsyncSession) -> None:
-        conn = await session.connection()
-        raw = await conn.get_raw_connection()
-        key = id(raw)
-        if key in self._prepped:
+        """每个（子）事务内首次图操作前预备连接；标记存 session.info，随会话释放。"""
+        conn = await session.connection()  # 触发 autobegin，保证事务非空
+        # 记最内层事务：SET LOCAL 在保存点内执行时，保存点回滚会撤销它；标记随之失配，
+        # 同一外层事务里的下一次图操作重设（保存点成功释放则设置保留，仅多一次冗余重设）
+        txn = (
+            session.sync_session.get_nested_transaction() or session.sync_session.get_transaction()
+        )
+        if session.info.get(_PREPPED_TXN_KEY) is txn:
             return
         for sql in _PREP_SQL:
             try:
                 await conn.exec_driver_sql(sql)
             except Exception as e:  # 非 superuser LOAD 失败等：继续用全限定名
                 logger.debug("age_prep_statement_failed", sql=sql.split()[0], error=str(e))
-        self._prepped.add(key)
+        session.info[_PREPPED_TXN_KEY] = txn
 
     async def _run_cypher(
         self, session: AsyncSession, cypher: str, params: str | None = None
@@ -106,6 +117,8 @@ class AgeStore:
     async def ensure_graph(self, session: AsyncSession) -> None:
         """幂等建图（compose init 与迁移 0005 已建；运行时兜底）。"""
         await self._prep(session)
+        conn = await session.connection()
+        await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS age")
         if not await self._graph_exists(session):
             await self._create_graph(session)
 
@@ -178,7 +191,7 @@ class AgeStore:
     async def write_edges(self, session: AsyncSession, edges: list[GraphEdge]) -> int:
         """按 (head, tail, type) 已归并的边一次性 CREATE（溯源清单由调用方归并）。
 
-        端点 key 同时写入边属性 h/t：读取走无向匹配，方向以属性为准
+        端点 key 同时写入边属性 h/t：定点读取走无向匹配，方向以属性为准
         （快照/回滚需要方向忠实，仅靠匹配位置会随查询视角翻转）。
         """
         if not edges:
@@ -208,11 +221,14 @@ class AgeStore:
     async def delete_asset_edges(
         self, session: AsyncSession, space_id: str, asset_id: UUID
     ) -> list[str]:
-        """删除某资产的边（资产删除/重跑级联），返回被删边触及的节点 key。"""
+        """删除某资产的边（资产删除/重跑级联），返回被删边触及的节点 key。
+
+        全空间扫边：有向匹配（见模块说明）。
+        """
         rows = await self._run_cypher(
             session,
             (
-                "MATCH (a:Entity)-[r:REL]-(b:Entity) "
+                "MATCH (a:Entity)-[r:REL]->(b:Entity) "
                 "WHERE a.space_id = $space AND $aid IN r.asset_ids "
                 "RETURN {h: a.key, t: b.key} AS e"
             ),
@@ -228,7 +244,7 @@ class AgeStore:
         await self._run_cypher(
             session,
             (
-                "MATCH (a:Entity)-[r:REL]-(b:Entity) "
+                "MATCH (a:Entity)-[r:REL]->(b:Entity) "
                 "WHERE a.space_id = $space AND $aid IN r.asset_ids DELETE r"
             ),
             json.dumps({"space": space_id, "aid": str(asset_id)}),
@@ -358,14 +374,14 @@ class AgeStore:
     # ---------- 读取 ----------
 
     async def load_space_edges(self, session: AsyncSession, space_id: str) -> list[GraphEdge]:
-        """全量边表（Python 侧遍历用：L3 扩展/邻接补全/社区检测）。
+        """全量边表（Python 侧遍历用：L3 扩展/邻接补全/社区检测），每条边恰好一次。
 
-        方向以边属性 h/t 为准（缺属性时回退匹配位置——兼容旧数据）。
+        有向匹配（见模块说明）；方向以边属性 h/t 为准（缺属性时回退存储方向——兼容旧数据）。
         """
         rows = await self._run_cypher(
             session,
             (
-                "MATCH (a:Entity)-[r:REL]-(b:Entity) WHERE a.space_id = $space "
+                "MATCH (a:Entity)-[r:REL]->(b:Entity) WHERE a.space_id = $space "
                 "RETURN {h: coalesce(r.h, a.key), t: coalesce(r.t, b.key), type: r.type, "
                 "weight: r.weight, chunk_ids: r.chunk_ids, asset_ids: r.asset_ids} AS e"
             ),

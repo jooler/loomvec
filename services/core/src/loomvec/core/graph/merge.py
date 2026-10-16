@@ -1,8 +1,9 @@
 """P3-CORE-03 阶段二：空间级异步实体合并与 merge_log 回滚（03 文档 §3.3）。
 
-阶段一（graph_flow 内联链接）阈值放不掉的近似重复由本服务在空间级收口：
-- 候选发现：实体向量近邻（阈值 merge_threshold）+ 规范名编辑距离
-  （merge_name_distance，同名不同写法）；
+阶段一（graph_flow 内联链接）只做规范名精确匹配；同名不同写法由本服务在空间级收口：
+- 候选发现：只收「确定是同一个东西的不同写法」——同类型且 `variant_key` 相同
+  （大小写/分隔符/全半角已由 name_norm 吸收；此外只容忍末尾小写复数 s 与能由括号前各词
+  首字母推出的括号缩写）。向量近邻与编辑距离不作为自动合并依据；
 - 合并动作：保留主实体规范名，合并 description/aliases、union 边 chunk_ids、
   边端点重写（AGE 与 PG 同事务）；每次合并写 merge_log 快照，可回滚；
 - 并发控制：per-space advisory lock（与图写入同一把锁，串行化同空间图变更）。
@@ -15,6 +16,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -25,12 +28,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.core.config import Settings
-from loomvec.core.constants import (
-    MERGE_REASON_NAME,
-    MERGE_REASON_VECTOR,
-)
+from loomvec.core.constants import MERGE_REASON_NAME
 from loomvec.core.db.models import Entity, EntityMergeLog, MergeLogStatus, Space
 from loomvec.core.graph.age import AgeStore, GraphEdge, GraphNode
+from loomvec.core.graph.ontology import normalize_entity_name
 
 logger = structlog.get_logger("loomvec.graph.merge")
 
@@ -54,19 +55,45 @@ class MergeCandidate:
 # ---------------------------------------------------------------------------
 
 
-def _edit_distance(a: str, b: str, cap: int) -> int:
-    """Levenshtein（带 cap 剪枝；输入为短归一化名，规模可控）。"""
-    if abs(len(a) - len(b)) > cap:
-        return cap + 1
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        if min(cur) > cap:
-            return cap + 1
-        prev = cur
-    return prev[-1]
+# 括号里的纯字母大写缩写：「cancer stem cells (CSC)」「…(CSCs)」。含数字/符号的括注
+# （(CD4)、(M1)、(CD25+)、(3B)）与小写括注（(human)）是限定语，一律保留
+_ABBREV_PAREN_RE = re.compile(r"[(（]\s*([A-Za-z]{2,8})\s*[)）]")
+_WORD_SPLIT_RE = re.compile(r"[\s\-–—_/]+")
+_STOPWORDS = frozenset({"of", "and", "the", "for", "in", "on", "to", "a", "an"})
+_MIN_VARIANT_LEN = 4  # 过短的名字（缩写、代号）不做自动归并
+
+
+def _is_initialism_of(abbr: str, preceding: str) -> bool:
+    """abbr 是否是括号前各词首字母的缩写（忽略大小写；连接词计不计均可；缩写可带复数 s）。"""
+    words = [w for w in _WORD_SPLIT_RE.split(preceding) if w]
+    candidates = {
+        "".join(w[0] for w in words).lower(),
+        "".join(w[0] for w in words if w.lower() not in _STOPWORDS).lower(),
+    }
+    a = abbr.lower()
+    return any(len(i) >= 2 and (a == i or (a.endswith("s") and a[:-1] == i)) for i in candidates)
+
+
+def variant_key(name: str) -> str:
+    """「同一个东西的不同写法」判等键：name_norm 之上再吸收括号缩写与末尾复数 s。
+
+    刻意保守：差一个字母/数字/符号的名字必须得到不同的键（SEMA3A≠SEMA5A、
+    CD4+ T≠CD8+ T、GK+≠GK-、T cells (CD4)≠T cells (CD8)、TP53 (WT)≠TP53 (KO)、
+    CytoFLEX S≠CytoFlex），宁可漏并不可错并：
+    - 括号缩写只有在能由括号前的词推出时才剥离（Chain-of-Thought (CoT) ✓，Cells (HeLa) ✗）；
+    - 复数只认原写法里小写的词尾 s（PBMCs ✓，型号后缀 CytoFLEX S ✗）。
+    """
+    text = unicodedata.normalize("NFKC", str(name or ""))
+    text = _ABBREV_PAREN_RE.sub(
+        lambda m: "" if _is_initialism_of(m.group(1), m.string[: m.start()]) else m.group(0),
+        text,
+    )
+    stripped = text.strip()
+    plural = stripped.endswith("s") and not stripped.endswith("ss")
+    norm = normalize_entity_name(stripped)
+    if plural and len(norm) > _MIN_VARIANT_LEN:
+        norm = norm[:-1]
+    return norm
 
 
 async def load_active_entities(session: AsyncSession, space_id: UUID) -> list[Entity]:
@@ -87,76 +114,26 @@ async def load_active_entities(session: AsyncSession, space_id: UUID) -> list[En
     )
 
 
-def vector_candidates(
-    entities: list[Entity], vectors: dict[str, list[float]], threshold: float
-) -> list[MergeCandidate]:
-    """向量近邻候选：纯 Python 余弦（实体规模千级 × 1024 维可控）。"""
-    out: list[MergeCandidate] = []
+def name_candidates(entities: list[Entity]) -> list[MergeCandidate]:
+    """同类型且 variant_key 相同的实体归并（入参按创建时间升序：最早者为主实体）。"""
+    groups: dict[tuple[str, str], list[Entity]] = {}
     for e in entities:
-        vi = vectors.get(e.entity_key)
-        if not vi:
-            continue
-        best_key, best_score = None, 0.0
-        for other in entities:
-            if other.entity_key == e.entity_key:
-                continue
-            vj = vectors.get(other.entity_key)
-            if not vj:
-                continue
-            dot = sum(x * y for x, y in zip(vi, vj, strict=False))
-            if dot > best_score:
-                best_key, best_score = other.entity_key, dot
-        if best_key and best_score >= threshold:
-            out.append(
-                MergeCandidate(
-                    winner_key=best_key,
-                    loser_key=e.entity_key,
-                    score=best_score,
-                    reason=MERGE_REASON_VECTOR,
-                )
-            )
-    return out
-
-
-def name_candidates(entities: list[Entity], max_distance: int) -> list[MergeCandidate]:
-    """规范名编辑距离候选（同类型；min 长度 ≥4 防短名误并）。"""
+        key = variant_key(e.name)
+        if len(key) >= _MIN_VARIANT_LEN:
+            groups.setdefault((e.type, key), []).append(e)
     out: list[MergeCandidate] = []
-    for i, a in enumerate(entities):
-        if len(a.name_norm) < 4:
-            continue
-        for b in entities[i + 1 :]:
-            if b.type != a.type or len(b.name_norm) < 4:
-                continue
-            d = _edit_distance(a.name_norm, b.name_norm, max_distance)
-            if d <= max_distance:
-                score = 1.0 - d / max(len(a.name_norm), len(b.name_norm))
-                out.append(
-                    MergeCandidate(
-                        winner_key=a.entity_key,
-                        loser_key=b.entity_key,
-                        score=round(score, 4),
-                        reason=MERGE_REASON_NAME,
-                    )
-                )
+    for members in groups.values():
+        winner = members[0]
+        out.extend(
+            MergeCandidate(
+                winner_key=winner.entity_key,
+                loser_key=loser.entity_key,
+                score=1.0,
+                reason=MERGE_REASON_NAME,
+            )
+            for loser in members[1:]
+        )
     return out
-
-
-async def find_candidates(
-    session: AsyncSession, deps_settings: Settings, space_id: UUID
-) -> list[MergeCandidate]:
-    """候选发现（向量 + 名称，去重；每败者仅保留最优候选）。"""
-    entities = await load_active_entities(session, space_id)
-    if len(entities) < 2:
-        return []
-    candidates: list[MergeCandidate] = []
-    # 向量候选从 Milvus entities 全量拉取向量（缺集合则跳过该路）
-    # 注：向量路径依赖调用方注入 fetch 函数（避免 core→worker 依赖），见 merge_task。
-    candidates.extend(name_candidates(entities, deps_settings.graph.merge_name_distance))
-    by_loser: dict[str, MergeCandidate] = {}
-    for c in candidates:
-        if c.loser_key not in by_loser or c.score > by_loser[c.loser_key].score:
-            by_loser[c.loser_key] = c
-    return list(by_loser.values())
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +359,7 @@ def _union(a: list[str], b: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# 空间级合并任务入口（worker 调用；向量候选经注入回调获取）
+# 空间级合并任务入口（worker 调用）
 # ---------------------------------------------------------------------------
 
 
@@ -391,25 +368,14 @@ async def run_space_merge(
     settings: Settings,
     space_id: UUID,
     *,
-    vector_fetch=None,
     created_by: str | None = "system",
     max_merges: int = 50,
 ) -> dict:
-    """执行一轮空间合并：候选发现 → 逐对合并（每对独立提交由调用方控制）。
-
-    vector_fetch: async (entities) -> dict[entity_key, vector]（worker 注入
-    Milvus 拉取；None 时跳过向量候选，仅规范名候选）。
-    """
+    """执行一轮空间合并：候选发现 → 逐对合并（每对独立提交由调用方控制）。"""
     entities = await load_active_entities(session, space_id)
     if len(entities) < 2:
         return {"candidates": 0, "merged": 0}
-    candidates = name_candidates(entities, settings.graph.merge_name_distance)
-    if vector_fetch is not None:
-        try:
-            vectors = await vector_fetch(entities)
-            candidates.extend(vector_candidates(entities, vectors, settings.graph.merge_threshold))
-        except Exception as e:
-            logger.warning("merge_vector_candidates_unavailable", error=str(e))
+    candidates = name_candidates(entities)
 
     by_loser: dict[str, MergeCandidate] = {}
     for c in candidates:

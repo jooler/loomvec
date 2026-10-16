@@ -254,7 +254,11 @@ class MilvusStore:
         return rows[0] if rows and isinstance(rows[0], list) else list(rows)
 
     def query_units(self, *, expr: str, limit: int) -> list[dict[str, Any]]:
-        """标量查询（P3 L3 chunk 回收：按 id 清单取回候选行，非 ANN）。"""
+        """标量查询（P3 L3 chunk 回收：按 id 清单取回候选行，非 ANN）。
+
+        返回与 hybrid_search 同形的行 `{id, distance, entity: {...}}`：下游融合/重排/
+        构造命中统一读 `row["entity"]`，扁平行会在重排时 KeyError。
+        """
         client = self._ensure_client()
         rows = client.query(
             COLLECTION_SEMANTIC_UNITS,
@@ -269,7 +273,10 @@ class MilvusStore:
             ],
             limit=limit,
         )
-        return list(rows)
+        return [
+            {"id": r["id"], "distance": 0.0, "entity": {k: v for k, v in r.items() if k != "id"}}
+            for r in rows
+        ]
 
     def community_search(
         self,
@@ -348,39 +355,24 @@ class MilvusStore:
     def search_entities(
         self, *, query_vector: list[float], space_ids: list[uuid.UUID], top_k: int
     ) -> list[tuple[str, float]]:
-        """实体链接检索：返回 [(entity_key, score)]（按相似度降序）。"""
+        """实体链接检索：返回 [(entity_key, 相似度)]（按相似度降序）。
+
+        单路向量检索直接返回 IP 相似度（向量已归一化，即余弦）。不要经 hybrid_search +
+        RRFRanker 包装：RRF 返回的是排名分（单路恒约 0.016），与相似度阈值比较永远不命中。
+        """
         client = self._ensure_client()
         if not client.has_collection(COLLECTION_ENTITIES):
             return []
-        req = AnnSearchRequest(
+        rows = client.search(
+            COLLECTION_ENTITIES,
             data=[query_vector],
             anns_field="vector",
-            param={"metric_type": "IP", "params": {}},
+            search_params={"metric_type": "IP", "params": {}},
             limit=top_k,
-            expr=_in_expr("space_id", [str(s) for s in space_ids]),
-        )
-        rows = client.hybrid_search(
-            COLLECTION_ENTITIES,
-            reqs=[req],
-            ranker=RRFRanker(k=60),
-            limit=top_k,
+            filter=_in_expr("space_id", [str(s) for s in space_ids]),
             output_fields=["name", "entity_type"],
         )
-        flat = rows[0] if rows and isinstance(rows[0], list) else list(rows)
-        return [(r["id"], float(r.get("distance", 0.0))) for r in flat]
-
-    def fetch_entity_vectors(self, space_id: uuid.UUID) -> dict[str, list[float]]:
-        """空间内实体向量全量拉取（合并候选的向量路；缺集合返回空）。"""
-        client = self._ensure_client()
-        if not client.has_collection(COLLECTION_ENTITIES):
-            return {}
-        rows = client.query(
-            COLLECTION_ENTITIES,
-            filter=f'space_id == "{space_id}"',
-            output_fields=["vector"],
-            limit=16384,
-        )
-        return {r["id"]: list(r["vector"]) for r in rows}
+        return [(r["id"], float(r.get("distance", 0.0))) for r in (rows[0] if rows else [])]
 
     def delete_community_units(self, space_id: uuid.UUID) -> None:
         """清空空间 community_summary 单元（社区任务重写前调用）。"""
@@ -432,9 +424,6 @@ class MilvusStore:
 
     async def async_delete_space_entities(self, space_id: uuid.UUID) -> None:
         await asyncio.to_thread(self._guarded, lambda: self.delete_space_entities(space_id))
-
-    async def async_fetch_entity_vectors(self, space_id: uuid.UUID) -> dict[str, list[float]]:
-        return await asyncio.to_thread(self._guarded, lambda: self.fetch_entity_vectors(space_id))
 
     async def async_delete_community_units(self, space_id: uuid.UUID) -> None:
         await asyncio.to_thread(self._guarded, lambda: self.delete_community_units(space_id))

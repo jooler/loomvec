@@ -447,9 +447,7 @@ class GraphSettings(BaseModel):
     # 合并抽取开关，默认关（新资产不产出实体，存量保留）；可被 Space.graph_extraction
     # 或单次 retry 覆盖（graph_extraction=on）打开
     extraction_enabled: bool = False
-    entity_link_threshold: float = 0.90  # 阶段一内联链接：Milvus entities top-1 相似度阈值
-    merge_threshold: float = 0.94  # 阶段二空间合并：向量近邻判定阈值（高于链接阈值）
-    merge_name_distance: int = 2  # 阶段二规范名编辑距离候选阈值（归一化后）
+    entity_link_threshold: float = 0.65  # 查询侧实体链接：问题向量与实体向量的相似度下限
     merge_min_candidates: int = 1  # 空间级合并任务触发：发现候选 ≥ N 才执行
     merge_trigger_delta: int = 20  # 距上次合并新增实体达该数量即触发合并
     expand_hops: int = 2  # L3 召回：AGE 扩展跳数（1~2）

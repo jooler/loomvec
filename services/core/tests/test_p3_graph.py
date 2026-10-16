@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from loomvec.core.ai.mock import MockBackend
 from loomvec.core.config import AiSettings
 from loomvec.core.graph.age import GraphEdge
 from loomvec.core.graph.communities import detect_communities
-from loomvec.core.graph.merge import name_candidates, vector_candidates
+from loomvec.core.graph.merge import name_candidates
 from loomvec.core.graph.ontology import (
     entity_embed_text,
     entity_key,
@@ -135,33 +137,84 @@ def test_entity_embed_text_type_prefix():
 
 
 class _FakeEntity:
-    def __init__(self, key: str, norm: str, type: str):
+    def __init__(self, key: str, name: str, type: str = "t"):
         self.entity_key = key
-        self.name_norm = norm
+        self.name = name
         self.type = type
 
 
-def test_name_candidates_same_type_only():
+def _pairs(entities: list[_FakeEntity]) -> set[tuple[str, str]]:
+    return {(c.winner_key, c.loser_key) for c in name_candidates(entities)}  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("genetic interactions", "genetic interaction"),  # 复数
+        ("Hematopoietic stem and progenitor cell", "hematopoietic stem and progenitor cells"),
+        ("cancer stem cells (CSC)", "cancer stem cells (CSCs)"),  # 括号大写缩写
+        ("Chain-of-Thought (CoT)", "Chain-of-Thought"),  # 缩写含连接词首字母
+        ("copy number variation (CNV)", "copy number variation"),
+        (
+            "Senescence-associated secretory phenotype (SASP)",
+            "Senescence-associated secretory phenotype",
+        ),
+        ("Cell foundation model", "cell foundation models"),
+        ("NF-κB pathway", "NFκB pathway"),  # 分隔符/大小写由 name_norm 吸收
+        ("PBMC", "PBMCs"),
+    ],
+)
+def test_name_candidates_merges_pure_writing_variants(a, b):
+    assert _pairs([_FakeEntity("k1", a), _FakeEntity("k2", b)]) == {("k1", "k2")}
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        # 线上实测的错并样例：差一个字母/数字/符号的是不同实体
+        ("UBE2A", "UBE2B"),
+        ("SEMA3A", "SEMA5A"),
+        ("STAG1", "STAG2"),
+        ("CD8+ T cells", "CD4+ T cells"),
+        ("Th1 cells", "Th2 cells"),
+        ("GK+ Treg cells", "GK- Treg"),
+        ("Conventional protein secretion", "Unconventional protein secretion"),
+        ("Retrieval (No LLM)", "LLM (No retrieval)"),
+        ("Supplementary Table S4", "Supplementary Table 11"),
+        ("Wnt pathway", "AKT pathway"),
+        ("IL-6 (human)", "IL-6 (mouse)"),  # 小写括注是限定语，不是缩写
+        ("Genecorpus-1M", "Genecorpus-30M"),
+        # 括号里的限定语不是缩写：只有能由括号前各词首字母推出的才剥离
+        ("T cells (CD4)", "T cells (CD8)"),
+        ("Macrophages (M1)", "Macrophages (M2)"),
+        ("TP53 (WT)", "TP53 (KO)"),
+        ("Cells (HeLa)", "Cells (HEK293)"),
+        ("Treg (CD25+) cells", "Treg (CD25-) cells"),
+        ("E. coli BL21(DE3)", "E. coli BL21"),
+        ("ESM-2", "ESM-2 (3B)"),
+        ("PBMC", "PBMC (PBS)"),
+        ("Gemini 3 Pro", "Gemini 3 Pro (Few-shot)"),
+        ("DIPG-XIII(K27M-KO)", "DIPG-XIII"),
+        # 型号后缀的大写 S 不是复数
+        ("CytoFLEX S", "CytoFlex"),
+    ],
+)
+def test_name_candidates_never_merges_near_miss_names(a, b):
+    assert _pairs([_FakeEntity("k1", a), _FakeEntity("k2", b)]) == set()
+
+
+def test_name_candidates_same_type_only_and_earliest_wins():
     entities = [
-        _FakeEntity("k1", "阿里巴巴集团", "organization"),
-        _FakeEntity("k2", "阿里巴巴集团", "person"),
-        _FakeEntity("k3", "阿里巴巴集图", "organization"),  # 距离 1
-        _FakeEntity("k4", "腾讯", "organization"),  # 距离远
+        _FakeEntity("k1", "virtual tissue", "concept"),
+        _FakeEntity("k2", "virtual tissues", "concept"),
+        _FakeEntity("k3", "virtual tissues", "method"),  # 类型不同不并
+        _FakeEntity("k4", "Virtual Tissues", "concept"),
     ]
-    out = name_candidates(entities, max_distance=2)
-    pairs = {(c.winner_key, c.loser_key) for c in out}
-    assert ("k1", "k3") in pairs
-    assert all(c.loser_key != "k2" for c in out)  # 类型不同不并
+    assert _pairs(entities) == {("k1", "k2"), ("k1", "k4")}
 
 
-def test_vector_candidates_threshold():
-    v1 = [1.0, 0.0]
-    v2 = [0.99, 0.141]  # 与 v1 余弦 ~0.99
-    v3 = [0.0, 1.0]
-    entities = [_FakeEntity("a", "a", "t"), _FakeEntity("b", "b", "t"), _FakeEntity("c", "c", "t")]
-    cands = vector_candidates(entities, {"a": v1, "b": v2, "c": v3}, threshold=0.94)
-    assert any(c.loser_key == "b" and c.winner_key == "a" for c in cands)
-    assert not any(c.loser_key == "c" for c in cands)
+def test_name_candidates_skips_short_names():
+    assert _pairs([_FakeEntity("k1", "p53"), _FakeEntity("k2", "P-53")]) == set()
 
 
 # ---------------------------------------------------------------------------
