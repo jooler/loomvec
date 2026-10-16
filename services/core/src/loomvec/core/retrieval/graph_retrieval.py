@@ -31,6 +31,9 @@ logger = structlog.get_logger("loomvec.retrieval.graph")
 
 AGE = AgeStore()
 
+# 实体链接候选的超取倍数（见 GraphRetriever.recall）
+LINK_OVERFETCH = 5
+
 # Milvus id 查询单批上限（filter in [...] 过长会被拒）
 _ID_BATCH = 80
 
@@ -92,17 +95,21 @@ class GraphRetriever:
         unit_types: list[str] | None = None,
     ) -> GraphRecall:
         settings = self._graph_settings
-        # 1) 实体链接
+        # 1) 实体链接候选：多取一些再按「图里仍有该节点」过滤补位。Milvus entities 里会残留
+        # 图中已不存在的向量（合并败者、重抽后被替换的旧实体、已删资产的实体），它们只占名额、
+        # 无路径可走；只取 link_top_k 个会让真正的实体被挤出。
         try:
             hits = await self._milvus.async_search_entities(
-                query_vector=query_vector, space_ids=space_ids, top_k=settings.link_top_k
+                query_vector=query_vector,
+                space_ids=space_ids,
+                top_k=settings.link_top_k * LINK_OVERFETCH,
             )
         except UpstreamUnavailableError as e:
             logger.info("graph_link_degraded", reason=str(e))
             return GraphRecall()
         threshold = settings.entity_link_threshold
-        linked_keys = [k for k, score in hits if score >= threshold]
-        if not linked_keys:
+        candidate_keys = [k for k, score in hits if score >= threshold]
+        if not candidate_keys:
             return GraphRecall()
 
         # 2) 图扩展（同库读边表 → Python BFS）
@@ -117,6 +124,9 @@ class GraphRetriever:
                     edges.extend(await AGE.load_space_edges(session, str(sid)))
         except Exception as e:
             logger.info("graph_expand_degraded", reason=str(e))
+            return GraphRecall()
+        linked_keys = [k for k in candidate_keys if k in nodes][: settings.link_top_k]
+        if not linked_keys:
             return GraphRecall()
         adjacency = self._build_adjacency(edges)
         paths = self._expand_paths(nodes, adjacency, linked_keys, settings.expand_hops)
