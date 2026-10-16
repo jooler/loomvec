@@ -187,5 +187,14 @@
   },
   "markdown": {
     "imageFallback": "图片（原始文件中查看）"
+  },
+  "extractionProfile": {
+    "label": "抽取领域配置",
+    "followGlobal": "跟随全局默认（{{label}}）",
+    "customLabel": "{{label}}（自定义）",
+    "effectHint": "修改后仅对新入库或重新处理的文件生效",
+    "staleOption": "配置已失效（{{key}}）",
+    "stale": "配置「{{key}}」已失效，当前回落为「{{fallback}}」，可重新选择。",
+    "loadFailed": "加载抽取领域配置失败"
   }
 }

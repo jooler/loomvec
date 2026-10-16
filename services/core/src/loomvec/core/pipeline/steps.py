@@ -5,13 +5,14 @@
   run() 依 mime 分支委托，index 步骤两类型共用。
 
 幂等约定（03 文档 §二.5）：
-- chunk 按 (checksum, 解析器版本, 模型, prompt 版本) 缓存键跳过；
+- chunk 按 (checksum, 解析器版本, 模型, prompt 版本, 分片策略, 抽取开关, 领域配置) 缓存键跳过；
 - embed 按 embed_model_version 跳过，向量落派生 bucket 供 index 复用；
 - index 重跑先清该资产旧向量再写入。
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from typing import Any
@@ -30,14 +31,18 @@ from loomvec.core.db.models import (
     Space,
     UnitType,
 )
+from loomvec.core.db.system_config import load_extraction_profiles
 from loomvec.core.errors import ValidationError
+from loomvec.core.graph.profiles import ExtractionProfile
 from loomvec.core.mineru_slots import MineruBusyError
 from loomvec.core.pipeline.base import (
     LAST_STEP,
     PIPELINE_STEPS,
     PipelineDeps,
     chunk_cache_key,
+    failed_extraction_batches,
     resolve_chunk_strategy,
+    resolve_extraction_profile,
     resolve_graph_extraction,
 )
 from loomvec.core.pipeline.chunking import (
@@ -176,8 +181,12 @@ class ChunkStep:
     - structural：按标题/段落/表格规则确定性分片，不调用 LLM，不产出实体关系
       （与图谱抽取开关互斥，不支持"规则分片+仍抽图谱"组合）。
 
+    抽取领域配置（graph/profiles）同样按 本次运行覆盖 > Space.extraction_profile > 全局
+    pipeline.extraction_profile 解析，决定抽取 prompt 的领域内容与兜底过滤规则。
+
     llm 策略下独立校验互不牵连（03 文档 §3.2）：
-    - markers 有效、抽取无效 → 正常分片入库，asset.graph_status=pending_retry；
+    - markers 有效、抽取无效（LLM 调用失败 / 结构无效）→ 正常分片入库，该批无实体关系，
+      批数记入 version_meta 的 extraction_failed_batches（不改 graph_status）；
     - markers 失效、抽取有效 → 结构化兜底分片，抽取按兜底 chunk 行区间归属；
     - 抽取结果（全文行号锚定）落 version_meta['graph']['extraction']，
       由 GraphStep 消费（PG 主表→AGE→Milvus entities）。
@@ -185,6 +194,53 @@ class ChunkStep:
 
     name = "chunk"
     _deps: PipelineDeps
+
+    @staticmethod
+    async def _extract_batches(
+        deps: PipelineDeps,
+        lines: list[str],
+        batches: list[tuple[int, int]],
+        *,
+        graph_on: bool,
+        profile: ExtractionProfile,
+        min_chars: int,
+        max_chars: int,
+    ) -> list[MergedExtraction | BaseException]:
+        """各批的 LLM 分片（+抽取）调用，最多 `pipeline.llm_concurrency` 个并发。
+
+        返回与 batches 等长、同序的结果；某批失败的位置是异常对象，
+        不影响其它批，由调用方走结构化兜底。
+        """
+        sem = asyncio.Semaphore(max(1, deps.settings.pipeline.llm_concurrency))
+        max_line_chars = deps.settings.pipeline.llm_batch_chars
+
+        async def _one(batch_start: int, batch_end: int) -> MergedExtraction:
+            async with sem:
+                if graph_on:
+                    messages = build_extraction_messages(
+                        lines,
+                        batch_start,
+                        batch_end,
+                        min_chars=min_chars,
+                        max_chars=max_chars,
+                        max_line_chars=max_line_chars,
+                        profile=profile,
+                    )
+                else:
+                    messages = build_chunk_messages(
+                        lines,
+                        batch_start,
+                        batch_end,
+                        min_chars=min_chars,
+                        max_chars=max_chars,
+                        max_line_chars=max_line_chars,
+                    )
+                raw = await deps.ai.complete_json(messages)
+                return parse_merged(
+                    raw, batch_start=batch_start, batch_end=batch_end, profile=profile
+                )
+
+        return await asyncio.gather(*(_one(s, e) for s, e in batches), return_exceptions=True)
 
     async def run(
         self,
@@ -194,9 +250,11 @@ class ChunkStep:
         *,
         chunk_strategy: str | None = None,
         graph_extraction: str | None = None,
+        extraction_profile: str | None = None,
     ) -> dict:
-        """chunk_strategy/graph_extraction：本次运行覆盖值（llm/structural、on/off），
-        None = 按空间/全局解析；不落库，只影响这一次运行。"""
+        """chunk_strategy/graph_extraction/extraction_profile：本次运行覆盖值
+        （llm/structural、on/off、领域配置 key），None = 按空间/全局解析；
+        不落库，只影响这一次运行。"""
         deps = self._deps
         if is_image_mime(asset.mime_type):
             asset.graph_status = GraphStatus.SKIPPED
@@ -217,6 +275,11 @@ class ChunkStep:
         max_chars = (preset or {}).get("chunk_max_chars", deps.settings.pipeline.chunk_max_chars)
         strategy = self._resolve_chunk_strategy(deps, space, chunk_strategy)
         graph_on = self._resolve_graph_extraction(deps, space, graph_extraction)
+        profile = resolve_extraction_profile(
+            deps.settings, space, await load_extraction_profiles(session), extraction_profile
+        )
+        # 领域配置只在 LLM 分片且抽图谱时影响结果：只有这时才入缓存键、落 version_meta
+        used_profile = profile if strategy == "llm" and graph_on else None
 
         key = chunk_cache_key(
             deps.settings,
@@ -224,18 +287,42 @@ class ChunkStep:
             deps.settings.ai.llm.model,
             chunk_strategy=strategy,
             graph_extraction=graph_on,
+            extraction_profile=used_profile,
         )
         existing_ids = await self._unit_ids(session, version.id)
-        if version.chunk_cache_key == key and existing_ids:
+        # 上次有批次抽取失败（如网关 503）的结果不当作可复用缓存，重跑才能补抽
+        graph_meta_prev = version.version_meta.get("graph") or {}
+        prev_failed = failed_extraction_batches(
+            version.version_meta.get("chunk"),
+            has_extraction=graph_meta_prev.get("extraction") is not None,
+        )
+        if version.chunk_cache_key == key and existing_ids and not prev_failed:
             return {"skipped": True, "reason": "chunk_cache_key 命中（幂等跳过）"}
 
         tables = detect_table_ranges(lines)
         batches = split_batches(lines, deps.settings.pipeline.llm_batch_chars)
         drafts: list[ChunkDraft] = []
         fallback_batches = 0
+        # 抽图谱时 LLM 调用失败 / 抽取结构无效而没有产出实体的批次数（分片会走兜底、该批无实体）；
+        # 落 version_meta 供 reextract_graph.py 识别「有失败批次、需重抽」的资产
+        extraction_failed_batches = 0
         extraction = self._new_extraction_acc()
 
-        for batch_start, batch_end in batches:
+        # LLM 调用按 pipeline.llm_concurrency 并发（批与批互不依赖），结果按批次顺序消费：
+        # 分片、实体、关系的拼接顺序与串行时完全一致
+        llm_results: list[MergedExtraction | BaseException] = []
+        if strategy != "structural":
+            llm_results = await self._extract_batches(
+                deps,
+                lines,
+                batches,
+                graph_on=graph_on,
+                profile=profile,
+                min_chars=min_chars,
+                max_chars=max_chars,
+            )
+
+        for batch_index, (batch_start, batch_end) in enumerate(batches):
             batch_tables = [
                 t for t in tables if t.start_line >= batch_start and t.end_line <= batch_end
             ]
@@ -255,23 +342,16 @@ class ChunkStep:
                     )
                 )
                 continue
-            try:
-                build_messages = build_extraction_messages if graph_on else build_chunk_messages
-                messages = build_messages(
-                    lines,
-                    batch_start,
-                    batch_end,
-                    min_chars=min_chars,
-                    max_chars=max_chars,
-                    max_line_chars=deps.settings.pipeline.llm_batch_chars,
-                )
-                raw = await deps.ai.complete_json(messages)
-                merged = parse_merged(raw, batch_start=batch_start, batch_end=batch_end)
-            except Exception as e:  # LLM 超时/整体解析失败 → 整批结构化兜底
+            outcome = llm_results[batch_index]
+            if isinstance(outcome, BaseException):
+                if not isinstance(outcome, Exception):
+                    raise outcome  # 取消等非业务异常不能当成"这批失败"吞掉
+                # LLM 超时/整体解析失败 → 整批结构化兜底
                 logger.warning(
-                    "chunk_llm_batch_fallback", batch=(batch_start, batch_end), error=str(e)
+                    "chunk_llm_batch_fallback", batch=(batch_start, batch_end), error=str(outcome)
                 )
                 fallback_batches += 1
+                extraction_failed_batches += int(graph_on)
                 drafts.extend(
                     structural_fallback(
                         lines,
@@ -283,6 +363,7 @@ class ChunkStep:
                     )
                 )
                 continue
+            merged = outcome
 
             # ---- markers 路：有效则按 marker 分片，失效则兜底（抽取不受牵连）----
             if merged.markers_ok:
@@ -314,6 +395,8 @@ class ChunkStep:
             if merged.extraction_ok:
                 extraction["entities"].extend(merged.entities)
                 extraction["relations"].extend(merged.relations)
+            else:
+                extraction_failed_batches += int(graph_on)
 
         # 表格独立成片兜底：未被任何批次覆盖的表格区间（理论不发生）
         covered = {(d.start_line, d.end_line) for d in drafts if d.is_table}
@@ -358,7 +441,9 @@ class ChunkStep:
                 units[i].parent_id = key_to_id.get(d.parent_key)
 
         # ---- 抽取结果归属 chunk + 落 version_meta（GraphStep 消费）----
-        entity_payload, relation_payload = self._extraction_payload(extraction, drafts)
+        entity_payload, relation_payload = self._extraction_payload(
+            extraction, drafts, drop_isolated=deps.settings.graph.drop_isolated_entities
+        )
         extraction_ok = extraction["entities"] is not None
         graph_enabled = deps.settings.graph.enabled and graph_on
         if strategy == "structural":
@@ -373,6 +458,8 @@ class ChunkStep:
             graph_meta = {
                 "status": "pending",
                 "prompt_version": deps.settings.pipeline.prompt_version,
+                **self._profile_meta(used_profile),
+                "extraction_failed_batches": extraction_failed_batches,
                 "extraction": {
                     "entities": entity_payload,
                     "relations": relation_payload,
@@ -388,7 +475,9 @@ class ChunkStep:
             "chunk": {
                 "units": len(units),
                 "fallback_batches": fallback_batches,
+                "extraction_failed_batches": extraction_failed_batches,
                 "prompt_version": deps.settings.pipeline.prompt_version,
+                **self._profile_meta(used_profile),
                 "llm_model": deps.settings.ai.llm.model
                 or ("mock" if deps.settings.ai.mock else "unknown"),
             },
@@ -418,19 +507,27 @@ class ChunkStep:
         return resolve_graph_extraction(deps.settings, space, override)
 
     @staticmethod
+    def _profile_meta(profile: ExtractionProfile | None) -> dict[str, str | None]:
+        """version_meta 中的领域配置记录（未抽图谱时为 None）；reextract 脚本据指纹判断要否重抽。"""
+        return {
+            "extraction_profile": profile.key if profile else None,
+            "extraction_profile_fingerprint": profile.fingerprint if profile else None,
+        }
+
+    @staticmethod
     def _new_extraction_acc() -> dict[str, list | None]:
         return {"entities": [], "relations": []}
 
     @staticmethod
     def _extraction_payload(
-        acc: dict[str, list | None], drafts: list[ChunkDraft]
+        acc: dict[str, list | None], drafts: list[ChunkDraft], *, drop_isolated: bool = False
     ) -> tuple[list[dict], list[dict]]:
         """把累积的提及对象序列化为 version_meta 结构；关系归属 chunk_key。"""
         if acc["entities"] is None:
             return [], []
         entities: list[EntityMention] = acc["entities"]
         relations: list[RelationMention] = acc["relations"] or []
-        entities, relations = sanitize_extraction(entities, relations)
+        entities, relations = sanitize_extraction(entities, relations, drop_isolated=drop_isolated)
         attribute_relations(relations, drafts)
         return (
             [
@@ -439,6 +536,7 @@ class ChunkStep:
                     "type": e.type,
                     "description": e.description,
                     "lines": e.lines,
+                    "aliases": e.aliases,
                 }
                 for e in entities
             ],

@@ -12,6 +12,7 @@ import { useMySpaces, usePublicSpaces, useSpaceLinkToggle } from '@/hooks';
 import { t } from '@/i18n';
 import { CHUNK_PRESETS, EMBEDDING_MODELS, extractApiError, formatBytes, ROLE_TONE } from '@/utils';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
+import { ExtractionProfileField } from '@loomvec/ui/components/extraction-profile-field';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Badge } from '@loomvec/ui/components/ui/badge';
 import { Button } from '@loomvec/ui/components/ui/button';
@@ -59,6 +60,7 @@ const createSchema = z.object({
   review_required: z.boolean(),
   embedding_model: z.string(),
   chunk_preset: z.string(),
+  extraction_profile: z.string().nullable(),
 });
 
 type CreateValues = z.infer<typeof createSchema>;
@@ -76,6 +78,7 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
       review_required: false,
       embedding_model: UNSET,
       chunk_preset: UNSET,
+      extraction_profile: null,
     },
   });
 
@@ -94,6 +97,7 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
           review_required: values.review_required,
           embedding_model: values.embedding_model === UNSET ? undefined : values.embedding_model,
           chunk_preset: values.chunk_preset === UNSET ? undefined : values.chunk_preset,
+          extraction_profile: values.extraction_profile ?? undefined,
         },
       });
       if (error) throw new Error(extractApiError(error, t('createFailed')));
@@ -212,6 +216,14 @@ function CreateSpaceModal({ open, onClose }: { open: boolean; onClose: () => voi
             </Select>
             <p className="text-xs text-muted-foreground">{t('leaveBlankHint')}</p>
           </div>
+
+          <ExtractionProfileField
+            client={api}
+            id="create-extraction-profile"
+            value={form.watch('extraction_profile')}
+            onChange={(v) => form.setValue('extraction_profile', v)}
+            showEffectHint={false}
+          />
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>

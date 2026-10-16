@@ -19,6 +19,7 @@ import { t } from '@/i18n';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
+import { ExtractionProfileField } from '@loomvec/ui/components/extraction-profile-field';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
 import { Input } from '@loomvec/ui/components/ui/input';
@@ -47,6 +48,7 @@ const settingsSchema = z.object({
   review_required: z.boolean(),
   embedding_model: z.string().optional(),
   chunk_preset: z.string().optional(),
+  extraction_profile: z.string().nullable(),
   quota_storage_bytes: z.number({ error: t('spaces:numberRequired') }).min(0, t('spaces:numberMinInvalid')),
   quota_file_count: z.number({ error: t('spaces:numberRequired') }).min(0, t('spaces:numberMinInvalid')),
 });
@@ -66,6 +68,7 @@ export function SpaceSettingsPage() {
       review_required: false,
       embedding_model: undefined,
       chunk_preset: undefined,
+      extraction_profile: null,
       quota_storage_bytes: 0,
       quota_file_count: 0,
     },
@@ -93,6 +96,7 @@ export function SpaceSettingsPage() {
       review_required: s.review_required,
       embedding_model: s.embedding_model ?? undefined,
       chunk_preset: s.chunk_preset ?? undefined,
+      extraction_profile: s.extraction_profile ?? null,
       quota_storage_bytes: s.quota_storage_bytes,
       quota_file_count: s.quota_file_count,
     });
@@ -108,6 +112,10 @@ export function SpaceSettingsPage() {
           review_required: values.review_required,
           embedding_model: values.embedding_model ?? null,
           chunk_preset: values.chunk_preset ?? null,
+          // 未改动则不提交：引用的自定义配置已被删（失效）时，不能让改名等修改被它拖累
+          ...(values.extraction_profile !== (space.data?.extraction_profile ?? null)
+            ? { extraction_profile: values.extraction_profile }
+            : {}),
           quota_storage_bytes: values.quota_storage_bytes,
           quota_file_count: values.quota_file_count,
         },
@@ -246,6 +254,13 @@ export function SpaceSettingsPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            <ExtractionProfileField
+              client={api}
+              value={form.watch('extraction_profile')}
+              onChange={(v) => form.setValue('extraction_profile', v)}
+              disabled={!isOwner}
+            />
 
             <div className="flex flex-wrap gap-8">
               <div className="space-y-2">

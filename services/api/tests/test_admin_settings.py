@@ -38,6 +38,13 @@ def test_ai_registry_keys_complete_and_restart():
             assert d.sensitive
 
 
+def test_extraction_profiles_setting_admin_only():
+    """自定义抽取配置会进所有空间的 LLM system prompt（提示词注入面），仅 super_admin 可改。"""
+    from loomvec.core.graph.profiles import CUSTOM_PROFILES_SETTING_KEY
+
+    assert admin_settings.SETTING_REGISTRY[CUSTOM_PROFILES_SETTING_KEY].admin_only
+
+
 def test_base_url_validator():
     d = admin_settings.SETTING_REGISTRY["ai.clip.base_url"]
     d.validate("http://127.0.0.1:38011")

@@ -122,6 +122,10 @@ export interface SpaceRow {
   review_required: boolean;
   embedding_model: string | null;
   chunk_preset: string | null;
+  /** 抽取领域配置 key；null = 跟随全局默认 */
+  extraction_profile: string | null;
+  /** false = 所选自定义配置已失效（被删），管线正回落全局默认；留空恒为 true */
+  extraction_profile_valid: boolean;
   banned: boolean;
   created_at: string;
 }

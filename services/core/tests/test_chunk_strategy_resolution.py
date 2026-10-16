@@ -72,10 +72,10 @@ def test_graph_extraction_invalid_space_value_falls_back_to_global():
     assert ChunkStep._resolve_graph_extraction(deps, _space(graph_extraction="maybe")) is True
 
 
-def test_builtin_defaults_are_structural_and_extraction_off():
-    # 内置默认（无 config/loomvec.json 覆盖时）：规则分片、不抽实体
-    assert PipelineSettings().chunk_strategy == "structural"
-    assert GraphSettings().extraction_enabled is False
+def test_builtin_defaults_are_llm_and_extraction_on():
+    # 内置默认（无 config/loomvec.json 覆盖时）：LLM 语义分片 + 抽实体（跨论文图谱需要）
+    assert PipelineSettings().chunk_strategy == "llm"
+    assert GraphSettings().extraction_enabled is True
     assert PipelineSettings().chunk_strategy == DEFAULT_CHUNK_STRATEGY
 
 

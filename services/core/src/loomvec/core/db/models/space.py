@@ -53,6 +53,8 @@ class Space(UuidPkMixin, TenantMixin, TimestampMixin, SoftDeleteMixin, Base):
     # NULL = 跟随全局配置（pipeline.chunk_strategy / graph.enabled+extraction_enabled）
     chunk_strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
     graph_extraction: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 抽取领域配置 key（graph/profiles 内置 + 自定义）：NULL = 跟随全局 pipeline.extraction_profile
+    extraction_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # P2-CORE-03 空间级配额（0 = 不限；租户级配额在 tenant 表）
     quota_storage_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     quota_file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

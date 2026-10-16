@@ -14,6 +14,7 @@
   "group": {
     "ai": "AI 供方配置",
     "retrieval": "检索参数",
+    "pipeline": "抽取与管线",
     "upload": "上传策略",
     "sso": "SSO / OIDC",
     "extensions": "扩展插件",

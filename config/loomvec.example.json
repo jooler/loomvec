@@ -69,12 +69,15 @@
     "filter_scan_limit": 10000
   },
   "pipeline": {
+    "$comment": "extraction_profile = 抽取领域配置全局默认：内置 general（通用文档）/ academic（学术论文）/ biomedical（生物医药论文）/ legal（法律文书），或 admin 在「系统配置」里自定义的配置 key（system_config pipeline.extraction_profiles）；可被空间设置覆盖，值不可用时落 general 并告警。",
     "parser_version": "mineru-4.0.10-zip",
-    "prompt_version": "chunk-graph-v2",
-    "chunk_strategy": "structural",
+    "prompt_version": "chunk-graph-v5",
+    "chunk_strategy": "llm",
+    "extraction_profile": "general",
     "chunk_min_chars": 120,
     "chunk_max_chars": 2000,
     "llm_batch_chars": 6000,
+    "llm_concurrency": 8,
     "embed_batch_size": 16,
     "embed_text_max_chars": 6000,
     "index_text_max_chars": 30000,
@@ -151,7 +154,8 @@
   },
   "graph": {
     "enabled": true,
-    "extraction_enabled": false,
+    "extraction_enabled": true,
+    "drop_isolated_entities": true,
     "entity_link_threshold": 0.65,
     "merge_min_candidates": 1,
     "merge_trigger_delta": 20,

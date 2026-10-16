@@ -1,6 +1,7 @@
 """P3-QA-01 图谱一致性集成测试：抽取→写入→召回→合并→回滚→重跑幂等→删除级联。
 
-依赖 compose 基础设施栈（PG 35433 含 AGE / Milvus 39530）与已执行迁移。
+依赖 compose 基础设施栈（PG 35433 含 AGE / Milvus 39530）与已执行迁移；
+直连线上栈，须显式 LOOMVEC_LIVE_STACK_TESTS=1 才运行。
 AI 网关强制 mock（离线确定性）；实体链接阈值在测试内放宽（mock 向量为
 伪随机，不代表真实语义）以驱动 L3 全链路。
 封闭性：测试在专用空间执行，结束（含失败）时清理三方（PG/AGE/Milvus）痕迹。
@@ -9,6 +10,7 @@ AI 网关强制 mock（离线确定性）；实体链接阈值在测试内放宽
 from __future__ import annotations
 
 import contextlib
+import os
 import socket
 import uuid
 
@@ -40,8 +42,14 @@ def _port_open(host: str, port: int) -> bool:
         return False
 
 
+# 本文件直连线上 compose 栈（PG 35433 / Milvus 39530，专用空间 + 收尾清理），会写线上库：
+# 必须显式 LOOMVEC_LIVE_STACK_TESTS=1 才跑，默认跳过，避免整包 pytest 误伤线上数据
 pytestmark = [
     pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get("LOOMVEC_LIVE_STACK_TESTS") != "1",
+        reason="直连线上 compose 栈，需显式 LOOMVEC_LIVE_STACK_TESTS=1",
+    ),
     pytest.mark.skipif(
         not all(_port_open(h, p) for h, p in INTEGRATION_ENV),
         reason="compose 基础设施栈未运行",

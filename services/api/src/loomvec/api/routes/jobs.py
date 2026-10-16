@@ -69,6 +69,7 @@ async def retry_asset(
         step=body.step,
         chunk_strategy=body.chunk_strategy,
         graph_extraction=body.graph_extraction,
+        extraction_profile=body.extraction_profile,
     )
     latest = (await ProcessingJobRepo(session).recent_for_asset(asset_id, limit=1))[0]
     return JobOut(

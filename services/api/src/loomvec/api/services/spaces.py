@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Collection
+from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,12 +26,22 @@ from loomvec.core.constants import (
 )
 from loomvec.core.db.models import Space, SpaceMember, SpaceRole, SpaceType, User
 from loomvec.core.db.repos import AssetRepo, SpaceMemberRepo, SpaceRepo, SpaceUsageRepo
+from loomvec.core.db.system_config import load_extraction_profiles
 from loomvec.core.errors import ValidationError
 from loomvec.core.quota import get_or_create_usage
 from loomvec.core.storage import ObjectStorage
 from loomvec.core.storage_keys import asset_derived_prefixes, raw_space_prefix
 
 logger = structlog.get_logger("loomvec.api.spaces")
+
+# validate_space_settings 校验的字段（与 Space 列同名）
+_VALIDATED_FIELDS = (
+    "embedding_model",
+    "chunk_preset",
+    "chunk_strategy",
+    "graph_extraction",
+    "extraction_profile",
+)
 
 
 async def validate_space_settings(
@@ -39,8 +51,12 @@ async def validate_space_settings(
     chunk_preset: str | None = None,
     chunk_strategy: str | None = None,
     graph_extraction: str | None = None,
+    extraction_profile: str | None = None,
 ) -> None:
-    """创建/设置空间时的白名单校验（P4 动态配置：白名单可运营调整，即时生效）。"""
+    """创建/设置空间时的白名单校验（P4 动态配置：白名单可运营调整，即时生效）。
+
+    extraction_profile 须是可用的抽取领域配置（内置 + admin 自定义）。
+    """
     from loomvec.api.services.admin_settings import effective_value
 
     whitelist = await effective_value(session, "models.embedding_whitelist") or list(
@@ -56,6 +72,36 @@ async def validate_space_settings(
     _check(chunk_preset, list(presets), "不支持的分片预设")
     _check(chunk_strategy, list(CHUNK_STRATEGIES), "不支持的分片策略")
     _check(graph_extraction, list(GRAPH_EXTRACTION_MODES), "不支持的图谱抽取开关")
+    if extraction_profile is not None:
+        _check(
+            extraction_profile,
+            list(await load_extraction_profiles(session)),
+            "不支持的抽取领域配置",
+        )
+
+
+async def usable_profile_keys(session: AsyncSession) -> frozenset[str]:
+    """当前可用的抽取领域配置 key（内置 + 有效的自定义配置）。"""
+    return frozenset(await load_extraction_profiles(session))
+
+
+async def validate_space_settings_change(
+    session: AsyncSession, space: Space, fields: dict[str, Any]
+) -> None:
+    """已有空间改设置时的白名单校验：只校验与当前值不同的字段。
+
+    白名单是运营可调的（模型白名单、自定义抽取配置可被删除），空间上已存的旧值可能
+    不再在白名单内；前端保存设置会把整张表单原样提交，值未变化的字段不应因此被拒绝
+    （否则用户只改名称也保存不了）。想把字段改成另一个值时才要求新值可用。
+    """
+    await validate_space_settings(
+        session,
+        **{
+            name: fields[name]
+            for name in _VALIDATED_FIELDS
+            if name in fields and fields[name] != getattr(space, name)
+        },
+    )
 
 
 async def _unique_slug(session: AsyncSession, name: str) -> str:
@@ -81,11 +127,12 @@ async def create_space(
     chunk_preset: str | None = None,
     chunk_strategy: str | None = None,
     graph_extraction: str | None = None,
+    extraction_profile: str | None = None,
 ) -> Space:
     """创建空间：创建者即 owner；用量行与成员行同事务建立。
 
-    chunk_strategy/graph_extraction 留空 = 跟随全局配置（不像 chunk_preset 那样落默认值），
-    这是两者的常态——多数空间不需要覆盖。
+    chunk_strategy/graph_extraction/extraction_profile 留空 = 跟随全局配置（不像 chunk_preset
+    那样落默认值），这是三者的常态——多数空间不需要覆盖。
     """
     await validate_space_settings(
         session,
@@ -93,6 +140,7 @@ async def create_space(
         chunk_preset=chunk_preset,
         chunk_strategy=chunk_strategy,
         graph_extraction=graph_extraction,
+        extraction_profile=extraction_profile,
     )
     if not identity.user_id or identity.user_id.startswith("apikey:"):
         raise ValidationError("API Key 无法创建空间（无用户上下文）")
@@ -112,6 +160,7 @@ async def create_space(
         chunk_preset=chunk_preset or DEFAULT_CHUNK_PRESET,
         chunk_strategy=chunk_strategy,
         graph_extraction=graph_extraction,
+        extraction_profile=extraction_profile,
     )
     session.add(space)
     await session.flush()
@@ -121,7 +170,22 @@ async def create_space(
     return space
 
 
-def space_out(space: Space, *, my_role: str | None = None, member_count: int | None = None) -> dict:
+def extraction_profile_valid(space: Space, usable_keys: Collection[str]) -> bool:
+    """空间选择的抽取领域配置是否仍可用（留空 = 跟随全局，恒有效）。
+
+    False = 引用的自定义配置已被删除/失效：管线会按 resolve_extraction_profile 回落全局配置，
+    前端据此提示空间 owner 重新选择。
+    """
+    return space.extraction_profile is None or space.extraction_profile in usable_keys
+
+
+def space_out(
+    space: Space,
+    *,
+    usable_keys: Collection[str],
+    my_role: str | None = None,
+    member_count: int | None = None,
+) -> dict:
     data = {
         "id": space.id,
         "slug": space.slug,
@@ -134,6 +198,8 @@ def space_out(space: Space, *, my_role: str | None = None, member_count: int | N
         "chunk_preset": space.chunk_preset,
         "chunk_strategy": space.chunk_strategy,
         "graph_extraction": space.graph_extraction,
+        "extraction_profile": space.extraction_profile,
+        "extraction_profile_valid": extraction_profile_valid(space, usable_keys),
         "quota_storage_bytes": space.quota_storage_bytes,
         "quota_file_count": space.quota_file_count,
         "created_at": space.created_at,
@@ -146,17 +212,19 @@ def space_out(space: Space, *, my_role: str | None = None, member_count: int | N
 
 
 async def update_space_settings(session: AsyncSession, *, space: Space, **fields) -> Space:
-    """owner 设置：名称/描述/审核开关/模型与预设/空间级配额。"""
-    await validate_space_settings(
-        session,
-        embedding_model=fields.get("embedding_model"),
-        chunk_preset=fields.get("chunk_preset"),
-        chunk_strategy=fields.get("chunk_strategy"),
-        graph_extraction=fields.get("graph_extraction"),
-    )
-    # chunk_strategy/graph_extraction 的 None 是合法终态（留空=跟随全局配置），
+    """owner 设置：名称/描述/审核开关/模型与预设/空间级配额。
+
+    白名单只校验与当前值不同的字段（见 validate_space_settings_change）。
+    """
+    await validate_space_settings_change(session, space, fields)
+    # chunk_strategy/graph_extraction/extraction_profile 的 None 是合法终态（留空=跟随全局配置），
     # 必须能被显式 PATCH 为 null 来清除空间覆盖，不能像其余字段那样把 None 当“未提供”跳过
-    nullable_fields = ("review_required", "chunk_strategy", "graph_extraction")
+    nullable_fields = (
+        "review_required",
+        "chunk_strategy",
+        "graph_extraction",
+        "extraction_profile",
+    )
     for key, value in fields.items():
         if value is not None or key in nullable_fields:
             setattr(space, key, value)

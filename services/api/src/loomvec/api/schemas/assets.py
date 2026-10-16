@@ -206,6 +206,11 @@ class RetryRequest(BaseModel):
         description="本次运行的图谱抽取开关覆盖（优先于空间配置与全局默认，不落库）；"
         "仅从 parse/chunk 起跑时生效",
     )
+    extraction_profile: str | None = Field(
+        default=None,
+        description="本次运行的抽取领域配置覆盖（key 见 GET /extraction-profiles；"
+        "优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效",
+    )
 
 
 class PreviewOut(BaseModel):

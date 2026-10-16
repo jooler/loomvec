@@ -669,6 +669,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/spaces/{space_id}/extraction-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Space Extraction Profile
+         * @description 调整空间抽取领域配置（只影响之后新入库或重新处理的文件，存量不自动重跑）。
+         */
+        put: operations["set_space_extraction_profile_api_v1_admin_spaces__space_id__extraction_profile_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/spaces/{space_id}/quota": {
         parameters: {
             query?: never;
@@ -1622,6 +1642,26 @@ export interface paths {
          * @description 发起 OIDC 登录：按邮箱域定位租户绑定 → 302 IdP 授权页。
          */
         get: operations["oidc_login_api_v1_auth_oidc_login_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/extraction-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Extraction Profiles
+         * @description 可选的抽取领域配置（内置 + admin 自定义）：空间设置下拉与实体类型中文标签的数据源。
+         */
+        get: operations["list_extraction_profiles_api_v1_extraction_profiles_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3273,6 +3313,36 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** EntityTypeOut */
+        EntityTypeOut: {
+            /** Label */
+            label: string;
+            /** Type */
+            type: string;
+        };
+        /** ExtractionProfileListOut */
+        ExtractionProfileListOut: {
+            /**
+             * Default
+             * @description 全局默认配置 key（空间留空时生效）
+             */
+            default: string;
+            /** Items */
+            items: components["schemas"]["ExtractionProfileOut"][];
+        };
+        /** ExtractionProfileOut */
+        ExtractionProfileOut: {
+            /** Description */
+            description: string;
+            /** Entity Types */
+            entity_types: components["schemas"]["EntityTypeOut"][];
+            /** Is Builtin */
+            is_builtin: boolean;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+        };
         /**
          * FolderCopyRequest
          * @description 复制文件夹（递归，含资产）：目标父文件夹（同空间；空 = 根目录）。
@@ -3749,6 +3819,11 @@ export interface components {
              * @description 白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'qwen3-embedding-0.6b', 'mock']
              */
             embedding_model?: string | null;
+            /**
+             * Extraction Profile
+             * @description 抽取领域配置 key，留空跟随全局配置；可选值见 GET /extraction-profiles
+             */
+            extraction_profile?: string | null;
             /** Name */
             name: string;
             /**
@@ -3772,6 +3847,10 @@ export interface components {
             description: string | null;
             /** Embedding Model */
             embedding_model: string | null;
+            /** Extraction Profile */
+            extraction_profile: string | null;
+            /** Extraction Profile Valid */
+            extraction_profile_valid: boolean;
             /** File Count */
             file_count: number;
             /** Group Count */
@@ -3802,6 +3881,8 @@ export interface components {
             description?: string | null;
             /** Embedding Model */
             embedding_model?: string | null;
+            /** Extraction Profile */
+            extraction_profile?: string | null;
             /** Name */
             name?: string | null;
             /** Quota File Count */
@@ -3988,6 +4069,11 @@ export interface components {
              */
             chunk_strategy?: ("llm" | "structural") | null;
             /**
+             * Extraction Profile
+             * @description 本次运行的抽取领域配置覆盖（key 见 GET /extraction-profiles；优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效
+             */
+            extraction_profile?: string | null;
+            /**
              * Graph Extraction
              * @description 本次运行的图谱抽取开关覆盖（优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效
              */
@@ -4164,6 +4250,11 @@ export interface components {
              */
             embedding_model?: string | null;
             /**
+             * Extraction Profile
+             * @description 抽取领域配置 key，留空跟随全局配置；可选值见 GET /extraction-profiles
+             */
+            extraction_profile?: string | null;
+            /**
              * Graph Extraction
              * @description 留空跟随全局配置；白名单：['on', 'off']
              */
@@ -4177,6 +4268,16 @@ export interface components {
             review_required: boolean;
             /** @default shared */
             space_type: components["schemas"]["SpaceType"];
+        };
+        /** SpaceExtractionProfileRequest */
+        SpaceExtractionProfileRequest: {
+            /**
+             * Extraction Profile
+             * @description 抽取领域配置 key；null = 跟随全局配置。可选值见 GET /extraction-profiles
+             */
+            extraction_profile: string | null;
+            /** Reason */
+            reason: string;
         };
         /** SpaceLinkOut */
         SpaceLinkOut: {
@@ -4213,6 +4314,10 @@ export interface components {
             description: string | null;
             /** Embedding Model */
             embedding_model: string | null;
+            /** Extraction Profile */
+            extraction_profile: string | null;
+            /** Extraction Profile Valid */
+            extraction_profile_valid: boolean;
             /** Graph Extraction */
             graph_extraction: string | null;
             /**
@@ -4269,6 +4374,8 @@ export interface components {
             description?: string | null;
             /** Embedding Model */
             embedding_model?: string | null;
+            /** Extraction Profile */
+            extraction_profile?: string | null;
             /** Graph Extraction */
             graph_extraction?: string | null;
             /** Name */
@@ -6224,6 +6331,45 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_space_extraction_profile_api_v1_admin_spaces__space_id__extraction_profile_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpaceExtractionProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8527,6 +8673,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_extraction_profiles_api_v1_extraction_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtractionProfileListOut"];
                 };
             };
             /** @description Validation Error */

@@ -25,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@loomvec/ui/components/ui/dialog';
+import { ExtractionProfileField } from '@loomvec/ui/components/extraction-profile-field';
 import { Input } from '@loomvec/ui/components/ui/input';
 import { Label } from '@loomvec/ui/components/ui/label';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
@@ -57,6 +58,7 @@ const createSchema = z.object({
   name: z.string().min(1, t('overview:nameRequired')).max(255),
   description: z.string().max(2000).optional(),
   review_required: z.boolean(),
+  extraction_profile: z.string().nullable(),
 });
 
 type CreateValues = z.infer<typeof createSchema>;
@@ -67,7 +69,7 @@ function CreateSpaceDialog(props: { open: boolean; onOpenChange: (open: boolean)
   const { t } = useTranslation('overview');
   const form = useForm<CreateValues>({
     resolver: zodResolver(createSchema),
-    defaultValues: { name: '', description: '', review_required: false },
+    defaultValues: { name: '', description: '', review_required: false, extraction_profile: null },
   });
 
   const create = useMutation({
@@ -78,6 +80,7 @@ function CreateSpaceDialog(props: { open: boolean; onOpenChange: (open: boolean)
             name: values.name,
             description: values.description || null,
             review_required: values.review_required,
+            extraction_profile: values.extraction_profile,
           },
         }),
       );
@@ -123,6 +126,13 @@ function CreateSpaceDialog(props: { open: boolean; onOpenChange: (open: boolean)
               onCheckedChange={(v) => form.setValue('review_required', v)}
             />
           </div>
+          <ExtractionProfileField
+            client={api}
+            id="create-extraction-profile"
+            value={form.watch('extraction_profile')}
+            onChange={(v) => form.setValue('extraction_profile', v)}
+            showEffectHint={false}
+          />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
               {t('action.cancel')}

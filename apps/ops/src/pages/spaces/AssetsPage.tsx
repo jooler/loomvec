@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
-import { api, unwrap } from '@/api';
+import { api } from '@/api';
+import { useOpsSpace } from './useOpsSpace';
 import {
   AssetViewerOverlay,
   Finder,
@@ -44,11 +44,6 @@ import {
 
 const ALL = '__all__';
 
-interface OpsSpaceDetail {
-  id: string;
-  name: string;
-}
-
 export function AssetsPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const { t } = useTranslation('spaces');
@@ -65,14 +60,7 @@ export function AssetsPage() {
     resolve: (ok: boolean) => void;
   } | null>(null);
 
-  const space = useQuery({
-    queryKey: ['ops-space', spaceId],
-    queryFn: () =>
-      unwrap<OpsSpaceDetail>(
-        api.GET('/api/v1/ops/spaces/{space_id}', { params: { path: { space_id: spaceId! } } }),
-      ),
-    enabled: !!spaceId,
-  });
+  const space = useOpsSpace(spaceId);
 
   const folders = useFinderFolders(api, spaceId);
   const assets = useFinderAssets(api, spaceId, currentFolderId, filters);

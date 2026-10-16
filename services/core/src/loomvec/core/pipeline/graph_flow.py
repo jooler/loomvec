@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.core.constants import EVENT_GRAPH_READY, GRAPH_NAME
 from loomvec.core.db.models import Asset, AssetVersion, Entity, GraphStatus, SemanticUnit, Space
+from loomvec.core.db.system_config import load_extraction_profiles
 from loomvec.core.events import publish_event
 from loomvec.core.graph.age import AgeStore, GraphEdge, GraphNode
 from loomvec.core.graph.ontology import (
@@ -32,10 +33,19 @@ from loomvec.core.graph.ontology import (
     entity_key,
     normalize_entity_name,
 )
+from loomvec.core.graph.profiles import ExtractionProfile
 from loomvec.core.pipeline.base import (
     PipelineDeps,
     resolve_chunk_strategy,
+    resolve_extraction_profile,
     resolve_graph_extraction,
+)
+from loomvec.core.pipeline.extraction import (
+    EntityMention,
+    RelationMention,
+    build_extraction_messages,
+    parse_merged,
+    sanitize_extraction,
 )
 from loomvec.core.pipeline.mime import is_media_mime
 
@@ -54,6 +64,7 @@ class _Cluster:
     description: str | None = None
     aliases: list[str] = field(default_factory=list)
     lines: list[int] = field(default_factory=list)
+    mentions: int = 0  # 提及次数（上限裁剪时作重要性依据之一）
     key: str = ""
     resolved_id: UUID | None = None  # 链接到的 entity 主表 id（新建者写回）
     is_new: bool = False
@@ -82,8 +93,14 @@ class EntityGraphService:
             text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"loomvec:graph:{space_id}"}
         )
 
-        clusters, key_to_cluster = self._cluster_entities(extraction.get("entities") or [], asset)
+        clusters, key_to_cluster = self._cluster_entities(
+            extraction.get("entities") or [], asset, extraction.get("relations") or []
+        )
         if not clusters:
+            # 重抽后零实体的文档：旧边（chunk_ids 指向已删的旧单元）也要清掉，并清理因此悬空的节点，
+            # 否则旧边永远残留、gc_entities 的保留集（有边的节点）清不掉对应实体
+            touched = await AGE.delete_asset_edges(session, space_id, asset.id)
+            await AGE.delete_orphan_nodes(session, space_id, touched)
             await self._finish(asset, version, written_nodes=0, written_edges=0)
             return {"entities": 0, "relations": 0}
 
@@ -140,11 +157,19 @@ class EntityGraphService:
     # ---------- 聚合与链接 ----------
 
     def _cluster_entities(
-        self, mentions: list[dict[str, Any]], asset: Asset
+        self,
+        mentions: list[dict[str, Any]],
+        asset: Asset,
+        relations: list[dict[str, Any]] | None = None,
     ) -> tuple[list[_Cluster], dict[str, _Cluster]]:
-        """提及 → (归一化名, 类型) 聚类；别名收集原文变体。"""
+        """提及 → (归一化名, 类型) 聚类；别名收集原文变体。
+
+        超过 `graph.max_entities_per_asset` 时按重要性保留，而不是按出现顺序截断
+        （顺序截断会让长文档后半部分的实体整体丢失）：先看参与的关系数，再看被提及的次数，
+        并列时靠前的优先；保留下来的仍按原出现顺序，所以未超限时行为与以前完全一致。
+        """
         by_cluster: dict[tuple[str, str], _Cluster] = {}
-        cap = self._deps.settings.graph.max_entities_per_asset
+        order: dict[tuple[str, str], int] = {}
         for m in mentions:
             name = str(m.get("name") or "").strip()
             if not name:
@@ -156,20 +181,45 @@ class EntityGraphService:
             ck = (norm, etype)
             cluster = by_cluster.get(ck)
             if cluster is None:
-                if len(by_cluster) >= cap:
-                    continue
                 description = str(m.get("description") or "") or None
                 cluster = _Cluster(name=name, norm=norm, type=etype, description=description)
                 cluster.key = entity_key(str(asset.space_id), name, etype)
                 by_cluster[ck] = cluster
+                order[ck] = len(order)
             else:
                 if not cluster.description and m.get("description"):
                     cluster.description = str(m["description"])
                 if name != cluster.name and name not in cluster.aliases:
                     cluster.aliases.append(name)
+            cluster.mentions += 1
+            for alias in m.get("aliases") or []:
+                alias = str(alias).strip()
+                if alias and alias != cluster.name and alias not in cluster.aliases:
+                    cluster.aliases.append(alias)
             for ln in m.get("lines") or []:
                 if ln not in cluster.lines:
                     cluster.lines.append(ln)
+
+        cap = self._deps.settings.graph.max_entities_per_asset
+        if len(by_cluster) > cap:
+            degree: dict[str, int] = {}
+            for r in relations or []:
+                for side in ("head", "tail"):
+                    n = normalize_entity_name(str(r.get(side) or ""))
+                    if n:
+                        degree[n] = degree.get(n, 0) + 1
+            ranked = sorted(
+                by_cluster,
+                key=lambda ck: (-degree.get(ck[0], 0), -by_cluster[ck].mentions, order[ck]),
+            )
+            keep = set(ranked[:cap])
+            logger.warning(
+                "graph_entity_cap_applied",
+                asset_id=str(asset.id) if getattr(asset, "id", None) else None,
+                entities=len(by_cluster),
+                kept=cap,
+            )
+            by_cluster = {ck: c for ck, c in by_cluster.items() if ck in keep}
         clusters = sorted(by_cluster.values(), key=lambda c: c.norm)
         return clusters, {(c.norm, c.type): c for c in clusters}
 
@@ -251,8 +301,6 @@ class EntityGraphService:
             ck = (head_c.key, tail_c.key, rel_type)
             edge = merged.get(ck)
             if edge is None:
-                if len(merged) >= cap:
-                    continue
                 edge = GraphEdge(
                     head_key=head_c.key,
                     tail_key=tail_c.key,
@@ -266,7 +314,14 @@ class EntityGraphService:
             unit = unit_by_order.get(int(chunk_key)) if chunk_key is not None else None
             if unit is not None and str(unit.id) not in edge.chunk_ids:
                 edge.chunk_ids.append(str(unit.id))
-        return list(merged.values())
+        edges = list(merged.values())
+        if len(edges) > cap:
+            # 超限按权重（被提及次数）保留，并列时靠前的优先；保留下来的仍按原顺序
+            ranked = sorted(range(len(edges)), key=lambda i: (-edges[i].weight, i))
+            keep = set(ranked[:cap])
+            logger.warning("graph_relation_cap_applied", relations=len(edges), kept=cap)
+            edges = [e for i, e in enumerate(edges) if i in keep]
+        return edges
 
     @staticmethod
     def _mention_index(relations: list[dict[str, Any]]) -> dict[str, str]:
@@ -416,9 +471,11 @@ class GraphStep:
         *,
         chunk_strategy: str | None = None,
         graph_extraction: str | None = None,
+        extraction_profile: str | None = None,
     ) -> dict:
-        """chunk_strategy/graph_extraction：本次运行覆盖（与 ChunkStep 同一组值），
-        只用于下面 skipped 复核，保证复核口径与本次 chunk 步一致。"""
+        """chunk_strategy/graph_extraction/extraction_profile：本次运行覆盖（与 ChunkStep
+        同一组值）——前两者用于下面 skipped 复核，保证复核口径与本次 chunk 步一致；
+        extraction_profile 用于媒体资产的现场抽取。"""
         deps = self._deps
         if not deps.settings.graph.enabled:
             asset.graph_status = GraphStatus.SKIPPED
@@ -453,7 +510,13 @@ class GraphStep:
             .all()
         )
         if is_media_mime(asset.mime_type):
-            extraction = await self._media_extraction(asset, version, units)
+            space = (
+                await session.execute(select(Space).where(Space.id == asset.space_id))
+            ).scalar_one_or_none()
+            profile = resolve_extraction_profile(
+                deps.settings, space, await load_extraction_profiles(session), extraction_profile
+            )
+            extraction = await self._media_extraction(units, profile)
         else:
             extraction = (version.version_meta.get("graph") or {}).get("extraction")
         if not extraction:
@@ -474,14 +537,14 @@ class GraphStep:
             return {"degraded": True, "reason": str(e)[:200]}
 
     async def _media_extraction(
-        self, asset: Asset, version: AssetVersion, units: list[SemanticUnit]
+        self, units: list[SemanticUnit], profile: ExtractionProfile
     ) -> dict[str, list]:
         """媒体单元 → 伪行文本抽取（每单元一行；markers 忽略，场景即边界）。"""
         deps = self._deps
         if not units:
             return {}
-        entities: list[dict] = []
-        relations: list[dict] = []
+        entities: list[EntityMention] = []
+        relations: list[RelationMention] = []
         # 伪行坐标系：L{i+1} ↔ units[i]；按批字符上限分组调用
         batch_cap = max(1, deps.settings.pipeline.llm_batch_chars)
         batch: list[tuple[int, SemanticUnit]] = []
@@ -493,10 +556,10 @@ class GraphStep:
                 return
             first, last = batch[0][0] + 1, batch[-1][0] + 1
             pseudo = [f"L{i + 1}: {u.title or ''} {u.content}".strip() for i, u in batch]
-            merged = await self._extract_lines(pseudo, first, last)
+            merged = await self._extract_lines(pseudo, first, last, profile)
             if merged is not None:
-                entities.extend(merged["entities"])
-                relations.extend(merged["relations"])
+                entities.extend(merged[0])
+                relations.extend(merged[1])
             batch, batch_chars = [], 0
 
         for i, u in enumerate(units):
@@ -507,42 +570,13 @@ class GraphStep:
             batch_chars += size
         await _flush()
 
+        # 与文本路径（ChunkStep._extraction_payload）同口径：全部批次汇总后统一校验关系端点，
+        # 并按 graph.drop_isolated_entities 丢弃不参与任何关系的实体
+        entities, relations = sanitize_extraction(
+            entities, relations, drop_isolated=deps.settings.graph.drop_isolated_entities
+        )
         if not entities:
             return {}
-        return {"entities": entities, "relations": relations}
-
-    async def _extract_lines(self, lines: list[str], start: int, end: int) -> dict | None:
-        from loomvec.core.pipeline.extraction import build_extraction_messages, parse_merged
-
-        messages = build_extraction_messages(
-            [""] * (start - 1) + lines,
-            start,
-            end,
-            min_chars=1,
-            max_chars=10**6,
-            max_line_chars=self._deps.settings.pipeline.llm_batch_chars,
-        )
-        try:
-            raw = await self._deps.ai.complete_json(messages)
-            merged = parse_merged(raw, batch_start=start, batch_end=end)
-        except Exception as e:
-            logger.warning("media_extraction_failed", error=str(e))
-            return None
-        if not merged.extraction_ok:
-            return None
-        # 关系归属：伪行 L{i+1} ↔ 单元 order_index=i
-        relation_payloads = []
-        for r in merged.relations:
-            anchor = r.evidence_lines[0] if r.evidence_lines else None
-            relation_payloads.append(
-                {
-                    "head": r.head,
-                    "tail": r.tail,
-                    "type": r.type,
-                    "evidence_lines": r.evidence_lines,
-                    "chunk_key": (anchor - 1) if anchor is not None else None,
-                }
-            )
         return {
             "entities": [
                 {
@@ -550,11 +584,48 @@ class GraphStep:
                     "type": e.type,
                     "description": e.description,
                     "lines": e.lines,
+                    "aliases": e.aliases,
                 }
-                for e in merged.entities
+                for e in entities
             ],
-            "relations": relation_payloads,
+            "relations": [
+                {
+                    "head": r.head,
+                    "tail": r.tail,
+                    "type": r.type,
+                    "evidence_lines": r.evidence_lines,
+                    "chunk_key": r.chunk_key,
+                }
+                for r in relations
+            ],
         }
+
+    async def _extract_lines(
+        self, lines: list[str], start: int, end: int, profile: ExtractionProfile
+    ) -> tuple[list[EntityMention], list[RelationMention]] | None:
+        """一批伪行的抽取；失败/结构无效返回 None。关系的 chunk_key 已按伪行回填。"""
+        messages = build_extraction_messages(
+            [""] * (start - 1) + lines,
+            start,
+            end,
+            min_chars=1,
+            max_chars=10**6,
+            max_line_chars=self._deps.settings.pipeline.llm_batch_chars,
+            profile=profile,
+        )
+        try:
+            raw = await self._deps.ai.complete_json(messages)
+            merged = parse_merged(raw, batch_start=start, batch_end=end, profile=profile)
+        except Exception as e:
+            logger.warning("media_extraction_failed", error=str(e))
+            return None
+        if not merged.extraction_ok:
+            return None
+        # 关系归属：伪行 L{i+1} ↔ 单元 order_index=i
+        for r in merged.relations:
+            anchor = r.evidence_lines[0] if r.evidence_lines else None
+            r.chunk_key = (anchor - 1) if anchor is not None else None
+        return merged.entities, merged.relations
 
     async def _mark_pending_retry(self, asset_id: UUID) -> None:
         from loomvec.core.constants import EVENT_GRAPH_PENDING_RETRY

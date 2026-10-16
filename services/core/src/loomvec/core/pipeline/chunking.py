@@ -95,7 +95,14 @@ def split_batches(lines: list[str], max_chars: int) -> list[tuple[int, int]]:
     return batches
 
 
-def numbered_lines(lines: list[str], start: int, end: int, *, max_line_chars: int) -> str:
+def numbered_lines(
+    lines: list[str],
+    start: int,
+    end: int,
+    *,
+    max_line_chars: int,
+    masked: set[int] | None = None,
+) -> str:
     """提示词正文：`L{行号}: 内容`。单行超过 max_line_chars 时截断显示并注明原长——
 
     split_batches 只在行间切批，一行再长也整行入批；截断保证单次请求有上限，
@@ -103,6 +110,9 @@ def numbered_lines(lines: list[str], start: int, end: int, *, max_line_chars: in
     """
     out: list[str] = []
     for n in range(start, end + 1):
+        if masked and n in masked:
+            out.append(f"L{n}: [略]")
+            continue
         line = lines[n - 1]
         if len(line) > max_line_chars:
             line = f"{line[:max_line_chars]}…[本行过长已截断，原 {len(line)} 字]"

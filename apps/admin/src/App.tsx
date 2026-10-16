@@ -214,6 +214,14 @@ export default function App() {
           }
         />
         <Route
+          path="/settings/pipeline"
+          element={
+            <SuperAdminOnly>
+              <SettingsPage group="pipeline" />
+            </SuperAdminOnly>
+          }
+        />
+        <Route
           path="/settings/upload"
           element={
             <SuperAdminOnly>

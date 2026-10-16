@@ -1,11 +1,13 @@
 """P1-QA-02 管线集成测试：文本摄取 → parse/chunk/embed/index → 混合检索命中。
 
 依赖 compose 基础设施栈（PG 35433 / Milvus 39530 / RustFS 39000 / Redis 36379）
-与已执行迁移（make migrate）。AI 网关强制 mock（离线确定性）。Docker 不可用自动跳过。
+与已执行迁移（make migrate）；直连线上栈，须显式 LOOMVEC_LIVE_STACK_TESTS=1 才运行。
+AI 网关强制 mock（离线确定性）。Docker 不可用自动跳过。
 """
 
 from __future__ import annotations
 
+import os
 import socket
 import uuid
 
@@ -35,8 +37,14 @@ def _port_open(host: str, port: int) -> bool:
         return False
 
 
+# 本文件直连线上 compose 栈（专用空间 + 收尾清理），会写线上库：
+# 必须显式 LOOMVEC_LIVE_STACK_TESTS=1 才跑，默认跳过，避免整包 pytest 误伤线上数据
 pytestmark = [
     pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get("LOOMVEC_LIVE_STACK_TESTS") != "1",
+        reason="直连线上 compose 栈，需显式 LOOMVEC_LIVE_STACK_TESTS=1",
+    ),
     pytest.mark.skipif(not _stack_ready(), reason="compose 基础设施栈未运行"),
 ]
 

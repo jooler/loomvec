@@ -29,6 +29,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from loomvec.core.constants import DEFAULT_EXTRACTION_PROFILE, EXTRACTION_PROFILE_KEY_PATTERN
+
 
 def _find_env_file() -> str | None:
     """从 cwd 向上查找最近的 .env，止步于仓库根（.git 所在目录）。
@@ -299,16 +301,27 @@ class PipelineSettings(BaseModel):
     parser_version: str = "mineru-4.0.10-zip"
     # P3 起分片与图谱抽取合并为单次 LLM 调用（03 文档 §3.2），prompt 版本升级；
     # 缓存键含此版本 → 升级后旧资产重跑会重新计费抽取
-    prompt_version: str = "chunk-graph-v2"
+    prompt_version: str = "chunk-graph-v5"
     # 分片策略全局默认（可被 Space.chunk_strategy 覆盖，见 constants.CHUNK_STRATEGIES）：
     # llm = 语义分片；structural = 规则分片，不调用 LLM，零 token 成本，
     # 与图谱抽取互斥（选 structural 即不产出实体关系，不看 graph.enabled）。
-    # 默认 structural：入库默认不调用 LLM 分片/抽实体；需要时在空间级设 llm，
-    # 或对单个资产经 retry 一次性覆盖（Finder「LLM重建」，见 pipeline.base）。
-    chunk_strategy: Literal["llm", "structural"] = "structural"
+    # 默认 llm：入库默认 LLM 语义分片并同时抽实体关系（跨论文图谱需要）；想省 token 可在
+    # 空间级设 structural，或全局改回 structural（Finder「LLM重建」可对单个资产一次性覆盖）。
+    chunk_strategy: Literal["llm", "structural"] = "llm"
+    # 抽取领域配置全局默认（graph/profiles 内置 general/academic/biomedical/legal 或
+    # admin 自定义配置的 key）：决定 LLM 抽取 prompt 的领域内容与兜底过滤规则。
+    # 可被 Space.extraction_profile 覆盖；值不可用时落 general
+    # （pipeline.base.resolve_extraction_profile）
+    extraction_profile: str = Field(
+        default=DEFAULT_EXTRACTION_PROFILE, pattern=EXTRACTION_PROFILE_KEY_PATTERN
+    )
     chunk_min_chars: int = 120
     chunk_max_chars: int = 2000
     llm_batch_chars: int = 6000  # 单次 LLM 分片调用的最大文档字符量
+    # 同一资产内各批 LLM 分片 / 抽取调用的并发数（每个资产各自一个上限，不是全局总量）。
+    # 多篇同时入库时总并发 = 篇数 × 该值，须小于网关 runtime.max_active_runtimes（默认 32），
+    # 否则超出的调用被网关拒绝（503）、该批走结构化兜底。供方有严格限流（RPM）时调小，1 = 串行
+    llm_concurrency: int = Field(default=8, ge=1, le=32)
     embed_batch_size: int = 16
     embed_text_max_chars: int = 6000  # 嵌入输入截断（云端模型 token 上限内保守值）
     index_text_max_chars: int = 30000  # Milvus 索引正文截断（VARCHAR 上限 65535）
@@ -444,9 +457,9 @@ class GraphSettings(BaseModel):
     """
 
     enabled: bool = True  # 图谱总开关（写入与 L3/L4 召回联动；关闭即纯 L1/L2）
-    # 合并抽取开关，默认关（新资产不产出实体，存量保留）；可被 Space.graph_extraction
-    # 或单次 retry 覆盖（graph_extraction=on）打开
-    extraction_enabled: bool = False
+    # 合并抽取开关，默认开（新资产随 LLM 分片一并产出实体关系；structural 策略下恒不抽）；
+    # 可被 Space.graph_extraction 或单次 retry 覆盖（graph_extraction=on/off）
+    extraction_enabled: bool = True
     entity_link_threshold: float = 0.65  # 查询侧实体链接：问题向量与实体向量的相似度下限
     merge_min_candidates: int = 1  # 空间级合并任务触发：发现候选 ≥ N 才执行
     merge_trigger_delta: int = 20  # 距上次合并新增实体达该数量即触发合并
@@ -455,8 +468,12 @@ class GraphSettings(BaseModel):
     graph_top_k: int = 30  # L3 召回：图谱路径回收 chunk 候选上限
     adjacency_enabled: bool = True  # 图谱邻接补全（命中 chunk 的 1 跳邻居并入候选池）
     adjacency_top_k: int = 8  # 邻接补全：取融合前 top-N 命中做种子
-    max_entities_per_asset: int = 300  # 单资产抽取实体上限（防 prompt 失控）
-    max_relations_per_asset: int = 600  # 单资产抽取关系上限
+    # 单资产写入图谱的实体 / 关系上限；超限按重要性保留，不按出现顺序截断
+    # （实体：参与的关系数 → 被提及次数；关系：权重）
+    # 抽取后丢弃不参与任何关系的实体（L3 只经边的 chunk_ids 召回，孤立实体无检索价值）
+    drop_isolated_entities: bool = True
+    max_entities_per_asset: int = 300
+    max_relations_per_asset: int = 600
     merge_interval_seconds: float = 1800.0  # 空间合并周期任务扫描间隔（beat）
     community_interval_seconds: float = 3600.0  # 社区检测周期任务扫描间隔（beat）
 

@@ -64,6 +64,8 @@ _ADDITIVE_COLUMNS: list[tuple[str, str]] = [
     # 分片策略 / 图谱抽取空间级覆盖（constants.CHUNK_STRATEGIES / GRAPH_EXTRACTION_MODES）
     ("space", "ADD COLUMN IF NOT EXISTS chunk_strategy VARCHAR(32)"),
     ("space", "ADD COLUMN IF NOT EXISTS graph_extraction VARCHAR(32)"),
+    # 抽取领域配置空间级选择（graph/profiles；NULL = 跟随全局 pipeline.extraction_profile）
+    ("space", "ADD COLUMN IF NOT EXISTS extraction_profile VARCHAR(64)"),
     # 层级知识库：Tag 仍兼容旧标签，只增加父节点关系
     ("tag", "ADD COLUMN IF NOT EXISTS parent_id UUID"),
     ("tag", "ADD COLUMN IF NOT EXISTS space_id UUID"),

@@ -10,6 +10,9 @@
   "unban": "解封",
   "transferOwner": "Owner 转移",
   "adjustQuota": "调整配额",
+  "adjustExtractionProfile": "调整抽取领域",
+  "extractionProfileTitle": "调整空间抽取领域配置",
+  "extractionProfileAdjusted": "抽取领域配置已调整",
   "clearContent": "内容清空",
   "banTitle": "封禁空间「{{name}}」",
   "banDescription": "封禁后该空间所有成员访问被拒，数据保留。此为危险操作。",
@@ -36,6 +39,8 @@
   "quotaFilesLabel": "文件数配额",
   "quotaFilesRequired": "请输入文件数配额",
   "platformLevel": "—（平台级）",
+  "followGlobal": "跟随全局默认",
+  "extractionProfileStale": "配置已失效（{{key}}），回落全局默认",
   "toggle": {
     "on": "开启",
     "off": "关闭"
@@ -66,6 +71,7 @@
     "fileCount": "文件数",
     "embeddingModel": "嵌入模型",
     "chunkPreset": "分块预设",
+    "extractionProfile": "抽取领域配置",
     "userId": "用户 ID",
     "role": "角色",
     "invitedBy": "邀请人"

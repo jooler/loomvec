@@ -54,13 +54,19 @@ class PipelineRunner:
         *,
         chunk_strategy: str | None = None,
         graph_extraction: str | None = None,
+        extraction_profile: str | None = None,
     ) -> list[dict]:
-        """chunk_strategy/graph_extraction：本次运行覆盖（不落库），优先级高于 Space 覆盖
-        与全局默认（见 pipeline.base.resolve_chunk_strategy）。chunk 步据此分片/抽取，
-        graph 步据此复核 skipped，两步口径一致。"""
+        """chunk_strategy/graph_extraction/extraction_profile：本次运行覆盖（不落库），
+        优先级高于 Space 覆盖与全局默认（见 pipeline.base.resolve_chunk_strategy /
+        resolve_extraction_profile）。chunk 步据此分片/抽取，graph 步据此复核 skipped、
+        做媒体现场抽取，两步口径一致。"""
         if from_step not in PIPELINE_STEPS:
             raise ValidationError(f"未知步骤：{from_step}", steps=PIPELINE_STEPS)
-        overrides = {"chunk_strategy": chunk_strategy, "graph_extraction": graph_extraction}
+        overrides = {
+            "chunk_strategy": chunk_strategy,
+            "graph_extraction": graph_extraction,
+            "extraction_profile": extraction_profile,
+        }
         results: list[dict] = []
         for name in PIPELINE_STEPS[PIPELINE_STEPS.index(from_step) :]:
             step_kwargs = overrides if name in ("chunk", "graph") else {}

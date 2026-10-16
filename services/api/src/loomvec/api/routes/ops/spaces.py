@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -51,6 +52,10 @@ class OpsSpaceCreateRequest(BaseModel):
         default=None, description=f"白名单：{list(EMBEDDING_MODELS)}"
     )
     chunk_preset: str | None = Field(default=None, description=f"白名单：{list(CHUNK_PRESETS)}")
+    extraction_profile: str | None = Field(
+        default=None,
+        description="抽取领域配置 key，留空跟随全局配置；可选值见 GET /extraction-profiles",
+    )
 
 
 class OpsSpaceUpdateRequest(BaseModel):
@@ -59,6 +64,7 @@ class OpsSpaceUpdateRequest(BaseModel):
     review_required: bool | None = None
     embedding_model: str | None = None
     chunk_preset: str | None = None
+    extraction_profile: str | None = None
     quota_storage_bytes: int | None = Field(default=None, ge=0)
     quota_file_count: int | None = Field(default=None, ge=0)
 
@@ -71,6 +77,9 @@ class OpsSpaceOut(BaseModel):
     review_required: bool
     embedding_model: str | None
     chunk_preset: str | None
+    extraction_profile: str | None
+    # false = 空间选的自定义抽取配置已被删除/失效，管线正回落全局配置；留空恒为 true
+    extraction_profile_valid: bool
     owner_id: uuid.UUID | None
     created_at: object
     member_count: int
@@ -146,6 +155,7 @@ async def ensure_owner_membership(session: AsyncSession, space: Space, identity:
 def _space_out(
     s: Space,
     *,
+    usable_keys: Collection[str],
     member_count: int,
     group_count: int,
     storage_bytes: int,
@@ -159,6 +169,8 @@ def _space_out(
         review_required=s.review_required,
         embedding_model=s.embedding_model,
         chunk_preset=s.chunk_preset,
+        extraction_profile=s.extraction_profile,
+        extraction_profile_valid=space_service.extraction_profile_valid(s, usable_keys),
         owner_id=s.owner_id,
         created_at=s.created_at,
         member_count=member_count,
@@ -216,9 +228,11 @@ async def list_public_spaces(
     )
     counts = await _group_counts(session, [s.id for s in spaces])
     usages = await _usage_map(session, [s.id for s in spaces])
+    usable_keys = await space_service.usable_profile_keys(session)
     items = [
         _space_out(
             s,
+            usable_keys=usable_keys,
             member_count=await space_service.member_count(session, s.id),
             group_count=counts.get(s.id, 0),
             storage_bytes=usages[s.id].storage_bytes if s.id in usages else 0,
@@ -245,9 +259,11 @@ async def create_public_space(
         review_required=body.review_required,
         embedding_model=body.embedding_model,
         chunk_preset=body.chunk_preset,
+        extraction_profile=body.extraction_profile,
     )
     return _space_out(
         space,
+        usable_keys=await space_service.usable_profile_keys(session),
         member_count=1,
         group_count=0,
         storage_bytes=0,
@@ -264,8 +280,10 @@ async def get_public_space_detail(
     await ensure_owner_membership(session, space, identity)
     counts = await _group_counts(session, [space.id])
     usages = await _usage_map(session, [space.id])
+    usable_keys = await space_service.usable_profile_keys(session)
     return _space_out(
         space,
+        usable_keys=usable_keys,
         member_count=await space_service.member_count(session, space.id),
         group_count=counts.get(space.id, 0),
         storage_bytes=usages[space.id].storage_bytes if space.id in usages else 0,
@@ -286,8 +304,10 @@ async def update_public_space(
     space = await space_service.update_space_settings(session, space=space, **fields)
     counts = await _group_counts(session, [space.id])
     usages = await _usage_map(session, [space.id])
+    usable_keys = await space_service.usable_profile_keys(session)
     return _space_out(
         space,
+        usable_keys=usable_keys,
         member_count=await space_service.member_count(session, space.id),
         group_count=counts.get(space.id, 0),
         storage_bytes=usages[space.id].storage_bytes if space.id in usages else 0,

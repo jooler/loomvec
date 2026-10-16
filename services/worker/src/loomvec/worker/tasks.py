@@ -146,13 +146,18 @@ def process_asset(
     from_step: str = "parse",
     chunk_strategy: str | None = None,
     graph_extraction: str | None = None,
+    extraction_profile: str | None = None,
 ) -> dict:
     """执行资产管线；from_step 支持单步重跑（retry 入口）。
 
-    chunk_strategy/graph_extraction：本次运行覆盖（retry 请求带入，不落库），
-    透传 PipelineRunner.run，由 chunk 步消费。
+    chunk_strategy/graph_extraction/extraction_profile：本次运行覆盖（retry 请求带入，
+    不落库），透传 PipelineRunner.run，由 chunk/graph 步消费。
     """
-    overrides = {"chunk_strategy": chunk_strategy, "graph_extraction": graph_extraction}
+    overrides = {
+        "chunk_strategy": chunk_strategy,
+        "graph_extraction": graph_extraction,
+        "extraction_profile": extraction_profile,
+    }
 
     async def _run() -> dict:
         deps = await build_deps()

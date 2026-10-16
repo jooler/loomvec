@@ -1,5 +1,5 @@
 """P4-API-03 治理接口（空间）：全量列表（含个人空间）、封禁/解封、owner 转移、
-配额调整、内容清空（危险操作）。
+配额调整、抽取领域配置调整、内容清空（危险操作）。
 
 封禁语义：banned_at 非空时成员访问被拒（require_space 闸门拦截，数据保留）。
 """
@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loomvec.api.audit import record_audit
 from loomvec.api.context import Identity
 from loomvec.api.deps import get_session, require_admin
+from loomvec.api.services.spaces import (
+    extraction_profile_valid,
+    usable_profile_keys,
+    validate_space_settings_change,
+)
 from loomvec.core.db.models import Asset, Space, SpaceMember, SpaceUsage, User
 from loomvec.core.errors import NotFoundError, ValidationError
 
@@ -39,6 +45,9 @@ class SpaceOut(BaseModel):
     review_required: bool
     embedding_model: str | None
     chunk_preset: str | None
+    extraction_profile: str | None
+    # false = 空间选的自定义抽取配置已被删除/失效，管线正回落全局配置；留空恒为 true
+    extraction_profile_valid: bool
     banned: bool
     created_at: datetime
 
@@ -56,8 +65,15 @@ class SpaceQuotaRequest(ReasonRequest):
     quota_file_count: int = Field(ge=0)
 
 
+class SpaceExtractionProfileRequest(ReasonRequest):
+    extraction_profile: str | None = Field(
+        description="抽取领域配置 key；null = 跟随全局配置。可选值见 GET /extraction-profiles"
+    )
+
+
 def _space_out(
     s: Space,
+    usable_keys: Collection[str],
     member_count: int = 0,
     asset_count: int = 0,
     usage: SpaceUsage | None = None,
@@ -78,6 +94,8 @@ def _space_out(
         review_required=s.review_required,
         embedding_model=s.embedding_model,
         chunk_preset=s.chunk_preset,
+        extraction_profile=s.extraction_profile,
+        extraction_profile_valid=extraction_profile_valid(s, usable_keys),
         banned=s.banned_at is not None,
         created_at=s.created_at,
     ).model_dump(mode="json")
@@ -167,10 +185,12 @@ async def list_spaces(
         if owner_ids
         else {}
     )
+    usable_keys = await usable_profile_keys(session)
     return {
         "items": [
             _space_out(
                 s,
+                usable_keys,
                 member_counts.get(s.id, 0),
                 asset_counts.get(s.id, 0),
                 usages.get(s.id),
@@ -212,7 +232,9 @@ async def get_space(
             select(User.display_name).where(User.id == space.owner_id)
         )
     return {
-        **_space_out(space, len(members), asset_count, usage, owner_name),
+        **_space_out(
+            space, await usable_profile_keys(session), len(members), asset_count, usage, owner_name
+        ),
         "members": [
             {
                 "user_id": str(m.user_id),
@@ -356,6 +378,34 @@ async def set_space_quota(
         "quota_storage_bytes": body.quota_storage_bytes,
         "quota_file_count": body.quota_file_count,
     }
+
+
+@router.put("/spaces/{space_id}/extraction-profile")
+async def set_space_extraction_profile(
+    space_id: uuid.UUID,
+    body: SpaceExtractionProfileRequest,
+    identity: Identity = Depends(require_admin("admin:write")),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """调整空间抽取领域配置（只影响之后新入库或重新处理的文件，存量不自动重跑）。"""
+    space = await _get_space(session, space_id)
+    await validate_space_settings_change(
+        session, space, {"extraction_profile": body.extraction_profile}
+    )
+    before = {"extraction_profile": space.extraction_profile}
+    space.extraction_profile = body.extraction_profile
+    await record_audit(
+        session,
+        identity=identity,
+        action="admin.space.extraction_profile_update",
+        object_type="space",
+        object_id=str(space_id),
+        reason=body.reason,
+        before=before,
+        after={"extraction_profile": body.extraction_profile},
+    )
+    await session.commit()
+    return {"id": str(space_id), "extraction_profile": body.extraction_profile}
 
 
 @router.post("/spaces/{space_id}/clear", status_code=202)

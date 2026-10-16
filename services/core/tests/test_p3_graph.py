@@ -14,6 +14,7 @@ from loomvec.core.graph.ontology import (
     entity_key,
     normalize_entity_name,
 )
+from loomvec.core.graph.profiles import BIOMEDICAL
 from loomvec.core.pipeline.chunking import (
     ChunkDraft,
     TableRange,
@@ -39,7 +40,7 @@ def test_parse_merged_both_valid():
             {"head": "A 公司", "tail": "B 公司", "type": "SUBSIDIARY_OF", "evidence_lines": [3]}
         ],
     }
-    merged = parse_merged(raw, batch_start=1, batch_end=5)
+    merged = parse_merged(raw, batch_start=1, batch_end=5, profile=BIOMEDICAL)
     assert merged.markers_ok and merged.extraction_ok
     assert merged.entities[0].type == "organization"  # 白名单归并小写
     assert merged.relations[0].type == "SUBSIDIARY_OF"
@@ -51,7 +52,7 @@ def test_parse_merged_markers_invalid_extraction_ok():
         "entities": [{"name": "张三", "type": "Person", "lines": [1]}],
         "relations": [],
     }
-    merged = parse_merged(raw, batch_start=1, batch_end=5)
+    merged = parse_merged(raw, batch_start=1, batch_end=5, profile=BIOMEDICAL)
     assert not merged.markers_ok  # markers 失效 → 兜底分片
     assert merged.extraction_ok  # 抽取不受牵连
 
@@ -61,7 +62,7 @@ def test_parse_merged_markers_ok_extraction_invalid():
         "chunk_markers": [{"start_line": 1, "end_line": 3, "title": None, "keywords": []}],
         "relations": [{"head": "孤儿", "tail": "另一孤儿", "type": "X"}],  # entities 缺失
     }
-    merged = parse_merged(raw, batch_start=1, batch_end=3)
+    merged = parse_merged(raw, batch_start=1, batch_end=3, profile=BIOMEDICAL)
     assert merged.markers_ok
     assert not merged.extraction_ok  # → graph_status=pending_retry
 
@@ -75,21 +76,22 @@ def test_parse_merged_unknown_type_coerced_and_bad_dropped():
         ],
         "relations": [],
     }
-    merged = parse_merged(raw, batch_start=1, batch_end=2)
+    merged = parse_merged(raw, batch_start=1, batch_end=2, profile=BIOMEDICAL)
     types = sorted(e.type for e in merged.entities)
     names = [e.name for e in merged.entities]
     assert types == ["other"] and names == ["甲"]
 
 
 def test_sanitize_extraction_drops_unresolvable_relations():
-    entities = [{"name": "A", "type": "person"}]
+    entities = [{"name": "Alice", "type": "person"}]
     relations = [
-        {"head": "A", "tail": "B", "type": "KNOWS"},
+        {"head": "Alice", "tail": "B", "type": "KNOWS"},
     ]
     merged = parse_merged(
         {"chunk_markers": [], "entities": entities, "relations": relations},
         batch_start=1,
         batch_end=1,
+        profile=BIOMEDICAL,
     )
     _entities_parsed, relations_parsed = sanitize_extraction(merged.entities, merged.relations)
     assert len(relations_parsed) == 0  # B 不在实体清单 → 关系丢弃
@@ -250,11 +252,11 @@ def test_mock_complete_chunk_graph():
     from loomvec.core.pipeline.extraction import build_extraction_messages
 
     messages = build_extraction_messages(
-        lines, 1, 29, min_chars=10, max_chars=100, max_line_chars=6000
+        lines, 1, 29, min_chars=10, max_chars=100, max_line_chars=6000, profile=BIOMEDICAL
     )
     mock = MockBackend(settings)
     raw = mock.complete("\n".join(m["content"] for m in messages))
-    merged = parse_merged(raw, batch_start=1, batch_end=29)
+    merged = parse_merged(raw, batch_start=1, batch_end=29, profile=BIOMEDICAL)
     assert merged.markers_ok
     assert merged.extraction_ok and len(merged.entities) >= 2
 
@@ -296,3 +298,54 @@ def test_validate_markers_merges_small_chunks():
         max_chars=1000,
     )
     assert drafts and drafts[0].start_line == 1 and drafts[-1].end_line == 11
+
+
+def test_parse_merged_drops_noise_entities_and_dangling_relations():
+    raw = {
+        "chunk_markers": [{"start_line": 1, "end_line": 5}],
+        "entities": [
+            {"name": "TP53", "type": "gene_protein", "description": "抑癌基因", "lines": [1]},
+            {"name": "Zoe Wefers", "type": "person", "description": "论文作者，斯坦福大学"},
+            {"name": "Perez et al.", "type": "person", "description": "文献作者组"},
+            {"name": "Qingdao University", "type": "organization", "description": "作者单位之一"},
+            {"name": "Online Methods", "type": "other", "description": "Section heading."},
+            {"name": "x" * 130, "type": "other", "description": "整句"},
+        ],
+        "relations": [
+            {"head": "TP53", "tail": "Zoe Wefers", "type": "STUDIED_BY"},  # 端点被丢弃
+            {"head": "TP53", "tail": "Qingdao University", "type": "AFFILIATED_WITH"},
+        ],
+    }
+    merged = parse_merged(raw, batch_start=1, batch_end=5, profile=BIOMEDICAL)
+    assert [e.name for e in merged.entities] == ["TP53"]
+    assert merged.entities[0].type == "gene_protein"
+    assert merged.relations == []
+
+
+def test_parse_merged_blocks_administrative_relation_types():
+    raw = {
+        "chunk_markers": [],
+        "entities": [
+            {"name": "scGPT", "type": "method"},
+            {"name": "Cell Atlas", "type": "dataset"},
+        ],
+        "relations": [
+            {"head": "scGPT", "tail": "Cell Atlas", "type": "trained on"},
+            {"head": "scGPT", "tail": "Cell Atlas", "type": "FUNDED_BY"},
+        ],
+    }
+    merged = parse_merged(raw, batch_start=1, batch_end=2, profile=BIOMEDICAL)
+    assert [r.type for r in merged.relations] == ["TRAINED_ON"]
+
+
+def test_noise_reason_keeps_real_entities():
+    from loomvec.core.graph.entity_filter import noise_reason
+
+    def reason(name: str, etype: str, desc: str) -> str | None:
+        return noise_reason(name, etype, desc, profile=BIOMEDICAL)
+
+    assert reason("Tahoe Therapeutics", "organization", "Biotechnology company") is None
+    assert reason("Geneformer", "method", "单细胞基础模型") is None
+    assert reason("PD-L2", "gene_protein", "PD-1 配体") is None
+    assert reason("Alan Turing", "person", "计算机科学家") is None
+    assert reason("N.C.", "person", "获得资助") == "person_citation_or_initials"

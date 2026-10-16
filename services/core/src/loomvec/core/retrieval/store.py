@@ -352,6 +352,15 @@ class MilvusStore:
         client.delete(COLLECTION_ENTITIES, filter=f'space_id == "{space_id}"')
         client.flush(COLLECTION_ENTITIES)
 
+    def delete_entities(self, entity_keys: list[str]) -> None:
+        """按 entity_key（= Milvus 主键）删除实体向量；分批避免 filter 过长。"""
+        client = self._ensure_client()
+        if not entity_keys or not client.has_collection(COLLECTION_ENTITIES):
+            return
+        for i in range(0, len(entity_keys), 500):
+            client.delete(COLLECTION_ENTITIES, ids=entity_keys[i : i + 500])
+        client.flush(COLLECTION_ENTITIES)
+
     def search_entities(
         self, *, query_vector: list[float], space_ids: list[uuid.UUID], top_k: int
     ) -> list[tuple[str, float]]:
@@ -421,6 +430,9 @@ class MilvusStore:
 
     async def async_upsert_entities(self, rows: list[dict[str, Any]]) -> None:
         await asyncio.to_thread(self._guarded, lambda: self.upsert_entities(rows))
+
+    async def async_delete_entities(self, entity_keys: list[str]) -> None:
+        await asyncio.to_thread(self._guarded, lambda: self.delete_entities(entity_keys))
 
     async def async_delete_space_entities(self, space_id: uuid.UUID) -> None:
         await asyncio.to_thread(self._guarded, lambda: self.delete_space_entities(space_id))

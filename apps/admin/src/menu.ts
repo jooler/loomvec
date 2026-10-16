@@ -75,6 +75,7 @@ export const ADMIN_MENU: AdminMenuItem[] = [
     children: [
       { path: '/settings/ai', name: t('layout:menu.settingsAi') },
       { path: '/settings/retrieval', name: t('layout:menu.settingsRetrieval') },
+      { path: '/settings/pipeline', name: t('layout:menu.settingsPipeline') },
       { path: '/settings/upload', name: t('layout:menu.settingsUpload') },
       { path: '/settings/agent', name: t('layout:menu.settingsAgent') },
       { path: '/settings/sso', name: t('layout:menu.settingsSso') },

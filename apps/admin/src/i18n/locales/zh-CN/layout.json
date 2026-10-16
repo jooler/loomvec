@@ -33,6 +33,7 @@
     "settings": "系统配置",
     "settingsAi": "AI 供方",
     "settingsRetrieval": "检索参数",
+    "settingsPipeline": "抽取与管线",
     "settingsUpload": "上传策略",
     "settingsSso": "SSO/OIDC",
     "settingsExtensions": "扩展插件",

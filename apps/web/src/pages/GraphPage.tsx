@@ -13,6 +13,7 @@ import { Input } from '@loomvec/ui/components/ui/input';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
+import { useEntityTypeLabel } from '@loomvec/ui/lib/extraction-profiles';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,6 +63,7 @@ export function GraphPage() {
 
   const spaceQuery = useSpace(spaceId);
   const myRole = spaceQuery.data?.my_role;
+  const typeLabel = useEntityTypeLabel(api, spaceQuery.data?.extraction_profile);
   const isOwner = myRole === 'owner';
 
   const stats = useQuery({
@@ -230,7 +232,9 @@ export function GraphPage() {
                 <div key={e.entity_id} className="rounded-md border p-3">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium">{e.name}</span>
-                    <StatusBadge tone="blue">{e.type}</StatusBadge>
+                    <span title={e.type}>
+                      <StatusBadge tone="blue">{typeLabel(e.type)}</StatusBadge>
+                    </span>
                   </div>
                   {e.description && (
                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{e.description}</p>

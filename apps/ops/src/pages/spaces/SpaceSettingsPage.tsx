@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
+import { useOpsSpace } from './useOpsSpace';
 import { formatBytes } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -14,24 +15,12 @@ import { Switch } from '@loomvec/ui/components/ui/switch';
 import { Textarea } from '@loomvec/ui/components/ui/textarea';
 import { ConfirmAction } from '@loomvec/ui/components/confirm-action';
 import { DescriptionList, DescriptionItem } from '@loomvec/ui/components/description-list';
+import { ExtractionProfileField } from '@loomvec/ui/components/extraction-profile-field';
 
 /**
- * 设置页签（运营端）：名称/描述/审核开关/空间级配额 + 危险区（删除空间）。
- * 嵌入模型与分片预设创建时已定，此处不提供修改（与用户端口径一致）。
+ * 设置页签（运营端）：名称/描述/审核开关/抽取领域配置/空间级配额 + 危险区（删除空间）。
+ * 嵌入模型与分片预设创建时已定，此处不提供修改。
  */
-
-interface OpsSpaceDetail {
-  id: string;
-  slug: string;
-  name: string;
-  description: string | null;
-  review_required: boolean;
-  embedding_model: string | null;
-  chunk_preset: string | null;
-  quota_storage_bytes: number;
-  quota_file_count: number;
-  created_at: string;
-}
 
 interface UsageInfo {
   storage_bytes: number;
@@ -48,16 +37,11 @@ export function SpaceSettingsPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [reviewRequired, setReviewRequired] = useState(false);
+  const [extractionProfile, setExtractionProfile] = useState<string | null>(null);
   const [quotaStorage, setQuotaStorage] = useState('0');
   const [quotaFiles, setQuotaFiles] = useState('0');
 
-  const space = useQuery({
-    queryKey: ['ops-space', spaceId],
-    queryFn: () =>
-      unwrap<OpsSpaceDetail>(
-        api.GET('/api/v1/ops/spaces/{space_id}', { params: { path: { space_id: spaceId! } } }),
-      ),
-  });
+  const space = useOpsSpace(spaceId);
 
   const usage = useQuery({
     queryKey: ['ops-space-usage', spaceId],
@@ -74,6 +58,7 @@ export function SpaceSettingsPage() {
       setName(space.data.name);
       setDescription(space.data.description ?? '');
       setReviewRequired(space.data.review_required);
+      setExtractionProfile(space.data.extraction_profile);
       setQuotaStorage(String(space.data.quota_storage_bytes));
       setQuotaFiles(String(space.data.quota_file_count));
     }
@@ -93,6 +78,10 @@ export function SpaceSettingsPage() {
             name,
             description: description || null,
             review_required: reviewRequired,
+            // 未改动则不提交：引用的自定义配置已被删（失效）时，不能让改名等修改被它拖累
+            ...(extractionProfile !== space.data?.extraction_profile
+              ? { extraction_profile: extractionProfile }
+              : {}),
             quota_storage_bytes: Number(quotaStorage) || 0,
             quota_file_count: Number(quotaFiles) || 0,
           },
@@ -172,6 +161,11 @@ export function SpaceSettingsPage() {
               onCheckedChange={setReviewRequired}
             />
           </div>
+          <ExtractionProfileField
+            client={api}
+            value={extractionProfile}
+            onChange={setExtractionProfile}
+          />
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="quota_storage">{t('settings.storageQuotaLabel')}</Label>

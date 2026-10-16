@@ -2203,6 +2203,82 @@
         "title": "EntityPage",
         "type": "object"
       },
+      "EntityTypeOut": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "label"
+        ],
+        "title": "EntityTypeOut",
+        "type": "object"
+      },
+      "ExtractionProfileListOut": {
+        "properties": {
+          "default": {
+            "description": "全局默认配置 key（空间留空时生效）",
+            "title": "Default",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractionProfileOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "default"
+        ],
+        "title": "ExtractionProfileListOut",
+        "type": "object"
+      },
+      "ExtractionProfileOut": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "entity_types": {
+            "items": {
+              "$ref": "#/components/schemas/EntityTypeOut"
+            },
+            "title": "Entity Types",
+            "type": "array"
+          },
+          "is_builtin": {
+            "title": "Is Builtin",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "description",
+          "entity_types",
+          "is_builtin"
+        ],
+        "title": "ExtractionProfileOut",
+        "type": "object"
+      },
       "FolderCopyRequest": {
         "description": "复制文件夹（递归，含资产）：目标父文件夹（同空间；空 = 根目录）。",
         "properties": {
@@ -3515,6 +3591,18 @@
             "description": "白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'qwen3-embedding-0.6b', 'mock']",
             "title": "Embedding Model"
           },
+          "extraction_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "抽取领域配置 key，留空跟随全局配置；可选值见 GET /extraction-profiles",
+            "title": "Extraction Profile"
+          },
           "name": {
             "maxLength": 255,
             "minLength": 1,
@@ -3587,6 +3675,21 @@
             ],
             "title": "Embedding Model"
           },
+          "extraction_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Profile"
+          },
+          "extraction_profile_valid": {
+            "title": "Extraction Profile Valid",
+            "type": "boolean"
+          },
           "file_count": {
             "title": "File Count",
             "type": "integer"
@@ -3641,6 +3744,8 @@
           "review_required",
           "embedding_model",
           "chunk_preset",
+          "extraction_profile",
+          "extraction_profile_valid",
           "owner_id",
           "created_at",
           "member_count",
@@ -3686,6 +3791,17 @@
               }
             ],
             "title": "Embedding Model"
+          },
+          "extraction_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Profile"
           },
           "name": {
             "anyOf": [
@@ -4242,6 +4358,18 @@
             "description": "本次运行的分片策略覆盖（优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效",
             "title": "Chunk Strategy"
           },
+          "extraction_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "本次运行的抽取领域配置覆盖（key 见 GET /extraction-profiles；优先于空间配置与全局默认，不落库）；仅从 parse/chunk 起跑时生效",
+            "title": "Extraction Profile"
+          },
           "graph_extraction": {
             "anyOf": [
               {
@@ -4761,6 +4889,18 @@
             "description": "白名单：['text-embedding-v4', 'multimodal-embedding-v1', 'bge-m3', 'qwen3-embedding-0.6b', 'mock']",
             "title": "Embedding Model"
           },
+          "extraction_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "抽取领域配置 key，留空跟随全局配置；可选值见 GET /extraction-profiles",
+            "title": "Extraction Profile"
+          },
           "graph_extraction": {
             "anyOf": [
               {
@@ -4793,6 +4933,34 @@
           "name"
         ],
         "title": "SpaceCreateRequest",
+        "type": "object"
+      },
+      "SpaceExtractionProfileRequest": {
+        "properties": {
+          "extraction_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "抽取领域配置 key；null = 跟随全局配置。可选值见 GET /extraction-profiles",
+            "title": "Extraction Profile"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "extraction_profile"
+        ],
+        "title": "SpaceExtractionProfileRequest",
         "type": "object"
       },
       "SpaceLinkOut": {
@@ -4894,6 +5062,21 @@
             ],
             "title": "Embedding Model"
           },
+          "extraction_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Profile"
+          },
+          "extraction_profile_valid": {
+            "title": "Extraction Profile Valid",
+            "type": "boolean"
+          },
           "graph_extraction": {
             "anyOf": [
               {
@@ -4981,6 +5164,8 @@
           "chunk_preset",
           "chunk_strategy",
           "graph_extraction",
+          "extraction_profile",
+          "extraction_profile_valid",
           "quota_storage_bytes",
           "quota_file_count",
           "created_at"
@@ -5080,6 +5265,17 @@
               }
             ],
             "title": "Embedding Model"
+          },
+          "extraction_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Profile"
           },
           "graph_extraction": {
             "anyOf": [
@@ -9626,6 +9822,84 @@
           }
         ],
         "summary": "Clear Space",
+        "tags": [
+          "admin",
+          "admin-spaces"
+        ]
+      }
+    },
+    "/api/v1/admin/spaces/{space_id}/extraction-profile": {
+      "put": {
+        "description": "调整空间抽取领域配置（只影响之后新入库或重新处理的文件，存量不自动重跑）。",
+        "operationId": "set_space_extraction_profile_api_v1_admin_spaces__space_id__extraction_profile_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceExtractionProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Space Extraction Profile Api V1 Admin Spaces  Space Id  Extraction Profile Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Space Extraction Profile",
         "tags": [
           "admin",
           "admin-spaces"
@@ -14364,6 +14638,61 @@
         "summary": "Oidc Login",
         "tags": [
           "auth-oidc"
+        ]
+      }
+    },
+    "/api/v1/extraction-profiles": {
+      "get": {
+        "description": "可选的抽取领域配置（内置 + admin 自定义）：空间设置下拉与实体类型中文标签的数据源。",
+        "operationId": "list_extraction_profiles_api_v1_extraction_profiles_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionProfileListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Extraction Profiles",
+        "tags": [
+          "spaces"
         ]
       }
     },

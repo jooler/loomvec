@@ -5,6 +5,7 @@ import { GitMerge, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '@/api';
+import { useOpsSpace } from './useOpsSpace';
 import { extractApiError } from '@/utils';
 import { Button } from '@loomvec/ui/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@loomvec/ui/components/ui/card';
@@ -12,6 +13,7 @@ import { Input } from '@loomvec/ui/components/ui/input';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { EmptyState } from '@loomvec/ui/components/empty-state';
+import { useEntityTypeLabel } from '@loomvec/ui/lib/extraction-profiles';
 import {
   Table,
   TableBody,
@@ -51,6 +53,8 @@ export function GraphPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const queryClient = useQueryClient();
   const { t } = useTranslation('spaces');
+  const space = useOpsSpace(spaceId);
+  const typeLabel = useEntityTypeLabel(api, space.data?.extraction_profile);
   // 输入即时受控，防抖 300ms 后才发起检索（逐键打接口会造成请求风暴与列表闪烁）
   const [entityInput, setEntityInput] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -199,7 +203,11 @@ export function GraphPage() {
                     <TableRow key={e.entity_id}>
                       <TableCell className="font-medium">{e.name}</TableCell>
                       <TableCell>
-                        <StatusBadge tone="blue">{e.type}</StatusBadge>
+                        <span title={e.type}>
+                          <StatusBadge tone="blue">
+                            {typeLabel(e.type)}
+                          </StatusBadge>
+                        </span>
                       </TableCell>
                       <TableCell className="max-w-72 truncate text-muted-foreground">
                         {e.description ?? '-'}

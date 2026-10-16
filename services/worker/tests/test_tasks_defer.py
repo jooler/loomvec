@@ -43,7 +43,8 @@ def test_process_asset_defers_when_mineru_busy(monkeypatch):
 
 
 def test_process_asset_forwards_run_overrides(monkeypatch):
-    # retry 带入的一次性覆盖（chunk_strategy/graph_extraction）原样透传 PipelineRunner.run，
+    # retry 带入的一次性覆盖（chunk_strategy/graph_extraction/extraction_profile）原样透传
+    # PipelineRunner.run，
     # 名额满延后重入队时也不丢
     class _Deps:
         redis = None
@@ -76,9 +77,21 @@ def test_process_asset_forwards_run_overrides(monkeypatch):
     monkeypatch.setattr(tasks.process_asset, "apply_async", lambda **kw: sent.append(kw))
 
     asset_id = str(uuid.uuid4())
-    overrides = {"chunk_strategy": "llm", "graph_extraction": "on"}
+    overrides = {"chunk_strategy": "llm", "graph_extraction": "on", "extraction_profile": "legal"}
     tasks.process_asset.apply(args=[asset_id, "chunk"], kwargs=overrides).get()
     assert calls[-1] == {"from_step": "chunk", "attempt": 1, **overrides}
+
+    # 只带抽取领域配置覆盖：其余两项为 None（未覆盖），不被连带改写
+    tasks.process_asset.apply(
+        args=[asset_id, "chunk"], kwargs={"extraction_profile": "academic"}
+    ).get()
+    assert calls[-1] == {
+        "from_step": "chunk",
+        "attempt": 1,
+        "chunk_strategy": None,
+        "graph_extraction": None,
+        "extraction_profile": "academic",
+    }
 
     _Runner.busy = True
     tasks.process_asset.apply(args=[asset_id, "chunk"], kwargs=overrides).get()

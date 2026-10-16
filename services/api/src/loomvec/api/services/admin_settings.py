@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import select
@@ -26,9 +26,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.core.config import get_app_config, get_settings
 from loomvec.core.constants import CHUNK_PRESETS, EMBEDDING_MODELS
-from loomvec.core.db.models import SystemConfig
+from loomvec.core.db.models import Space, SystemConfig
+from loomvec.core.db.system_config import load_extraction_profiles
 from loomvec.core.db.system_config import load_overrides as _load_overrides
 from loomvec.core.errors import NotFoundError, ValidationError
+from loomvec.core.graph.profiles import (
+    CUSTOM_PROFILES_SETTING_KEY,
+    available_profiles,
+    parse_custom_profiles,
+)
 
 CACHE_TTL_SECONDS = 5.0
 _CACHE: dict[str, tuple[float, Any]] = {}
@@ -48,6 +54,7 @@ class SettingDef:
         effect: str = "immediate",
         admin_only: bool = False,
         validate: Callable[[Any], None] | None = None,
+        validate_db: Callable[[AsyncSession, Any], Awaitable[None]] | None = None,
     ) -> None:
         self.key = key
         self.group = group
@@ -55,8 +62,10 @@ class SettingDef:
         self.default = default
         self.sensitive = sensitive
         self.effect = effect  # immediate | restart
-        self.admin_only = admin_only  # 仅 super_admin 可改（ai/sso/extensions 组）
+        # 仅 super_admin 可改（ai/sso/extensions 组及 pipeline.extraction_profiles）
+        self.admin_only = admin_only
         self.validate = validate  # 写入前的值校验（None = 只做 JSON 兼容检查）
+        self.validate_db = validate_db  # 写入前需查库的校验（如检查被引用情况），在 validate 之后
 
 
 def _validate_base_url(value: Any) -> None:
@@ -93,6 +102,55 @@ def _validate_model_name(value: Any) -> None:
     if isinstance(value, str) and len(value.strip()) <= 128 and "\n" not in value:
         return
     raise ValidationError(reason="模型名需为不超过 128 字符的单行字符串（留空用 agent 默认）")
+
+
+def _validate_extraction_profiles(value: Any) -> None:
+    """自定义抽取领域配置：{key: 配置 JSON}，结构与限制见 core.graph.profiles._ProfileSpec。"""
+    try:
+        parse_custom_profiles(value)
+    except ValueError as e:
+        raise ValidationError(f"自定义抽取配置不合法：{e}") from e
+
+
+_MAX_LISTED_REFERENCES = 10
+
+
+async def _validate_extraction_profiles_unreferenced(session: AsyncSession, value: Any) -> None:
+    """删除自定义抽取配置前，拦截仍被引用的配置（空间选择、全局默认）。
+
+    只拦本次写入「删掉」的 key：被删 key 若仍被未删除空间的 extraction_profile 或全局
+    pipeline.extraction_profile 引用，管线会悄悄回落全局/general，用户的领域选择静默失效。
+    本次写入前就已失效的引用不拦（否则任何一次写入都被历史遗留卡住）。
+    """
+    removed = set(await load_extraction_profiles(session)) - set(available_profiles(value))
+    if not removed:
+        return
+    rows = (
+        await session.execute(
+            select(Space.id, Space.name, Space.extraction_profile)
+            .where(Space.deleted_at.is_(None), Space.extraction_profile.in_(removed))
+            .order_by(Space.created_at.asc())
+        )
+    ).all()
+    global_key = get_settings().pipeline.extraction_profile
+    if not rows and global_key not in removed:
+        return
+    refs = [f"空间「{name}」({sid}) 使用 {key}" for sid, name, key in rows[:_MAX_LISTED_REFERENCES]]
+    if len(rows) > _MAX_LISTED_REFERENCES:
+        refs.append(f"……共 {len(rows)} 个空间")
+    if global_key in removed:
+        refs.append(f"全局默认 pipeline.extraction_profile 使用 {global_key}")
+    raise ValidationError(
+        "自定义抽取配置仍被引用，无法删除："
+        + "；".join(refs)
+        + "。请先把这些空间改用其他配置（或清空），再删除配置",
+        spaces=[
+            {"id": str(sid), "name": name, "extraction_profile": key}
+            for sid, name, key in rows[:_MAX_LISTED_REFERENCES]
+        ],
+        space_count=len(rows),
+        global_profile=global_key if global_key in removed else None,
+    )
 
 
 def _build_registry() -> dict[str, SettingDef]:
@@ -149,6 +207,20 @@ def _build_registry() -> dict[str, SettingDef]:
             group="retrieval",
             description="图谱总开关（L3/L4 召回与抽取写入）",
             default=s.graph.enabled,
+        ),
+        # 自定义抽取领域配置（与内置 general/academic/biomedical/legal 并列供空间选择；
+        # worker 每次 chunk 步读取，即时生效，只影响之后新入库或重新处理的文件；
+        # 删除仍被空间/全局默认引用的配置会被拒，见 _validate_extraction_profiles_unreferenced）。
+        # admin_only：配置文本会原样拼进所有空间抽取 LLM 的 system prompt（提示词注入面），
+        # operator 的 admin:write 不够，仅 super_admin 可改（前端 /settings/pipeline 同口径）
+        SettingDef(
+            CUSTOM_PROFILES_SETTING_KEY,
+            group="pipeline",
+            description="自定义抽取领域配置（JSON：{key: 配置}，字段同内置配置，不得覆盖内置 key）",
+            default={},
+            admin_only=True,
+            validate=_validate_extraction_profiles,
+            validate_db=_validate_extraction_profiles_unreferenced,
         ),
         # 上传策略（即时生效）
         SettingDef(
@@ -403,6 +475,8 @@ async def put_setting(
     validate_value(value)
     if d.validate is not None:
         d.validate(value)
+    if d.validate_db is not None:
+        await d.validate_db(session, value)
     row = (
         await session.execute(select(SystemConfig).where(SystemConfig.key == key))
     ).scalar_one_or_none()

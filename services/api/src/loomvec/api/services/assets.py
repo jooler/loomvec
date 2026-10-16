@@ -31,6 +31,7 @@ from loomvec.core.db.repos import (
     ProcessingJobRepo,
     TagRepo,
 )
+from loomvec.core.db.system_config import load_extraction_profiles
 from loomvec.core.errors import NotFoundError, ValidationError
 from loomvec.core.pipeline.mime import EXT_TO_MIME, file_ext, is_image_mime
 from loomvec.core.pipeline.paper_meta import normalize_published_online
@@ -344,11 +345,12 @@ async def retry_asset(
     step: str | None,
     chunk_strategy: str | None = None,
     graph_extraction: str | None = None,
+    extraction_profile: str | None = None,
 ) -> Asset:
     """单步重跑：默认从首个失败步骤起跑（退出标准：失败可见原因 + 单步重试）。
 
-    chunk_strategy/graph_extraction 为本次运行覆盖（不落库），随任务 kwargs 透传到
-    chunk 步；只在从 parse/chunk 起跑时有意义，起跑步骤在 chunk 之后则拒绝。
+    chunk_strategy/graph_extraction/extraction_profile 为本次运行覆盖（不落库），随任务
+    kwargs 透传到 chunk/graph 步；只在从 parse/chunk 起跑时有意义，起跑步骤在 chunk 之后则拒绝。
     """
     asset = await AssetRepo(session).get_live(asset_id)
     if asset is None:
@@ -362,11 +364,23 @@ async def retry_asset(
         raise ValidationError(f"未知步骤：{step}", steps=PIPELINE_STEPS)
     overrides = {
         k: v
-        for k, v in {"chunk_strategy": chunk_strategy, "graph_extraction": graph_extraction}.items()
+        for k, v in {
+            "chunk_strategy": chunk_strategy,
+            "graph_extraction": graph_extraction,
+            "extraction_profile": extraction_profile,
+        }.items()
         if v is not None
     }
     if overrides and PIPELINE_STEPS.index(step) > PIPELINE_STEPS.index("chunk"):
-        raise ValidationError("分片策略/图谱抽取覆盖只在从 parse 或 chunk 起跑时生效", step=step)
+        raise ValidationError(
+            "分片策略/图谱抽取/抽取领域配置覆盖只在从 parse 或 chunk 起跑时生效", step=step
+        )
+    if extraction_profile is not None:
+        profiles = await load_extraction_profiles(session)
+        if extraction_profile not in profiles:
+            raise ValidationError(
+                "不支持的抽取领域配置", allowed=list(profiles), got=extraction_profile
+            )
 
     await ProcessingJobRepo(session).create(
         asset_id=asset_id,

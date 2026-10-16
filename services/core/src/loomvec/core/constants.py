@@ -121,11 +121,11 @@ CHUNK_PRESETS: dict[str, dict[str, int]] = {
 DEFAULT_CHUNK_PRESET = "balanced"
 
 # 分片策略（创建/设置空间时白名单内选一；空=跟随全局 pipeline.chunk_strategy，
-# 内置默认 structural）：llm 按语义边界调用 LLM 分片；structural 按标题/段落/表格规则
+# 内置默认 llm）：llm 按语义边界调用 LLM 分片；structural 按标题/段落/表格规则
 # 确定性分片，不调用 LLM（§03 文档「分片策略」）。structural 下不产出实体关系，与
 # graph_extraction 互斥（二选一，不支持"规则分片+仍抽图谱"组合）。
 CHUNK_STRATEGIES: tuple[str, ...] = ("llm", "structural")
-DEFAULT_CHUNK_STRATEGY = "structural"
+DEFAULT_CHUNK_STRATEGY = "llm"
 
 # 图谱抽取开关（创建/设置空间时白名单内选一；空=跟随全局 graph.enabled/extraction_enabled）：
 # on 分片批次合并请求实体关系；off 只请求分片，不请求实体关系（省一半输出 token，
@@ -146,17 +146,12 @@ EMBEDDING_MODELS: tuple[str, ...] = (
 # P3 图谱与问答
 # ---------------------------------------------------------------------------
 
-# 实体类型白名单（抽取 prompt 与校验器共用；未知类型归并为 other）
-ENTITY_TYPES: tuple[str, ...] = (
-    "person",
-    "organization",
-    "product",
-    "location",
-    "event",
-    "concept",
-    "other",
-)
+# 兜底实体类型：抽取领域配置（graph/profiles）的类型白名单之外、或写法不合法的类型归并为它
 DEFAULT_ENTITY_TYPE = "other"
+
+# 抽取领域配置（graph/profiles）：key 写法与全局默认（空间留空且全局配置不可用时的落点）
+EXTRACTION_PROFILE_KEY_PATTERN = r"^[a-z][a-z0-9_]{1,31}$"
+DEFAULT_EXTRACTION_PROFILE = "general"
 
 # 实体合并发现途径（merge_log.reason）
 MERGE_REASON_VECTOR = "auto_vector"  # 历史合并日志的原因值（已无新产生）

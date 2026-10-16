@@ -1,7 +1,6 @@
 import { NavLink, Outlet, useLocation, useParams } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { api, unwrap } from '@/api';
+import { useOpsSpace } from './useOpsSpace';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
 import { Spinner } from '@loomvec/ui/components/ui/spinner';
 import { cn } from 'cn';
@@ -24,27 +23,13 @@ const ADMIN_TABS = [
   { to: 'settings', label: 'tab.settings' },
 ] as const;
 
-interface OpsSpaceDetail {
-  id: string;
-  name: string;
-  description: string | null;
-  review_required: boolean;
-}
-
 export function SpaceLayout() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const location = useLocation();
   const { t } = useTranslation('spaces');
   const current = location.pathname.split('/').pop() ?? '';
 
-  const space = useQuery({
-    queryKey: ['ops-space', spaceId],
-    queryFn: () =>
-      unwrap<OpsSpaceDetail>(
-        api.GET('/api/v1/ops/spaces/{space_id}', { params: { path: { space_id: spaceId! } } }),
-      ),
-    enabled: !!spaceId,
-  });
+  const space = useOpsSpace(spaceId);
 
   const tabClass = (to: string) =>
     cn(

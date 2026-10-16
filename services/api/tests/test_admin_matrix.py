@@ -18,20 +18,52 @@ import pytest
 from fastapi.testclient import TestClient
 
 from loomvec.api.app import create_app
+from loomvec.api.deps import get_redis
 from loomvec.core.config import Settings
 
+# 本文件的写用例（建租户、写 system_config、OAuth 应用、审计等）必须落在 testcontainers 临时库，
+# 绝不能走真实 settings 指向的库；redis/milvus/对象存储指向不可达地址。
+# 模块内共用一个临时库和一个 TestClient（lifespan 启动较慢）；用例用唯一名称互不干扰。
+_UNREACHABLE = "127.0.0.1:1"
+_SHARED: TestClient | None = None
 
-def _new_client():
-    settings = Settings(_env_file=None, auth={"dev_mode": True})
+
+class _DownRedis:
+    """Redis 桩：队列深度恒为 0，其余调用抛连接错（组件探测会标为不可用）。
+
+    /admin/system/status 必须拿到一个 redis；测试不连任何真实 Redis。
+    """
+
+    async def llen(self, _key):
+        return 0
+
+    def __getattr__(self, name):
+        async def _fail(*_a, **_kw):
+            raise ConnectionError(f"测试桩 Redis 不可用：{name}")
+
+        return _fail
+
+
+@pytest.fixture(scope="module")
+def client(pg_url_module):
+    global _SHARED
+    settings = Settings(
+        _env_file=None,
+        auth={"dev_mode": True},
+        postgres={"url": pg_url_module},
+        redis={"url": f"redis://{_UNREACHABLE}/0"},
+        milvus={"uri": f"http://{_UNREACHABLE}"},
+        storage={"endpoint": f"http://{_UNREACHABLE}"},
+        security={"rate_limit_enabled": False},
+    )
     # with 上下文触发 lifespan：管理域依赖（get_session）在守卫 401 前不触库，
     # 但需要 app.state 可用；角色注入经 dev JWT claims（resolve 兜底语义）
-    return TestClient(create_app(settings), raise_server_exceptions=False)
-
-
-@pytest.fixture()
-def client():
-    with _new_client() as c:
+    app = create_app(settings)
+    app.dependency_overrides[get_redis] = lambda: _DownRedis()
+    with TestClient(app, raise_server_exceptions=False) as c:
+        _SHARED = c
         yield c
+    _SHARED = None
 
 
 def _token(client: TestClient, username: str, roles: list[str]) -> str:
@@ -41,8 +73,8 @@ def _token(client: TestClient, username: str, roles: list[str]) -> str:
 
 
 def _auth(roles: list[str], username: str = "matrix-user") -> dict[str, str]:
-    with _new_client() as c:
-        return {"Authorization": f"Bearer {_token(c, username, roles)}"}
+    assert _SHARED is not None, "须先请求 client fixture（临时库）"
+    return {"Authorization": f"Bearer {_token(_SHARED, username, roles)}"}
 
 
 # 守卫矩阵：端点 → 允许角色集合

@@ -15,6 +15,9 @@ import unicodedata
 from loomvec.core.constants import DEFAULT_ENTITY_TYPE
 
 # 归一化时剔除的分隔符（保留中英数字；公司后缀等语义归并交由向量链接与阶段二合并）
+# 实体类型写法：小写字母开头的小写字母/数字/下划线，至多 32 位
+ENTITY_TYPE_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
+_TYPE_SLUG_RE = re.compile(ENTITY_TYPE_PATTERN)
 _STRIP_RE = re.compile(r"[\s\-—–_·•.,，。;；:：!！?？'\"“”‘’()（）\[\]【】<>《》/\\|]+")
 
 
@@ -26,11 +29,13 @@ def normalize_entity_name(name: str) -> str:
 
 
 def canonical_type(entity_type: str | None) -> str:
-    """实体类型白名单归并（constants.ENTITY_TYPES）：未知类型落 other。"""
-    from loomvec.core.constants import ENTITY_TYPES
+    """实体类型规范化（与领域无关）：去首尾空白、小写；不是合法 slug 的落 other。
 
+    类型集合由抽取领域配置决定（graph/profiles，解析时按配置白名单校验），这里只保证
+    写法规范——entity_key 用它计算，同一类型的不同大小写写法得到同一个键。
+    """
     t = str(entity_type or "").strip().lower()
-    return t if t in ENTITY_TYPES else DEFAULT_ENTITY_TYPE
+    return t if _TYPE_SLUG_RE.match(t) else DEFAULT_ENTITY_TYPE
 
 
 def entity_key(space_id: str, canonical_name: str, entity_type: str) -> str:

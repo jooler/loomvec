@@ -13,6 +13,7 @@ import { usePerm } from '@/auth';
 import { t as tt } from '@/i18n';
 import { DataTable } from '@loomvec/ui/components/data-table';
 import { DescriptionItem, DescriptionList } from '@loomvec/ui/components/description-list';
+import { ExtractionProfileField } from '@loomvec/ui/components/extraction-profile-field';
 import { PageHeader } from '@loomvec/ui/components/page-header';
 import { ReasonModal } from '@/components/ReasonModal';
 import { StatusBadge } from '@loomvec/ui/components/status-badge';
@@ -28,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@loomvec/ui/components/ui/select';
+import { useExtractionProfiles } from '@loomvec/ui/lib/extraction-profiles';
 import { formatBytes, formatDateTime } from '@/utils';
 import type { SpaceDetail } from '@/types';
 
@@ -43,7 +45,8 @@ const transferSchema = z.object({
   new_owner_id: z.string().min(1, tt('spaces:newOwnerRequired')),
 });
 
-/** 空间治理详情：成员列表 / 封禁解封 / owner 转移 / 内容清空（危险）/ 配额调整（docs/04 §5.4）。 */
+/** 空间治理详情：成员列表 / 封禁解封 / owner 转移 / 内容清空（危险）/ 配额调整 /
+ * 抽取领域配置调整（docs/04 §5.4）。 */
 export function SpaceDetailPage() {
   const { spaceId } = useParams<{ spaceId: string }>();
   const { canWrite } = usePerm();
@@ -52,6 +55,8 @@ export function SpaceDetailPage() {
   const { t } = useTranslation('spaces');
 
   const [quotaOpen, setQuotaOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileValue, setProfileValue] = useState<string | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [banOpen, setBanOpen] = useState(false);
@@ -66,6 +71,7 @@ export function SpaceDetailPage() {
     defaultValues: { new_owner_id: '' },
   });
 
+  const profiles = useExtractionProfiles(api);
   const spaceKey = ['admin-space', spaceId];
   const { data: space, isError, error } = useQuery({
     queryKey: spaceKey,
@@ -170,6 +176,16 @@ export function SpaceDetailPage() {
             >
               {t('adjustQuota')}
             </Button>
+            <Button
+              variant="outline"
+              disabled={!canWrite}
+              onClick={() => {
+                setProfileValue(space?.extraction_profile ?? null);
+                setProfileOpen(true);
+              }}
+            >
+              {t('adjustExtractionProfile')}
+            </Button>
             <Button variant="destructive" disabled={!canWrite} onClick={() => setClearOpen(true)}>
               {t('clearContent')}
             </Button>
@@ -209,6 +225,14 @@ export function SpaceDetailPage() {
             </DescriptionItem>
             <DescriptionItem label={t('col.embeddingModel')}>{space?.embedding_model ?? '-'}</DescriptionItem>
             <DescriptionItem label={t('col.chunkPreset')}>{space?.chunk_preset ?? '-'}</DescriptionItem>
+            <DescriptionItem label={t('col.extractionProfile')}>
+              {space?.extraction_profile
+                ? !space.extraction_profile_valid
+                  ? t('extractionProfileStale', { key: space.extraction_profile })
+                  : (profiles.data?.items.find((p) => p.key === space.extraction_profile)?.label ??
+                    space.extraction_profile)
+                : t('followGlobal')}
+            </DescriptionItem>
             <DescriptionItem label={t('field.createdAt')}>{formatDateTime(space?.created_at)}</DescriptionItem>
           </DescriptionList>
         </CardContent>
@@ -333,6 +357,39 @@ export function SpaceDetailPage() {
           }
         }}
       />
+
+      {/* 抽取领域配置调整：只影响之后新入库或重新处理的文件 */}
+      <ReasonModal
+        open={profileOpen}
+        title={t('extractionProfileTitle')}
+        okText={t('action.save')}
+        confirmLoading={busy}
+        onCancel={() => setProfileOpen(false)}
+        onOk={async (reason) => {
+          setBusy(true);
+          try {
+            await unwrap(
+              api.PUT('/api/v1/admin/spaces/{space_id}/extraction-profile', {
+                params: { path: { space_id: spaceId! } },
+                body: { extraction_profile: profileValue, reason },
+              }),
+            );
+            toast.success(t('extractionProfileAdjusted'));
+            setProfileOpen(false);
+            invalidate();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : t('feedback.operationFailed'));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <ExtractionProfileField
+          client={api}
+          value={profileValue}
+          onChange={setProfileValue}
+        />
+      </ReasonModal>
 
       {/* 配额调整 */}
       <ReasonModal

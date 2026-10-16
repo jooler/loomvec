@@ -35,6 +35,7 @@ const GROUP_TITLE: Record<string, string> = {
   ai: tt('settings:group.ai'),
   agent: tt('settings:group.agent'),
   retrieval: tt('settings:group.retrieval'),
+  pipeline: tt('settings:group.pipeline'),
   upload: tt('settings:group.upload'),
   sso: tt('settings:group.sso'),
   extensions: tt('settings:group.extensions'),
@@ -81,10 +82,11 @@ function ValueEditor(props: {
       />
     );
   }
+  // 结构化值（如自定义抽取领域配置）可能较长：给更大的等宽编辑区
   return (
     <Textarea
-      rows={3}
-      className="max-w-md"
+      rows={props.structured ? 14 : 3}
+      className={props.structured ? 'max-w-2xl font-mono text-xs' : 'max-w-md'}
       value={
         typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value, null, 2)
       }
@@ -229,7 +231,10 @@ export function SettingsPage({ group }: { group: string }) {
       <PageHeader
         title={GROUP_TITLE[group] ?? group}
         description={
-          group === 'sso' || group === 'extensions' || group === 'agent'
+          group === 'sso' ||
+          group === 'extensions' ||
+          group === 'agent' ||
+          group === 'pipeline'
             ? t('superAdminOnly')
             : undefined
         }

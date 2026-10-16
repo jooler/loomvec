@@ -1,10 +1,12 @@
 """P2-API-01 空间接口：创建（白名单内选模型/预设）、列表（我的空间）、
-设置（owner）、删除（级联清理 PG+Milvus+对象存储）、用量查询。
+设置（owner）、删除（级联清理 PG+Milvus+对象存储）、用量查询；
+可选抽取领域配置列表（空间设置下拉与实体类型标签共用）。
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
@@ -21,6 +23,7 @@ from loomvec.api.deps import (
 )
 from loomvec.api.services import spaces as space_service
 from loomvec.core.authz import SpaceAccess
+from loomvec.core.config import get_settings
 from loomvec.core.constants import (
     CHUNK_PRESETS,
     CHUNK_STRATEGIES,
@@ -29,7 +32,9 @@ from loomvec.core.constants import (
 )
 from loomvec.core.db.models import SpaceRole, SpaceType
 from loomvec.core.db.repos import SpaceMemberRepo
+from loomvec.core.db.system_config import load_extraction_profiles
 from loomvec.core.errors import ValidationError
+from loomvec.core.pipeline.base import resolve_extraction_profile
 from loomvec.core.storage import ObjectStorage
 
 router = APIRouter(prefix="/api/v1", tags=["spaces"])
@@ -50,6 +55,10 @@ class SpaceCreateRequest(BaseModel):
     graph_extraction: str | None = Field(
         default=None, description=f"留空跟随全局配置；白名单：{list(GRAPH_EXTRACTION_MODES)}"
     )
+    extraction_profile: str | None = Field(
+        default=None,
+        description="抽取领域配置 key，留空跟随全局配置；可选值见 GET /extraction-profiles",
+    )
 
 
 class SpaceUpdateRequest(BaseModel):
@@ -60,6 +69,7 @@ class SpaceUpdateRequest(BaseModel):
     chunk_preset: str | None = None
     chunk_strategy: str | None = None
     graph_extraction: str | None = None
+    extraction_profile: str | None = None
     quota_storage_bytes: int | None = Field(default=None, ge=0)
     quota_file_count: int | None = Field(default=None, ge=0)
 
@@ -76,6 +86,10 @@ class SpaceOut(BaseModel):
     chunk_preset: str | None
     chunk_strategy: str | None
     graph_extraction: str | None
+    extraction_profile: str | None
+    # false = 空间选的自定义抽取配置已被删除/失效，管线正回落全局配置（需重新选择）；
+    # 留空（跟随全局）恒为 true
+    extraction_profile_valid: bool
     quota_storage_bytes: int
     quota_file_count: int
     created_at: datetime
@@ -85,6 +99,24 @@ class SpaceOut(BaseModel):
 
 class SpaceListOut(BaseModel):
     items: list[SpaceOut]
+
+
+class EntityTypeOut(BaseModel):
+    type: str
+    label: str
+
+
+class ExtractionProfileOut(BaseModel):
+    key: str
+    label: str
+    description: str
+    entity_types: list[EntityTypeOut]
+    is_builtin: bool
+
+
+class ExtractionProfileListOut(BaseModel):
+    items: list[ExtractionProfileOut]
+    default: str = Field(description="全局默认配置 key（空间留空时生效）")
 
 
 class SpaceUsageOut(BaseModel):
@@ -118,8 +150,17 @@ class TagOut(BaseModel):
     parent_id: uuid.UUID | None = None
 
 
-def _out(s, my_role: str | None = None, member_count: int | None = None) -> SpaceOut:
-    return SpaceOut(**space_service.space_out(s, my_role=my_role, member_count=member_count))
+def _out(
+    s,
+    usable_keys: Collection[str],
+    my_role: str | None = None,
+    member_count: int | None = None,
+) -> SpaceOut:
+    return SpaceOut(
+        **space_service.space_out(
+            s, usable_keys=usable_keys, my_role=my_role, member_count=member_count
+        )
+    )
 
 
 @router.post("/spaces", response_model=SpaceOut, status_code=201)
@@ -143,8 +184,31 @@ async def create_space(
         chunk_preset=body.chunk_preset,
         chunk_strategy=body.chunk_strategy,
         graph_extraction=body.graph_extraction,
+        extraction_profile=body.extraction_profile,
     )
-    return _out(space, my_role=SpaceRole.OWNER.value, member_count=1)
+    return _out(space, await space_service.usable_profile_keys(session), SpaceRole.OWNER.value, 1)
+
+
+@router.get("/extraction-profiles", response_model=ExtractionProfileListOut)
+async def list_extraction_profiles(
+    identity: Identity = Depends(require_scope("read")),
+    session: AsyncSession = Depends(get_session),
+) -> ExtractionProfileListOut:
+    """可选的抽取领域配置（内置 + admin 自定义）：空间设置下拉与实体类型中文标签的数据源。"""
+    profiles = await load_extraction_profiles(session)
+    return ExtractionProfileListOut(
+        items=[
+            ExtractionProfileOut(
+                key=p.key,
+                label=p.label,
+                description=p.description,
+                entity_types=[EntityTypeOut(type=t, label=label) for t, label in p.entity_types],
+                is_builtin=p.builtin,
+            )
+            for p in profiles.values()
+        ],
+        default=resolve_extraction_profile(get_settings(), None, profiles).key,
+    )
 
 
 @router.get("/spaces", response_model=SpaceListOut)
@@ -179,9 +243,11 @@ async def list_my_spaces(
             .scalars()
             .all()
         )
+    usable_keys = await space_service.usable_profile_keys(session)
     out = [
         _out(
             s,
+            usable_keys,
             my_role=by_space[s.id].role.value,
             member_count=await space_service.member_count(session, s.id),
         )
@@ -197,6 +263,7 @@ async def get_space(
 ) -> SpaceOut:
     return _out(
         access.space,
+        await space_service.usable_profile_keys(session),
         my_role=access.role.value,
         member_count=await space_service.member_count(session, access.space.id),
     )
@@ -211,7 +278,7 @@ async def update_space(
     """空间设置（owner）：名称/描述/审核开关/模型预设/空间级配额。"""
     fields = body.model_dump(exclude_unset=True)
     space = await space_service.update_space_settings(session, space=access.space, **fields)
-    return _out(space, my_role=access.role.value)
+    return _out(space, await space_service.usable_profile_keys(session), my_role=access.role.value)
 
 
 @router.delete("/spaces/{space_id}", status_code=204)

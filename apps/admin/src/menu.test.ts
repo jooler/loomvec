@@ -23,6 +23,7 @@ describe('admin menu', () => {
     expect(paths).toContain('/settings/ai');
     expect(paths).toContain('/settings/agent');
     expect(paths).toContain('/settings/retrieval');
+    expect(paths).toContain('/settings/pipeline');
     expect(paths).toContain('/settings/upload');
     expect(paths).toContain('/settings/sso');
     expect(paths).toContain('/settings/extensions');
