@@ -17,7 +17,7 @@ interface AuthState {
   token: string | null;
   ready: boolean;
   me: MeInfo | null;
-  loginDev: (username: string, roles?: string[]) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -58,12 +58,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setReady(true));
   }, []);
 
-  const loginDev = async (username: string, roles?: string[]) => {
-    // dev 登录：签发测试 JWT（P0 认证骨架）
-    const resp = await fetch('/api/v1/auth/dev/token', {
+  const login = async (username: string, password: string) => {
+    const resp = await fetch('/api/v1/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Request-Id': crypto.randomUUID() },
-      body: JSON.stringify({ username, roles: roles ?? ['user'] }),
+      body: JSON.stringify({ username, password }),
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => null);
@@ -83,7 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ token, ready, me, loginDev, logout }}>
+    <AuthContext.Provider value={{ token, ready, me, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

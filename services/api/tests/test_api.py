@@ -47,7 +47,21 @@ def test_request_id_header(client):
     assert resp.headers["x-request-id"] == "test-rid-1"
 
 
-def test_dev_token_issue_and_me(client):
+def test_dev_token_issue_and_me(client, monkeypatch):
+    from loomvec.core.db.repos import UserRepo
+
+    calls = 0
+
+    async def _lookup(self, username):
+        # 离线：dev 签发的那次查库（已设密码账号拒签）返回"无此账号"；之后 /me 的查库照常失败，
+        # 走无库降级（与改动前一致）
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        raise ConnectionError("offline")
+
+    monkeypatch.setattr(UserRepo, "get_by_username", _lookup)
     resp = client.post("/api/v1/auth/dev/token", json={"username": "alice", "roles": ["user"]})
     assert resp.status_code == 200
     token = resp.json()["access_token"]

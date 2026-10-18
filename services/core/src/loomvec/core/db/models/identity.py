@@ -77,6 +77,8 @@ class User(UuidPkMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # P4-API-06 OIDC 身份标识（issuer+sub 唯一定位；本地用户为空）
     oidc_sub: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    # 本地账号密码哈希（core/passwords.py；为空 = 未设密码，仅 dev_mode 免密签发可登录）
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

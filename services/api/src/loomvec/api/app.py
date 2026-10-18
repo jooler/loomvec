@@ -31,6 +31,7 @@ from loomvec.api.routes.admin import admin_api_router
 from loomvec.api.routes.api_keys import router as api_keys_router
 from loomvec.api.routes.assets import router as assets_router
 from loomvec.api.routes.auth_oidc import router as oidc_router
+from loomvec.api.routes.auth_password import router as password_login_router
 from loomvec.api.routes.folders import router as folders_router
 from loomvec.api.routes.health import router as health_router
 from loomvec.api.routes.jobs import router as jobs_router
@@ -200,6 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_api_router)  # P4-API 管理 API 域
     app.include_router(oauth_router)  # P4-API-07 OAuth 授权码流程
     app.include_router(oidc_router)  # P4-API-06 OIDC SSO
+    app.include_router(password_login_router)  # 本地账号密码登录
     # MinerU 官方 API 兼容层（/api/v4，mineru.net 精准解析 API 同构；不出现在
     # 本平台 OpenAPI 契约/SDK 中——它是外部 MinerU 生态的兼容面，非 loomvec API）
     mineru_compat_routes.register_mineru_compat_exception_handler(app)

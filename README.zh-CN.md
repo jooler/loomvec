@@ -76,9 +76,9 @@ LoomVec 是面向企业的多租户、可私有化部署的知识平台：文档
 
 | 服务 | 地址 | 说明 |
 |---|---|---|
-| 用户端 | http://localhost:35173 | dev 登录：任意用户名 |
-| 运维端 | http://localhost:35174 | dev 登录默认 `super_admin` |
-| 运营端 | http://localhost:35175 | dev 登录默认 `operator` |
+| 用户端 | http://localhost:35173 | 账号密码登录（密码用 `scripts/set_password.py` 设置） |
+| 运维端 | http://localhost:35174 | 账号密码登录，账号需有平台角色（`super_admin` / `operator` / `auditor`） |
+| 运营端 | http://localhost:35175 | 账号密码登录，账号需有 `operator` 或 `super_admin` 角色 |
 | API 文档 | http://localhost:38080/docs | |
 | Grafana | http://localhost:33002 | 密码见 `deploy/compose/.env` 的 `GRAFANA_ADMIN_PASSWORD`（默认 admin） |
 | Prometheus | http://localhost:39090 | |

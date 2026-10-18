@@ -76,9 +76,9 @@ Notes: all infrastructure ports are now bound to `127.0.0.1` (do not revert; the
 
 | Service | URL | Notes |
 |---|---|---|
-| Web (end users) | http://localhost:35173 | dev login: any username |
-| Admin | http://localhost:35174 | dev login defaults to `super_admin` |
-| Ops | http://localhost:35175 | dev login defaults to `operator` |
+| Web (end users) | http://localhost:35173 | username + password (set with `scripts/set_password.py`) |
+| Admin | http://localhost:35174 | username + password; account needs a platform role (`super_admin` / `operator` / `auditor`) |
+| Ops | http://localhost:35175 | username + password; account needs the `operator` or `super_admin` role |
 | API docs | http://localhost:38080/docs | |
 | Grafana | http://localhost:33002 | password in `deploy/compose/.env` (`GRAFANA_ADMIN_PASSWORD`, default `admin`) |
 | Prometheus | http://localhost:39090 | |

@@ -4003,6 +4003,28 @@
         "title": "PaperMetaOut",
         "type": "object"
       },
+      "PasswordLoginRequest": {
+        "properties": {
+          "password": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "PasswordLoginRequest",
+        "type": "object"
+      },
       "PlatformRoleRequest": {
         "properties": {
           "reason": {
@@ -14479,7 +14501,7 @@
     },
     "/api/v1/auth/dev/token": {
       "post": {
-        "description": "dev 模式专用：签发测试 JWT（生产环境 404/禁用）。",
+        "description": "dev 模式专用：签发测试 JWT（生产环境 404/禁用）；已设密码的账号拒绝。",
         "operationId": "issue_dev_token_api_v1_auth_dev_token_post",
         "requestBody": {
           "content": {
@@ -14514,6 +14536,47 @@
           }
         },
         "summary": "Issue Dev Token"
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "password_login_api_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Password Login",
+        "tags": [
+          "auth"
+        ]
       }
     },
     "/api/v1/auth/oidc/callback": {

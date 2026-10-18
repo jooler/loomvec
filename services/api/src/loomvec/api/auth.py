@@ -1,7 +1,8 @@
 """P0-API-02 认证骨架（平台 JWT 签发与校验单点）。
 
 - 平台 JWT（HS256 + jwt_secret）：dev 模式经 `POST /api/v1/auth/dev/token`
-  签发（生产禁用）；OIDC 登录（routes/auth_oidc.py）回调后签发同构 JWT；
+  签发（生产禁用；已设密码的账号拒绝 dev 签发，只能走 routes/auth_password.py
+  的密码登录）；OIDC 登录（routes/auth_oidc.py）回调后签发同构 JWT；
 - 依赖读取 Bearer Token，把 `Identity` 注入 `request.state.identity`
   （编排见 deps.get_identity：JWT vs API Key vs OAuth 令牌）。
 """
@@ -13,13 +14,21 @@ import uuid
 from typing import Any
 
 import jwt
-from fastapi import Depends, FastAPI
+import structlog
+from fastapi import Depends, FastAPI, Request
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
 from loomvec.api.context import Identity
 from loomvec.core.config import Settings, get_settings
-from loomvec.core.errors import UnauthenticatedError
+from loomvec.core.db.repos import UserRepo
+from loomvec.core.errors import (
+    PermissionDeniedError,
+    UnauthenticatedError,
+    UpstreamUnavailableError,
+)
+
+logger = structlog.get_logger("loomvec.api.auth")
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -103,12 +112,23 @@ def register_auth_routes(app: FastAPI, settings: Settings) -> None:
     dev_provider = PlatformTokenProvider(settings)
 
     @app.post("/api/v1/auth/dev/token", response_model=TokenResponse)
-    async def issue_dev_token(body: DevTokenRequest) -> TokenResponse:
-        """dev 模式专用：签发测试 JWT（生产环境 404/禁用）。"""
+    async def issue_dev_token(body: DevTokenRequest, request: Request) -> TokenResponse:
+        """dev 模式专用：签发测试 JWT（生产环境 404/禁用）；已设密码的账号拒绝。"""
         if not settings.auth.dev_mode:
             from loomvec.core.errors import NotFoundError
 
             raise NotFoundError()
+        # 手动取会话（不用 Depends）：dev_mode 关闭时须先 404，不触碰库。
+        # 查库失败必须 fail-closed：若放行，库一故障就能对已设密码的账号免密签发
+        # （含自带 roles=super_admin 的 token），等于绕过密码。
+        try:
+            async with request.app.state.session_factory() as session:
+                user = await UserRepo(session).get_by_username(body.username)
+        except Exception as e:
+            logger.error("dev_token_user_lookup_failed", username=body.username, error=str(e))
+            raise UpstreamUnavailableError("postgres", "账号库暂不可用，无法签发 dev token") from e
+        if user is not None and user.password_hash:
+            raise PermissionDeniedError("该账号已设密码，请使用密码登录")
         token, claims = dev_provider.issue_token(
             username=body.username,
             tenant_id=body.tenant_id,

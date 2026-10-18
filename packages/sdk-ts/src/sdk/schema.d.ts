@@ -1601,9 +1601,26 @@ export interface paths {
         put?: never;
         /**
          * Issue Dev Token
-         * @description dev 模式专用：签发测试 JWT（生产环境 404/禁用）。
+         * @description dev 模式专用：签发测试 JWT（生产环境 404/禁用）；已设密码的账号拒绝。
          */
         post: operations["issue_dev_token_api_v1_auth_dev_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Password Login */
+        post: operations["password_login_api_v1_auth_login_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3945,6 +3962,13 @@ export interface components {
             title?: string | null;
             /** Year */
             year?: number | null;
+        };
+        /** PasswordLoginRequest */
+        PasswordLoginRequest: {
+            /** Password */
+            password: string;
+            /** Username */
+            username: string;
         };
         /** PlatformRoleRequest */
         PlatformRoleRequest: {
@@ -8598,6 +8622,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["DevTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    password_login_api_v1_auth_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordLoginRequest"];
             };
         };
         responses: {

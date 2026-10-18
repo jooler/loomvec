@@ -77,6 +77,8 @@ _ADDITIVE_COLUMNS: list[tuple[str, str]] = [
     ("tag", "ADD COLUMN IF NOT EXISTS merged_into UUID"),
     ("asset_tag", "ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'manual'"),
     ("asset_tag", "ADD COLUMN IF NOT EXISTS confidence FLOAT"),
+    # 本地账号密码哈希（user 是 PG 保留字，须加引号）
+    ('"user"', "ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"),
 ]
 
 # 既有库的增量补索引（幂等；须在对应补列之后执行）

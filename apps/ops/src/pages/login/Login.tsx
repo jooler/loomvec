@@ -20,24 +20,26 @@ import { Label } from '@loomvec/ui/components/ui/label';
 // 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const loginSchema = z.object({
   username: z.string().min(1, t('auth:usernameRequired')),
+  password: z.string().min(1, t('auth:passwordRequired')),
 });
 
 type LoginValues = z.infer<typeof loginSchema>;
 
-/** dev 登录页；生产由 OIDC 接入。登录默认挂 operator（运营角色），
- *  平台角色单源为 DB user_role，无运营角色的账号在路由闸被拒。 */
+/** 账号密码登录页（POST /api/v1/auth/login）。运营端仅 operator / super_admin 可进（平台角色单源为 DB user_role，路由闸拒绝其余账号）。
+ *  AuthProvider 由 main.tsx 统一提供，此处不得再包一层
+ *  （嵌套 Provider 会造成登录态与路由守卫读不同 state）。 */
 export function LoginPage() {
-  const { loginDev } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const { t } = useTranslation('auth');
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { username: 'ops' },
+    defaultValues: { username: '', password: '' },
   });
 
   const onSubmit = form.handleSubmit(async (values) => {
     try {
-      await loginDev(values.username, ['operator']);
+      await login(values.username, values.password);
       toast.success(t('loginSuccess'));
       navigate('/overview');
     } catch (e) {
@@ -63,13 +65,24 @@ export function LoginPage() {
                 {...form.register('username')}
               />
               {form.formState.errors.username && (
-                <p className="text-sm text-destructive">
-                  {form.formState.errors.username.message}
-                </p>
+                <p className="text-sm text-destructive">{form.formState.errors.username.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">{t('passwordLabel')}</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder={t('passwordPlaceholder')}
+                autoComplete="current-password"
+                {...form.register('password')}
+              />
+              {form.formState.errors.password && (
+                <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
               )}
             </div>
             <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-              {form.formState.isSubmitting ? t('loggingIn') : t('devLogin')}
+              {form.formState.isSubmitting ? t('loggingIn') : t('login')}
             </Button>
           </form>
         </CardContent>

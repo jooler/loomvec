@@ -20,23 +20,24 @@ import { Label } from '@loomvec/ui/components/ui/label';
 // 模块级文案（zod 校验消息）：main.tsx 已先初始化 i18n，import 阶段取值安全
 const loginSchema = z.object({
   username: z.string().min(1, t('auth:usernameRequired')),
+  password: z.string().min(1, t('auth:passwordRequired')),
 });
 
 type LoginValues = z.infer<typeof loginSchema>;
 
-/** dev 登录页（P0）：签发测试 JWT。OIDC 登录位 P4 接入。 */
+/** 账号密码登录页（POST /api/v1/auth/login）。 */
 export function LoginPage() {
-  const { loginDev } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const { t } = useTranslation('auth');
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { username: 'dev' },
+    defaultValues: { username: '', password: '' },
   });
 
   const onSubmit = form.handleSubmit(async (values) => {
     try {
-      await loginDev(values.username);
+      await login(values.username, values.password);
       toast.success(t('loginSuccess'));
       navigate('/');
     } catch (e) {
@@ -62,13 +63,24 @@ export function LoginPage() {
                 {...form.register('username')}
               />
               {form.formState.errors.username && (
-                <p className="text-sm text-destructive">
-                  {form.formState.errors.username.message}
-                </p>
+                <p className="text-sm text-destructive">{form.formState.errors.username.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">{t('passwordLabel')}</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder={t('passwordPlaceholder')}
+                autoComplete="current-password"
+                {...form.register('password')}
+              />
+              {form.formState.errors.password && (
+                <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
               )}
             </div>
             <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-              {form.formState.isSubmitting ? t('loggingIn') : t('devLogin')}
+              {form.formState.isSubmitting ? t('loggingIn') : t('login')}
             </Button>
           </form>
         </CardContent>

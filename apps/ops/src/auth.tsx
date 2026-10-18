@@ -16,7 +16,7 @@ interface AuthState {
   token: string | null;
   ready: boolean;
   me: MeInfo | null;
-  loginDev: (username: string, roles?: string[]) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -91,12 +91,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setReady(true));
   }, []);
 
-  const loginDev = async (username: string, roles?: string[]) => {
-    const resp = await fetch('/api/v1/auth/dev/token', {
+  const login = async (username: string, password: string) => {
+    const resp = await fetch('/api/v1/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Request-Id': crypto.randomUUID() },
-      // 运营端 dev 登录默认挂 operator（运营角色；平台角色单源为 DB user_role）
-      body: JSON.stringify({ username, roles: roles ?? ['operator'] }),
+      body: JSON.stringify({ username, password }),
     });
     if (!resp.ok) {
       throw new Error((await resp.json().catch(() => null))?.message ?? t('loginFailed'));
@@ -109,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ token, ready, me, loginDev, logout }}>
+    <AuthContext.Provider value={{ token, ready, me, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
