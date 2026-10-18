@@ -726,20 +726,22 @@ def community_space(space_id: str) -> dict:
                     summarize=summarize,
                 )
                 await session.commit()
-
-            # 摘要单元重写（先清后写，幂等）；无摘要的社区跳过
-            communities = (
-                (
-                    await session.execute(
-                        select(Community).where(
-                            Community.space_id == uuid.UUID(space_id),
-                            Community.summary_status == "ready",
+                # 查询须在 session 上下文内：退出后再用会重开事务且无人关闭，
+                # 连接会一直 idle in transaction（挡住 DDL，拖垮同表查询）
+                communities = (
+                    (
+                        await session.execute(
+                            select(Community).where(
+                                Community.space_id == uuid.UUID(space_id),
+                                Community.summary_status == "ready",
+                            )
                         )
                     )
+                    .scalars()
+                    .all()
                 )
-                .scalars()
-                .all()
-            )
+
+            # 摘要单元重写（先清后写，幂等）；无摘要的社区跳过（此时库连接已归还）
             written = 0
             if communities:
                 await deps.milvus.async_ensure_collection()

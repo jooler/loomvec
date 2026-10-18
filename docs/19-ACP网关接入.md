@@ -40,7 +40,7 @@
 | `agent_session.mcp_token_exp` | 网关会话上当前 MCP token 的过期时间；空 = 需要签发 / 续签 |
 | `agent_session.replay_pending` | 迁移导入的会话、尚无成功回合：下次提问补重放前缀；默认 `false` |
 
-建表走 `init_db._ADDITIVE_COLUMNS`（幂等 `ADD COLUMN IF NOT EXISTS`），不用 Alembic。
+建表走 `init_db._ADDITIVE_COLUMNS`（幂等：先查 `information_schema`，列已存在就跳过，缺列才 `ALTER TABLE`，且带 10 秒 `lock_timeout`；不能无条件 `ADD COLUMN IF NOT EXISTS`——空操作也要 ACCESS EXCLUSIVE 锁，会被线上长事务卡住并挡住该表所有查询），不用 Alembic。
 
 - **MCP token**：会话级（`issue_agent_token(..., session_id=agent_session.id.hex)`），以 `mcp_servers: [{name:"loomvec", type:"http", url: agent.mcp.url_sandbox, headers}]` 挂在网关会话上。每次提问前，`mcp_token_exp` 为空或剩余有效期低于 `max(agent.mcp.token_ttl_s // 2, 600)` 秒就重签并 `PATCH /v1/sessions/{id}`。会话 `scope_space_ids` 被修改时 `mcp_token_exp` 置空。
 - **@ 文献**：本轮 @ 的 asset_id 写 Redis `agent:mentions:{agent_session_id}`（TTL 24h），`routes/mcp.py` 检索时按会话 token 里的 `agent_session_id` 读取并强制收敛。

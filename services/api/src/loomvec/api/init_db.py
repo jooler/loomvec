@@ -3,6 +3,8 @@
 幂等可重复执行：
 1. 扩展：pgcrypto（uuid 函数兜底，PG18 原生 uuidv7）；
 2. `Base.metadata.create_all` 直接创建最新结构（PG 枚举类型由 SQLAlchemy 一并建）；
+   既有库的补列 / 补索引 / 约束调整先查目录，已就绪即跳过（ALTER TABLE 哪怕是空操作也要
+   ACCESS EXCLUSIVE 锁，会被线上长事务卡住并连带挡住该表的所有查询），需 DDL 时加 lock_timeout；
 3. AGE 图（compose 镜像内置；普通 PG 无则 best-effort 跳过，图运行时降级）；
 4. 种子数据（原迁移 0002/0003/0004 的 seed，ON CONFLICT 幂等）：
    默认空间、演示租户与用户（alice/bob/carol）、平台角色。
@@ -85,33 +87,62 @@ _ADDITIVE_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS ix_asset_checksum ON asset (checksum)",
 ]
 
-# 新建知识库按空间隔离名称；存量库原约束是租户级名称唯一。
-# DO 块同时兼容已由 create_all 建好新约束的全新库和仍保留旧约束的存量库。
-_ADDITIVE_CONSTRAINTS: list[str] = [
-    "ALTER TABLE tag DROP CONSTRAINT IF EXISTS uq_tag_tenant_name",
-    """
-    DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint
-            WHERE conrelid = 'tag'::regclass AND conname = 'uq_tag_space_name'
-        ) THEN
-            ALTER TABLE tag
-                ADD CONSTRAINT uq_tag_space_name UNIQUE (tenant_id, space_id, name);
-        END IF;
-    END $$
-    """,
-]
+# 新建知识库按空间隔离名称；存量库原约束是租户级名称唯一，需换成空间级。
+_OLD_TAG_CONSTRAINT = "uq_tag_tenant_name"
+_NEW_TAG_CONSTRAINT = "uq_tag_space_name"
+
+# DDL 拿锁等待上限：ALTER TABLE 即便是 IF NOT EXISTS 空操作也要 ACCESS EXCLUSIVE 锁，
+# 排队期间会挡住该表的所有后续查询；宁可快速失败也不拖垮线上
+_DDL_LOCK_TIMEOUT = "10s"
 
 
 async def _ensure_additive_columns(engine: AsyncEngine) -> None:
+    """补列 / 补索引 / 调约束：先查目录，已就绪的一律跳过，稳态运行不拿表级锁。"""
     async with engine.begin() as conn:
+        await conn.exec_driver_sql(f"SET LOCAL lock_timeout = '{_DDL_LOCK_TIMEOUT}'")
+        have_columns = {
+            (t, c)
+            for t, c in await conn.execute(
+                sa.text(
+                    "SELECT table_name, column_name FROM information_schema.columns "
+                    "WHERE table_schema = ANY (current_schemas(false))"
+                )
+            )
+        }
         for table, ddl in _ADDITIVE_COLUMNS:
-            await conn.exec_driver_sql(f"ALTER TABLE {table} {ddl}")
+            # ddl 形如 "ADD COLUMN IF NOT EXISTS <列> <类型> ..."
+            column = ddl.split("IF NOT EXISTS", 1)[1].split()[0]
+            if (table, column) not in have_columns:
+                await conn.exec_driver_sql(f"ALTER TABLE {table} {ddl}")
+
+        have_indexes = set(
+            await conn.scalars(
+                sa.text(
+                    "SELECT indexname FROM pg_indexes "
+                    "WHERE schemaname = ANY (current_schemas(false))"
+                )
+            )
+        )
         for ddl in _ADDITIVE_INDEXES:
-            await conn.exec_driver_sql(ddl)
-        for ddl in _ADDITIVE_CONSTRAINTS:
-            await conn.exec_driver_sql(ddl)
+            # ddl 形如 "CREATE INDEX IF NOT EXISTS <索引> ON ..."
+            index = ddl.split("IF NOT EXISTS", 1)[1].split()[0]
+            if index not in have_indexes:
+                await conn.exec_driver_sql(ddl)
+
+        have_constraints = set(
+            await conn.scalars(
+                sa.text("SELECT conname FROM pg_constraint WHERE conrelid = 'tag'::regclass")
+            )
+        )
+        if _OLD_TAG_CONSTRAINT in have_constraints:
+            await conn.exec_driver_sql(
+                f"ALTER TABLE tag DROP CONSTRAINT IF EXISTS {_OLD_TAG_CONSTRAINT}"
+            )
+        if _NEW_TAG_CONSTRAINT not in have_constraints:
+            await conn.exec_driver_sql(
+                f"ALTER TABLE tag ADD CONSTRAINT {_NEW_TAG_CONSTRAINT} "
+                "UNIQUE (tenant_id, space_id, name)"
+            )
 
 
 async def _ensure_age_graph(engine: AsyncEngine) -> bool:
