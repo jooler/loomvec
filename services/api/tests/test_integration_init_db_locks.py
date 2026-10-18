@@ -112,3 +112,16 @@ async def test_tag_constraint_migrates_and_is_idempotent(engine):
         await init_database(engine)
         have = await names()
         assert "uq_tag_space_name" in have and "uq_tag_tenant_name" not in have
+
+
+async def test_quoted_table_name_column_is_skipped_when_present(engine, pg_url):
+    """补列表里的 "user" 带引号：列已在时不应再执行 ALTER（否则每次都白拿 user 表的锁）。"""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from loomvec.api.init_db import init_database
+
+    holder_engine = create_async_engine(pg_url)
+    async with holder_engine.connect() as holder:
+        await holder.exec_driver_sql('SELECT count(*) FROM "user"')  # 事务内持 ACCESS SHARE
+        await asyncio.wait_for(init_database(engine), timeout=8)
+    await holder_engine.dispose()

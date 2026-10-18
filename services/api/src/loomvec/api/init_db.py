@@ -114,7 +114,7 @@ async def _ensure_additive_columns(engine: AsyncEngine) -> None:
         for table, ddl in _ADDITIVE_COLUMNS:
             # ddl 形如 "ADD COLUMN IF NOT EXISTS <列> <类型> ..."
             column = ddl.split("IF NOT EXISTS", 1)[1].split()[0]
-            if (table, column) not in have_columns:
+            if (table.strip('"'), column) not in have_columns:  # "user" 等保留字表名带引号
                 await conn.exec_driver_sql(f"ALTER TABLE {table} {ddl}")
 
         have_indexes = set(
