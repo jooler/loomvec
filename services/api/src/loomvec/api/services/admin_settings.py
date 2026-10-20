@@ -8,8 +8,9 @@
   llm 地址/密钥另做会话级即时读取）；
 - agent 组（ACP 网关接入）：DB 有非空值即覆盖 config/loomvec.json 的 agent.* 文件值
   （default_agent / gateway.models.*，注册默认值取自文件配置），业务侧按会话即时读取
-  （effect=immediate）；agent.gateway.api_key / admin_token 两个敏感项无文件回落
-  （空 = 未配置），admin_token 仅 /admin/acp-gateway/* 代理使用。
+  （effect=immediate）；agent.gateway.api_key / admin_token 两个敏感项没有文件配置项；
+  DB 为空时，回环地址的本机网关读其状态目录里的 local-api-key / local-admin-token
+  （core.local_gateway），都没有 = 未配置，admin_token 仅 /admin/acp-gateway/* 代理使用。
 
 配置来源唯一：DB 有值即生效；未配置回落 config/loomvec.json（AppConfig），
 不回落环境变量——应用参数（模型/检索/上传/图谱）不经 env 配置。

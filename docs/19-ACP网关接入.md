@@ -5,7 +5,7 @@
 ## 1. 分工
 
 - `services/agent` 是业务适配层，对外仍是 `/internal/agent/*` 与既有 SSE 帧，`apps/web` 与 `services/api/routes/agent.py` 不感知网关。
-- 网关负责进程 / 容器生命周期、会话事件日志、workspace 文件、模型凭据（`ACPGW_ANTHROPIC_API_KEY` / `ACPGW_DEEPSEEK_API_KEY`）与配额。`admin 设置 → AI 供方配置` 的 `ai.llm.*` 对 agent 不再生效。
+- 网关负责进程 / 容器生命周期、会话事件日志、workspace 文件、模型凭据（server 模式下为 `ACPGW_ANTHROPIC_API_KEY` / `ACPGW_DEEPSEEK_API_KEY`；本地模式下 claude 用本机 CLI 登录，见 §2.1）与配额。`admin 设置 → AI 供方配置` 的 `ai.llm.*` 对 agent 不再生效。
 - 代码在 `services/agent/src/loomvec/agent/gateway/`：`client.py`（httpx 客户端，端点登记在 `ENDPOINTS`）、`service.py`（映射状态机）、`orchestrator.py`（提问）、`translate.py`（事件翻译）、`history.py`（历史折叠）、`files.py`（工作区树）、`instructions.py`（AGENTS.md 模板）、`usage.py`（用量折叠）。
 
 ## 2. 配置与凭据
@@ -17,18 +17,28 @@
 | `agent.default_agent` | `claude` | 新会话用的 agent（`claude` / `dsh`）；已有会话以 `agent_session.agent` 为准 |
 | `agent.gateway.url` | `http://127.0.0.1:38095` | 网关地址（admin 只读展示） |
 | `agent.gateway.request_timeout_s` | `30` | 普通请求超时；SSE 流不设总超时 |
+| `agent.gateway.state_dir` | `null` | 本机网关（本地模式）的状态目录，见 §2.1；`null` = `$XDG_DATA_HOME/acp-gateway`（`~/.local/share/acp-gateway`）；须与网关配置的 `state_dir` 指向同一目录（写绝对路径：loomvec 会展开 `~`、相对路径按进程 cwd 解析，而网关不展开 `~`，两边会指到不同目录） |
 | `agent.gateway.models.claude` / `.dsh` | `null` | 各 agent 的默认模型名；`null` = agent 默认，`dsh` 缺省回落 `agent.model.name` |
 
-`system_config`（admin「设置 → agent」写入，立即生效）：`agent.default_agent`、`agent.gateway.models.claude`、`agent.gateway.models.dsh` 覆盖文件值；两个敏感项**没有**文件回落，空 = 未配置：
+`system_config`（admin「设置 → agent」写入，立即生效）：`agent.default_agent`、`agent.gateway.models.claude`、`agent.gateway.models.dsh` 覆盖文件值；两个敏感项没有配置文件回落，空 = 未配置（本机网关例外，见 §2.1）：
 
 | key | 用途 |
 | --- | --- |
 | `agent.gateway.api_key` | 租户 API Key（scope：`sessions:read/write`、`files:read/write`），对话与文件用 |
 | `agent.gateway.admin_token` | 网关 `ACPGW_ADMIN_TOKEN`，仅「ACP 服务」菜单与迁移脚本使用 |
 
-网关租户的 `settings.mcp.allowed_hosts` 必须包含 `agent.mcp.url_sandbox` 的主机；不在白名单内时网关返回 403，提问会带着网关给出的具体原因报错（`MCP 服务器地址不在租户白名单内: …`）。适配层挂载 MCP 时始终用 `agent.mcp.url_sandbox`（空则回落 `agent.mcp.url`）；网关用 `local` provider（开发）时 agent 进程在宿主上，需把它设成本机可达的地址（如 `http://127.0.0.1:38080/api/v1/mcp`）。
+网关租户的 `settings.mcp.allowed_hosts` 必须包含 `agent.mcp.url_sandbox` 的主机；不在白名单内时网关返回 403，提问会带着网关给出的具体原因报错（`MCP 服务器地址不在租户白名单内: …`）。适配层挂载 MCP 时始终用 `agent.mcp.url_sandbox`（空则回落 `agent.mcp.url`）；网关用 `local` provider（开发或本地模式，见 §2.1）时 agent 进程在宿主上，需把它设成本机可达的地址（如 `http://127.0.0.1:38080/api/v1/mcp`）。
 
 模型凭据在网关：dsh 经网关的 `/upstream/deepseek` 代理访问 `upstream.deepseek.base_url`，代理只转发 `content-type`、`accept` 两个请求头，`ai.llm.headers` 不适用于 agent。要求调用方自报会话的供方（如 OpenCode Go 的 `x-opencode-session`）因此不能直接作为网关的 deepseek 上游，会以 `模型调用失败：… missing x-opencode-session …` 报错。
+
+### 2.1 本地模式（本机工具）
+
+网关可以跑成 `mode=local`（网关仓库 `npm run local`，说明见其 `docs/configuration.md`「本地模式」）：agent 是本机子进程，claude 直接用你在 CLI 里的订阅登录，不需要 Anthropic key、docker、防火墙或外部数据库。loomvec 与它同机同用户时：
+
+- `agent.gateway.url` 指向它（缺省 `http://127.0.0.1:38095` 即可）；
+- **凭据免配置**：`agent.gateway.api_key` / `admin_token` 在 admin 里没填时，只要网关地址是回环地址，就读网关状态目录里的 `local-api-key` / `local-admin-token`（`core/local_gateway.py`）。文件必须属于当前用户且组 / 其他人不可写，否则当作不存在；远程网关永远不读本机文件；admin 里填了则以 admin 为准；
+- `agent.mcp.url_sandbox` 设为本机 api 地址（如 `http://127.0.0.1:38080/api/v1/mcp`）；网关为本机租户预置了 `127.0.0.1` / `localhost` 的 MCP 白名单；
+- 本机网关的默认审批策略是拒绝，loomvec 的 `build_permission_policy` 给出的放行规则（检索、读取、编辑类）才生效；claude 不加载 `~/.claude` 里的个人设置，所以你个人的放行规则不会绕过它。
 
 ## 3. 数据映射
 
@@ -44,7 +54,7 @@
 
 - **MCP token**：会话级（`issue_agent_token(..., session_id=agent_session.id.hex)`），以 `mcp_servers: [{name:"loomvec", type:"http", url: agent.mcp.url_sandbox, headers}]` 挂在网关会话上。每次提问前，`mcp_token_exp` 为空或剩余有效期低于 `max(agent.mcp.token_ttl_s // 2, 600)` 秒就重签并 `PATCH /v1/sessions/{id}`。会话 `scope_space_ids` 被修改时 `mcp_token_exp` 置空。
 - **@ 文献**：本轮 @ 的 asset_id 写 Redis `agent:mentions:{agent_session_id}`（TTL 24h），`routes/mcp.py` 检索时按会话 token 里的 `agent_session_id` 读取并强制收敛。
-- **审批策略**：`approvals.build_permission_policy()` 把审批矩阵翻译成网关 `PermissionPolicy`（`default: reject`；放行 `mcp__loomvec__*`、读取 / 检索 / 编辑类 kind 与矩阵里的编辑器工具名）。dsh 容器以 `danger-full-access` 运行，策略对它不生效。对 claude 策略生效：每次被询问的工具调用在网关事件里是 `permission.resolved`（`decided_by: policy`），被拒的工具以失败结束、模型据此回复。Claude Code 自己判为安全的只读命令（如 `echo`）不会向网关发审批请求，直接执行；写文件、联网类 Bash（如 `touch`、`curl`）会被询问并按策略拒绝。
+- **审批策略**：`approvals.build_permission_policy()` 把审批矩阵翻译成网关 `PermissionPolicy`（`default: reject`；放行 `mcp__loomvec__*`、读取 / 检索 / 编辑类 kind 与矩阵里的编辑器工具名）。docker provider 下 dsh 以 `danger-full-access` 运行（隔离靠容器），策略对它不生效；local provider（含本地模式）下 dsh 用 `workspace-write`，宿主需装 bwrap，只有越出 cwd 的写操作才向网关请求审批并按策略裁决。对 claude 策略生效：每次被询问的工具调用在网关事件里是 `permission.resolved`（`decided_by: policy`），被拒的工具以失败结束、模型据此回复。Claude Code 自己判为安全的只读命令（如 `echo`）不会向网关发审批请求，直接执行；写文件、联网类 Bash（如 `touch`、`curl`）会被询问并按策略拒绝。
 - **附件**：`PUT /v1/workspaces/{ws}/files/.loomvec/uploads/{session_id}/{name}`；类型 / 大小白名单沿用 `agent.session.attachments`；`attachment_id` = 清洗后带短随机前缀的文件名。
 - **工作区浏览**：`/workspace/tree` 取网关 `tree` 后在适配层过滤（隐藏段不出树、最多 500 项、带 `prefix` 时含该目录自身）；`/workspace/file` 取前 256KB 预览并带 `truncated`。
 
@@ -69,7 +79,7 @@ dsh 不报用量（`usage` 为空对象）；`message.delta` 原样转发，不�
 
 其他会话生命周期：创建会话带 `project_path` 时先在 workspace 里 `mkdir` 该目录；删除会话（软删）时尽力归档网关会话（网关不可用不影响本地删除）。
 
-迁移导入的会话：网关为它新建的 agent 会话看不到导入的历史，所以迁移脚本把 `agent_session.replay_pending` 置位，`prepare_session` 把它带进 `PreparedSession.imported`，`build_prompt_blocks` 在 prompt 的第一个文本块补「此前的对话记录」前缀——取 `fold_history` 最近 20 条有文字的消息，超过 8000 字符保尾部，以 `<user>` / `<assistant>` 标签排列。标记在一个回合成功收尾（`Outcome.ok`）后清除；回合失败则保留，重试仍补（不依赖网关的会话状态：网关在 agent 会话建好、发 prompt 之前就把 `imported` 转成 `active`）。前缀是独立的文本块，只给模型看，历史展示时按块剔除。
+迁移导入的会话：网关为它新建的 agent 会话看不到导入的历史，所以迁移脚本把 `agent_session.replay_pending` 置位，`prepare_session` 把它带进 `PreparedSession.imported`，`build_prompt_blocks` 在 prompt 的第一个文本块补「此前的对话记录」前缀——取 `fold_history` 里有文字的消息，从最新往旧整条保留（最多 30 条、合计 24000 字符；单条超过 3000 字符时保头 2000、尾 1000，中间省略），最早一条从用户消息开始，以 `<user>` / `<assistant>` 标签排列。参数是 `history.py` 的 `REPLAY_MAX_MESSAGES` / `REPLAY_MAX_CHARS` / `REPLAY_MAX_MESSAGE_CHARS`。预算只计正文，不含 `<user>` 等标签与首尾说明。标记在一个回合成功收尾（`Outcome.ok`）后清除；回合失败则保留，重试仍补（不依赖网关的会话状态：网关在 agent 会话建好、发 prompt 之前就把 `imported` 转成 `active`）。前缀是独立的文本块，只给模型看，历史展示时按块剔除。
 
 历史（`GET .../messages`）：有 `gateway_session_id` 的读网关 `GET /v1/sessions/{id}/messages`，每个回合折成一条 user + 一条 assistant，会话统计由各回合 usage 折叠；`gateway_session_id` 为空的存量会话回落读旧 dsh JSONL。
 
@@ -83,7 +93,7 @@ dsh 不报用量（`usage` 为空对象）；`message.delta` 原样转发，不�
 - 写：创建 / 修改租户、签发 / 吊销 API Key 仅 `super_admin`；强制停止 workspace（`admin:write`）operator 也可执行；
 - 写操作要求填写原因并写审计；API Key 明文只在签发响应里出现一次，不入审计详情。
 
-`apps/admin` 的「设置 → agent」（网关地址只读、两个敏感项只写、`default_agent`、默认模型）与「ACP 服务」菜单（租户、API Key、用量、运行时状态）。
+`apps/admin` 的「设置 → agent」（网关地址只读、两个敏感项只写（本机网关由文件回落提供时也显示已配置）、`default_agent`、默认模型）与「ACP 服务」菜单（租户、API Key、用量、运行时状态）。
 
 ## 6. 存量数据迁移
 
@@ -98,7 +108,7 @@ uv run python scripts/migrate_agent_to_gateway.py --skip-sessions    # 只同步
 uv run python scripts/migrate_agent_to_gateway.py --include-archived # 同时导入已归档会话
 ```
 
-前置：`agent.gateway.api_key` 与（导入会话时）`agent.gateway.admin_token` 已配置，网关可达；在没有 `LOOMVEC_AGENT_STORAGE_ROOT` 的 shell 里运行时以 `agent.storage_root` 为准（脚本开头会打印实际使用的 `storage_root`，本地目录不存在时给出警告）。退出码 `0` 全部成功、`1` 有失败（详情打到 stderr，凭据已抹掉）、`2` 前置不满足。
+前置：`agent.gateway.api_key` 与（导入会话时）`agent.gateway.admin_token` 已配置（本机回环网关可由状态目录文件回落，见 §2.1；脚本启动时会打印凭据来源），网关可达；在没有 `LOOMVEC_AGENT_STORAGE_ROOT` 的 shell 里运行时以 `agent.storage_root` 为准（脚本开头会打印实际使用的 `storage_root`，本地目录不存在时给出警告）。退出码 `0` 全部成功、`1` 有失败（详情打到 stderr，凭据已抹掉）、`2` 前置不满足。
 
 **顺序**：迁移须在放开用户提问之前完成。`gateway_session_id` 为空的旧会话一旦被提问，适配层会为它新建空的网关会话，旧历史随之不再可见，脚本之后也把它当作已迁移跳过；导入期间恰好被提问的会话回填落空，脚本把它记为失败（`已导入为 …，但库里该会话已绑定别的网关会话`），需人工处理。
 
@@ -115,10 +125,13 @@ uv run python scripts/migrate_agent_to_gateway.py --include-archived # 同时导
 ## 7. 部署
 
 - `deploy/compose/compose.yaml` 的可选服务 `acp-gateway`（profile `gateway`，host 网络，监听 38095，配置 `deploy/compose/acp-gateway/config.json`）；密钥与路径变量见 `deploy/compose/.env.example`（`ACPGW_SECRET_KEY`、`ACPGW_ADMIN_TOKEN`、`ACPGW_ANTHROPIC_API_KEY`、`ACPGW_DEEPSEEK_API_KEY`、`ACPGW_SANDBOX_SUBNET`、`ACPGW_STORAGE_ROOT`、`DOCKER_GID`）。`config.json` 里 `server.admin_allowed_cidrs` 限定为回环（`127.0.0.1/32`、`::1/128`），管理接口只接受宿主本机来源（api 经 `127.0.0.1` 访问）；api 不在网关同机时需改成它的来源网段。网关也可独立部署，此时只需配置 `agent.gateway.url`。
+- 本机工具形态（`mode=local`，systemd 用户服务）见 §2.1。
 - 沙箱网段 `acpgw-sandbox` 的防火墙只用 `deploy/compose/sandbox-firewall.sh`，端口参数传「api 端口,网关端口」。
 
 ## 8. 测试
 
 - `services/agent/tests/test_gateway_*.py`、`test_legacy_import.py`：客户端（`httpx.MockTransport`）、翻译、状态机、契约（每个 `(method, path)` 与请求体按快照 schema 校验）、迁移映射；
 - `test_e2e_gateway.py`：环境具备时对着真实网关（`/home/jyy/acp-gateway`，假 agent）跑完整提问流与迁移脚本，缺 Node ≥ 22.9 / 网关仓库 / 开发 PG / Redis 时整组 skip；
+- `test_e2e_local_mode.py`：对着本地模式网关 + 真实 Claude Code（不在 system_config 配 Key，靠 `state_dir` 文件回落）；**默认整组 skip，需显式设 `LOOMVEC_E2E_LOCAL=1`**，且缺 Node ≥ 22.9 / 网关仓库 / claude 登录态 / 开发 PG / Redis 时同样 skip；
+- `services/core/tests/test_local_gateway.py`：凭据文件回落（回环判断、属主/权限/符号链接/父目录检查）；
 - `services/api/tests/test_admin_acp_gateway.py`：admin 代理。

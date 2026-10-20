@@ -10,7 +10,7 @@ import httpx
 import pydantic
 import pytest
 
-from loomvec.core.ai import AiGateway
+from loomvec.core.ai import AiGateway, AiJsonError, extract_json
 from loomvec.core.config import (
     AiSettings,
     ClipSettings,
@@ -265,3 +265,92 @@ def test_llm_prompt_over_limit_rejected_without_request():
         asyncio.run(_drain(gw.stream([{"role": "user", "content": "x" * 101}])))
     assert seen == []
     assert asyncio.run(gw.complete([{"role": "user", "content": "x" * 100}])) == "pong"
+
+
+def _body_capture_gateway(bodies: list[dict], **llm_kwargs) -> AiGateway:
+    def handle(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok": true}'}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    llm = LlmSettings(base_url="http://llm.local/v1", model="m", **llm_kwargs)
+    return AiGateway(AiSettings(llm=llm), client=client)
+
+
+def test_json_mode_sends_response_format_by_default():
+    bodies: list[dict] = []
+    gw = _body_capture_gateway(bodies)
+    assert asyncio.run(gw.complete_json([{"role": "user", "content": "x"}])) == {"ok": True}
+    assert bodies[0]["response_format"] == {"type": "json_object"}
+
+
+def test_json_mode_can_omit_response_format_for_providers_that_reject_it():
+    # acp-gateway 的 OpenAI 兼容接口对 response_format 返回 400：json_response_format=false 时不发，
+    # 仍靠提示词 + 宽容解析（含 ```json 围栏）取 JSON
+    bodies: list[dict] = []
+    gw = _body_capture_gateway(bodies, json_response_format=False)
+    assert asyncio.run(gw.complete_json([{"role": "user", "content": "x"}])) == {"ok": True}
+    assert "response_format" not in bodies[0]
+    # 非 json_mode 的请求两种配置下都不带
+    asyncio.run(gw.complete([{"role": "user", "content": "x"}]))
+    assert "response_format" not in bodies[1]
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ('{"a": 1}', {"a": 1}),
+        ('```json\n{"a": 1}\n```', {"a": 1}),
+        ('好的，结果如下：\n```json\n{"a": 1}\n```', {"a": 1}),
+        ('```json\n{"a": 1}\n```\n说明：字段 {x} 可选。', {"a": 1}),
+        ('Result: {"a": 1}. Note: set {x} later.', {"a": 1}),
+        ('<thinking>{"d": 0}</thinking>{"a": 1, "b": [1, 2]}', {"a": 1, "b": [1, 2]}),
+        ('前缀 {"a": {"n": "}"}} 后缀', {"a": {"n": "}"}}),
+    ],
+)
+def test_extract_json_tolerates_surrounding_text(text: str, want: dict) -> None:
+    assert extract_json(text) == want
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "no json here",
+        "[1, 2]",
+        "{bad json}",
+        "{x} and {y}",
+        # 外层被截断 / 格式坏：不能把里面的子对象当结果（否则不再触发重试，下游静默丢数据）
+        '{"tags": [{"id": "1", "confidence": 0.9}, {"id": "2',
+        '{"summary":"x","meta":{"a":1,"b":2},}',
+    ],
+)
+def test_extract_json_rejects_non_objects(text: str) -> None:
+    with pytest.raises(AiJsonError):
+        extract_json(text)
+
+
+def test_extract_json_skips_bad_object_then_finds_real_one() -> None:
+    assert extract_json('{"note": "foo" bar} {"real": 1}') == {"real": 1}
+    assert extract_json('说明 {x} 然后 {"real": 1}') == {"real": 1}
+
+
+def test_complete_json_retry_feeds_back_previous_output():
+    # 重试不原样重发：带上上次的输出并点明问题
+    bodies: list[dict] = []
+    replies = iter(["不是 JSON", '{"ok": true}'])
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": next(replies)}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    llm = LlmSettings(base_url="http://llm.local/v1", model="m", json_retries=1)
+    gw = AiGateway(AiSettings(llm=llm), client=client)
+    assert asyncio.run(gw.complete_json([{"role": "user", "content": "x"}])) == {"ok": True}
+    assert len(bodies) == 2
+    assert bodies[0]["messages"] == [{"role": "user", "content": "x"}]
+    retry = bodies[1]["messages"]
+    assert retry[:1] == bodies[0]["messages"]
+    assert retry[1] == {"role": "assistant", "content": "不是 JSON"}
+    assert retry[2]["role"] == "user" and "JSON" in retry[2]["content"]

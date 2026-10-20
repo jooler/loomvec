@@ -25,6 +25,7 @@ from loomvec.api.routes.admin import admin_api_router
 from loomvec.api.routes.admin.acp_gateway import get_gateway_admin
 from loomvec.api.services import acp_gateway_admin as gw
 from loomvec.api.services import admin_settings
+from loomvec.core.config import get_app_config
 from loomvec.core.db.models import AuditLog, SystemConfig
 from loomvec.core.errors import ValidationError
 
@@ -508,6 +509,72 @@ async def test_status_without_admin_token_still_probes_health(env):
     assert data["configured"] is False and data["healthy"] is True
     assert "agent.gateway.admin_token" in data["error"]
     assert all(r.url.path == "/healthz" for r in env.gateway.requests)
+
+
+async def test_config_flags_count_local_gateway_files_when_admin_not_configured(
+    env, monkeypatch, tmp_path
+):
+    """本机网关（回环地址）：admin 没配的两个敏感项由状态目录里的文件顶上，并真的用于请求网关。"""
+    for name, value in (("local-api-key", "acpgw_local"), ("local-admin-token", ADMIN_TOKEN)):
+        f = tmp_path / name
+        f.write_text(value + "\n", encoding="utf-8")
+        f.chmod(0o600)
+    gw_cfg = get_app_config().agent.gateway
+    monkeypatch.setattr(gw_cfg, "state_dir", str(tmp_path))
+
+    async def nothing_configured(_session, _key):
+        return None
+
+    monkeypatch.setattr(admin_settings, "effective_value", nothing_configured)
+    async with env.as_role("auditor").http() as c:
+        data = (await c.get(f"{BASE}/config")).json()
+    assert data["admin_token_configured"] is True and data["api_key_configured"] is True
+    assert "acpgw_local" not in str(data) and ADMIN_TOKEN not in str(data)
+
+    # 文件里的 token 真的用于请求网关（Authorization 头），而不只是「已配置」标志
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"items": []})
+
+    monkeypatch.setattr(gw_cfg, "url", "http://127.0.0.1:38095")
+    client = await gw.build_client(env.session, transport=httpx.MockTransport(handle))
+    await client.call("tenants.list")
+    assert seen[0].headers["authorization"] == f"Bearer {ADMIN_TOKEN}"
+
+
+async def test_admin_configured_token_wins_and_remote_gateway_never_reads_files(
+    env, monkeypatch, tmp_path
+):
+    f = tmp_path / "local-admin-token"
+    f.write_text("from_file\n", encoding="utf-8")
+    f.chmod(0o600)
+    gw_cfg = get_app_config().agent.gateway
+    monkeypatch.setattr(gw_cfg, "state_dir", str(tmp_path))
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"items": []})
+
+    async def configured(_session, key):
+        return {"agent.gateway.admin_token": "from_admin"}.get(key)
+
+    monkeypatch.setattr(admin_settings, "effective_value", configured)
+    monkeypatch.setattr(gw_cfg, "url", "http://127.0.0.1:38095")
+    client = await gw.build_client(env.session, transport=httpx.MockTransport(handle))
+    await client.call("tenants.list")
+    assert seen[0].headers["authorization"] == "Bearer from_admin"
+
+    async def nothing(_session, _key):
+        return None
+
+    monkeypatch.setattr(admin_settings, "effective_value", nothing)
+    monkeypatch.setattr(gw_cfg, "url", "https://gw.example.com")
+    client = await gw.build_client(env.session, transport=httpx.MockTransport(handle))
+    with pytest.raises(gw.GatewayNotConfiguredError):
+        await client.call("tenants.list")
 
 
 async def test_config_reports_flags_but_no_secrets(env, monkeypatch):

@@ -111,3 +111,13 @@ def pg_url_module():
             url = _asyncpg_url(pg)
             asyncio.run(_init(url))
             yield url
+
+
+@pytest.fixture(autouse=True)
+def _isolate_local_gateway_state(monkeypatch, tmp_path_factory):
+    """网关凭据的本机文件回落读 $XDG_DATA_HOME/acp-gateway：测试不能读到开发机真实的密钥。"""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path_factory.mktemp("xdg")))
+    # 线上配置若写了 agent.gateway.state_dir，同样不能指到真实目录
+    from loomvec.core.config import get_app_config
+
+    monkeypatch.setattr(get_app_config().agent.gateway, "state_dir", None)

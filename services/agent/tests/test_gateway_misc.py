@@ -20,7 +20,7 @@ from loomvec.agent.config import (
     load_gateway_connection,
 )
 from loomvec.agent.gateway.files import MAX_TREE_ITEMS, flatten_tree
-from loomvec.agent.gateway.history import fold_history
+from loomvec.agent.gateway.history import fold_history, replay_context
 from loomvec.agent.gateway.usage import fold_usages, usage_to_event
 from loomvec.agent.mentions import build_mention_block
 from loomvec.core.config import AgentSettings, Settings
@@ -160,6 +160,88 @@ def _e(path, type_="file", size=3, children=None):
     if children is not None:
         out["children"] = children
     return out
+
+
+def _pairs(n: int, size: int = 10) -> list[dict]:
+    items = []
+    for i in range(n):
+        items.append({"role": "user", "content": f"Q{i}" + "q" * size})
+        items.append({"role": "assistant", "content": f"A{i}" + "a" * size})
+    return items
+
+
+def test_replay_context_keeps_whole_messages_newest_first_and_starts_on_user():
+    items = _pairs(40)  # 80 条，超过 30 条上限
+    note = replay_context(items)
+    assert note.count("<user>") + note.count("<assistant>") <= 30
+    assert "A39" in note and "Q0" not in note
+    # 每条消息完整（不会从标签中间切开），且最早一条是 user
+    assert note.count("<user>") == note.count("</user>")
+    assert note.count("<assistant>") == note.count("</assistant>")
+    first = note.split("\n")[1]
+    assert first.startswith("<user>")
+
+
+def test_replay_context_char_budget_drops_oldest_whole_messages():
+    items = _pairs(10, size=1000)
+    note = replay_context(items, max_messages=100, max_chars=5000)
+    assert "A9" in note and "Q0" not in note
+    # 每条约 1002 字符，5000 预算只放得下最新 4 条：A9,Q9,A8,Q8
+    assert [t[:2] for _, t in _bodies(note)] == ["Q8", "A8", "Q9", "A9"]
+    assert note.count("<user>") == note.count("</user>")
+    assert len(note) < 5000 + 400  # 预算 + 标签与首尾说明
+
+
+def _bodies(note: str) -> list[tuple[str, str]]:
+    import re
+
+    return re.findall(r"<(user|assistant)>(.*?)</\1>", note, flags=re.S)
+
+
+def test_replay_context_message_cap_is_exact_and_starts_on_user():
+    # 奇数上限：取最后 3 条是 A1,Q2,A2；开头 A1 是 assistant，被丢弃 → 只剩 Q2,A2
+    # （上限多放宽 1 条、或「从用户开始」逻辑被删，都会让这里失败）
+    note = replay_context(_pairs(3), max_messages=3)
+    assert [role for role, _ in _bodies(note)] == ["user", "assistant"]
+    assert "Q2" in note and "A2" in note and "A1" not in note and "Q1" not in note
+
+
+def test_replay_context_drops_answer_whose_question_was_squeezed_out():
+    items = [
+        {"role": "user", "content": "Q" * 3000},
+        {"role": "assistant", "content": "短回答"},
+        {"role": "user", "content": "新问题"},
+        {"role": "assistant", "content": "新回答"},
+    ]
+    # 预算放得下「短回答」，放不下它的提问 → 短回答不能孤零零地留在开头
+    note = replay_context(items, max_chars=3 + 3 + 3 + 3 + 10)
+    assert "短回答" not in note and "Q" * 10 not in note
+    assert _bodies(note) == [("user", "新问题"), ("assistant", "新回答")]
+
+
+def test_replay_context_clips_one_long_message_but_keeps_earlier_turns():
+    long = "H" * 5000 + "M" * 5000 + "T" * 5000
+    items = [
+        {"role": "user", "content": "早先的问题"},
+        {"role": "assistant", "content": "早先的回答"},
+        {"role": "user", "content": "最新的问题"},
+        {"role": "assistant", "content": long},
+    ]
+    note = replay_context(items)
+    assert "早先的问题" in note and "最新的问题" in note
+    assert "（中间省略）" in note and note.count("M") == 0
+    assert note.count("H") == 2000 and note.count("T") == 1000
+    assert "<assistant>H" in note and "T</assistant>" in note
+
+
+def test_replay_context_always_keeps_latest_and_handles_empty():
+    assert replay_context([]) == ""
+    assert replay_context([{"role": "user", "content": ""}]) == ""
+    note = replay_context([{"role": "user", "content": "x" * 99999}], max_chars=10)
+    assert "<user>" in note and "（中间省略）" in note
+    # 开头是 assistant 且没有对应提问时丢弃，但不把唯一一条丢光
+    only_a = replay_context([{"role": "assistant", "content": "单独回答"}])
+    assert "<assistant>单独回答</assistant>" in only_a
 
 
 def test_flatten_tree_hides_hidden_segments_and_non_file_dir_entries():
@@ -394,6 +476,32 @@ async def test_gateway_connection_reads_api_key_plaintext_with_no_file_fallback(
     assert conn.api_key == "acpgw_abc"  # 敏感项库里是明文（回显才脱敏），去首尾空白
     conn = await load_gateway_connection(_FakeSession({"agent.gateway.api_key": "   "}), agent)
     assert conn.api_key is None
+
+
+async def test_gateway_connection_falls_back_to_local_gateway_key_file(tmp_path, monkeypatch):
+    """本机网关（回环地址）：admin 没配 Key 时读状态目录里的 local-api-key；配了则以 admin 为准。"""
+    key_file = tmp_path / "local-api-key"
+    key_file.write_text("acpgw_local\n", encoding="utf-8")
+    key_file.chmod(0o600)
+    agent = AgentSettings(gateway={"state_dir": str(tmp_path)})
+
+    conn = await load_gateway_connection(_FakeSession({}), agent)
+    assert conn.api_key == "acpgw_local"
+    conn = await load_gateway_connection(_FakeSession({"agent.gateway.api_key": "acpgw_db"}), agent)
+    assert conn.api_key == "acpgw_db"
+
+    # 远程网关不读本机文件
+    remote = AgentSettings(gateway={"url": "https://gw.example.com", "state_dir": str(tmp_path)})
+    assert (await load_gateway_connection(_FakeSession({}), remote)).api_key is None
+
+    # 缺省状态目录跟随 XDG_DATA_HOME
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    (tmp_path / "xdg").mkdir()
+    (tmp_path / "xdg" / "acp-gateway").mkdir(mode=0o700)  # 与网关一致；umask 不应放宽它
+    xdg_key = tmp_path / "xdg" / "acp-gateway" / "local-api-key"
+    xdg_key.write_text("acpgw_xdg", encoding="utf-8")
+    xdg_key.chmod(0o600)
+    assert (await load_gateway_connection(_FakeSession({}), AgentSettings())).api_key == "acpgw_xdg"
 
 
 async def test_gateway_connection_db_overrides_win_over_file_when_non_empty():

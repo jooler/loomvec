@@ -8,6 +8,7 @@
       "model": "deepseek-chat",
       "temperature": 0.2,
       "json_retries": 2,
+      "json_response_format": true,
       "timeout_seconds": 120.0,
       "api_style": "openai",
       "headers": {},
@@ -195,19 +196,12 @@
     "segment_max_chars": 400,
     "segment_max_seconds": 60.0
   },
-  "qa": {
-    "enabled": true,
-    "retrieval_top_k": 8,
-    "history_messages": 6,
-    "max_question_chars": 2000,
-    "max_answer_tokens": 1024,
-    "session_max_messages": 200
-  },
   "agent": {
     "enabled": true,
     "storage_root": "/data/loomvec/agent-envs",
     "runtime": {
       "provider": "local",
+      "max_concurrent_streams_per_user": 3,
       "profile": "sdk",
       "idle_timeout_s": 900,
       "max_active_runtimes_per_node": 20,
@@ -266,6 +260,7 @@
     "gateway": {
       "url": "http://127.0.0.1:38095",
       "request_timeout_s": 30,
+      "state_dir": null,
       "models": {
         "claude": null,
         "dsh": null

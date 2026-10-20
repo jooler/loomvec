@@ -45,23 +45,53 @@ def is_replay_block(text: str) -> bool:
     return bool(_REPLAY_BLOCK_RE.match(text.strip()))
 
 
+# 重放前缀的预算。思路与 LangChain `trim_messages(strategy="last", allow_partial=False,
+# start_on="human")` 一致：从最新往旧按整条消息保留，不把一条消息从中间切开，保留的最早一条从用户
+# 消息开始。LangChain 对超长单条是整条丢弃；这里在其上扩展为「单条过长时保头尾截断，且最新一条
+# 必留」，免得一条长回答把更早的问答全挤掉。预算按字符（此处没有分词器），只计正文，不含 <user> 等
+# 标签与首尾说明：24000 字符中文约 1.5–2.4 万 token，远小于常见模型的上下文窗口，一次性成本可接受。
+REPLAY_MAX_MESSAGES = 30
+REPLAY_MAX_CHARS = 24000
+REPLAY_MAX_MESSAGE_CHARS = 3000
+_ELLIPSIS = "\n……（中间省略）……\n"
+
+
+def _clip_message(text: str, limit: int) -> str:
+    """单条超长：保头 2/3、尾 1/3（回答结论多在末尾，问题背景多在开头）。"""
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 3
+    return text[:head] + _ELLIPSIS + text[len(text) - (limit - head) :]
+
+
 def replay_context(
-    items: list[dict[str, Any]], max_messages: int = 20, max_chars: int = 8000
+    items: list[dict[str, Any]],
+    max_messages: int = REPLAY_MAX_MESSAGES,
+    max_chars: int = REPLAY_MAX_CHARS,
+    max_message_chars: int = REPLAY_MAX_MESSAGE_CHARS,
 ) -> str:
-    """`fold_history` 的条目 → 重放前缀（取最近 max_messages 条有文字的消息；超长保尾部）。"""
-    recent = [m for m in items if m.get("content")][-max_messages:]
-    lines: list[str] = []
+    """`fold_history` 的条目 → 重放前缀。
+
+    从最新往旧取有文字的消息，整条保留，直到条数或总字符预算用尽；单条超过
+    `max_message_chars` 时截断中段。最新一条无论多长都保留（截断后）。
+    """
+    texts = [(m["role"], str(m["content"])) for m in items if m.get("content")]
+    picked: list[tuple[str, str]] = []
     total = 0
-    for m in recent:
-        tag = "user" if m["role"] == "user" else "assistant"
-        text = str(m["content"])
-        lines.append(f"<{tag}>{text}</{tag}>")
+    for role, text in reversed(texts):
+        text = _clip_message(text, max_message_chars)
+        if picked and (len(picked) >= max_messages or total + len(text) > max_chars):
+            break
+        picked.append((role, text))
         total += len(text)
-    body = "\n".join(lines)
-    if total > max_chars:
-        body = body[-max_chars:]
-    if not body:
+    picked.reverse()
+    # 从用户消息开始：开头若是 assistant（对应的提问被预算挤掉了），丢掉它
+    while len(picked) > 1 and picked[0][0] != "user":
+        picked.pop(0)
+    if not picked:
         return ""
+    tags = [("user" if role == "user" else "assistant", text) for role, text in picked]
+    body = "\n".join(f"<{tag}>{text}</{tag}>" for tag, text in tags)
     return f"{REPLAY_HEADER}\n{body}\n{REPLAY_FOOTER}"
 
 

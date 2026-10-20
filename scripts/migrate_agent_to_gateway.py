@@ -12,8 +12,8 @@
 同样幂等；网关上已存在的同名文件 / 已被改写的 instructions 默认**不覆盖**（`--overwrite` 才覆盖）。
 迁移须在放开用户提问之前完成：未迁移的旧会话一旦被提问，适配层会为它新建空的网关会话，
 旧历史随之不可见，脚本也会把它当成已迁移跳过。导入会话需要网关管理 token
-（admin 设置 `agent.gateway.admin_token`）；文件与 workspace 用租户 API Key
-（`agent.gateway.api_key`）。
+（admin 设置 `agent.gateway.admin_token`；回环网关没配时回落本机状态目录的
+local-admin-token）；文件与 workspace 用租户 API Key（`agent.gateway.api_key`）。
 
 用法：
     uv run python scripts/migrate_agent_to_gateway.py --dry-run          # 只统计，不写网关 / 库
@@ -195,6 +195,7 @@ async def migrate(args: argparse.Namespace) -> int:
     from loomvec.api.services.admin_settings import effective_value
     from loomvec.core.db.base import create_engine_and_sessionmaker
     from loomvec.core.db.models import AgentEnvironment, AgentSession, Tenant, User
+    from loomvec.core.local_gateway import ADMIN_TOKEN_FILE, local_gateway_secret
 
     cfg = load_agent_config()
     engine, session_factory = create_engine_and_sessionmaker(cfg.settings.postgres)
@@ -203,15 +204,31 @@ async def migrate(args: argparse.Namespace) -> int:
     try:
         async with session_factory() as db:
             conn = await load_gateway_connection(db, cfg.agent)
-            admin_token = str(
-                (await effective_value(db, "agent.gateway.admin_token")) or ""
-            ).strip()
+            admin_cfg = str((await effective_value(db, "agent.gateway.admin_token")) or "").strip()
+            key_cfg = str((await effective_value(db, "agent.gateway.api_key")) or "").strip()
+            admin_file = (
+                ""
+                if admin_cfg
+                else local_gateway_secret(
+                    cfg.agent.gateway.url, ADMIN_TOKEN_FILE, cfg.agent.gateway.state_dir
+                )
+                or ""
+            )
+            admin_token = admin_cfg or admin_file
+        # 没在 admin 配置时回环网关会回落读本机状态目录里的文件：把来源说清楚，免得悄悄导进别的网关
+        key_src = "admin 配置" if key_cfg else ("本机状态目录文件" if conn.api_key else "无")
+        admin_src = "admin 配置" if admin_cfg else ("本机状态目录文件" if admin_file else "无")
+        print(f"凭据来源  api_key={key_src}  admin_token={admin_src}")
         if not args.dry_run:
             if not conn.api_key:
                 print("错误：未配置 agent.gateway.api_key", file=sys.stderr)
                 return 2
             if not args.skip_sessions and not admin_token:
-                print("错误：未配置 agent.gateway.admin_token（导入会话需要）", file=sys.stderr)
+                print(
+                    "错误：未配置 agent.gateway.admin_token（导入会话需要；"
+                    "本机回环网关也可放在其状态目录的 local-admin-token）",
+                    file=sys.stderr,
+                )
                 return 2
             if not await GatewayService(cfg, http).client_for(conn).healthz():
                 print(f"错误：网关不可达 {cfg.agent.gateway.url}", file=sys.stderr)

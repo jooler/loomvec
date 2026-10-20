@@ -42,25 +42,48 @@ class AiJsonError(Exception):
     """LLM 输出无法解析为期望 JSON（触发重试或兜底）。"""
 
 
+_JSON_RETRY_HINT = "上一条回复无法解析为 JSON。请只输出一个 JSON 对象，不要任何其它文字或代码围栏。"
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.S | re.I)
+
+
+def _json_objects(text: str) -> list[tuple[int, dict[str, Any]]]:
+    """从文本里按位置依次解出所有顶层 JSON 对象，返回 (占用字符数, 对象)。"""
+    decoder = json.JSONDecoder()
+    found: list[tuple[int, dict[str, Any]]] = []
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError as e:
+            # 跳过解码器已扫过的区域：外层对象被截断 / 格式坏时，不能把它里面的子对象当结果
+            i = text.find("{", max(i + 1, e.pos))
+            continue
+        if isinstance(obj, dict):
+            found.append((end - i, obj))
+        i = text.find("{", end)
+    return found
+
+
 def extract_json(text: str) -> dict[str, Any]:
-    """宽容解析：直接 json.loads，失败时截取首个 {...} 代码块重试。"""
+    """宽容解析：整段 json.loads → 围栏块（可前后有说明文字）→ 文本中最大的 JSON 对象。
+
+    供方不支持 response_format 时（json_response_format=false），模型常在 JSON 前后加说明文字，
+    说明里还可能带 `{}`；最大对象优先，是因为草稿 / 示例通常比正式输出短。
+    """
     text = text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)
     try:
         result = json.loads(text)
         if isinstance(result, dict):
             return result
     except json.JSONDecodeError:
         pass
-    m = re.search(r"\{.*\}", text, flags=re.S)
-    if m:
-        try:
-            result = json.loads(m.group(0))
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            pass
+    for block in _FENCE_RE.findall(text):
+        found = _json_objects(block)
+        if found:
+            return max(found, key=lambda f: f[0])[1]
+    found = _json_objects(text)
+    if found:
+        return max(found, key=lambda f: f[0])[1]
     raise AiJsonError(f"无法解析为 JSON 对象：{text[:200]!r}")
 
 
@@ -277,7 +300,7 @@ class AiGateway:
             "messages": messages,
             "temperature": temperature if temperature is not None else cfg.temperature,
         }
-        if json_mode:
+        if json_mode and cfg.json_response_format:
             payload["response_format"] = {"type": "json_object"}
         if max_tokens:
             payload["max_tokens"] = max_tokens
@@ -292,12 +315,19 @@ class AiGateway:
     async def complete_json(self, messages: list[dict[str, str]], **kwargs: Any) -> dict[str, Any]:
         """JSON 输出模式 + 解析失败重试（llm.json_retries 次）；仍失败抛 AiJsonError。"""
         last_err: Exception | None = None
+        msgs = messages
         for _attempt in range(1 + self._settings.llm.json_retries):
-            text = await self.complete(messages, json_mode=True, **kwargs)
+            text = await self.complete(msgs, json_mode=True, **kwargs)
             try:
                 return extract_json(text)
             except AiJsonError as e:
                 last_err = e
+                # 重试时带上上次的输出并点明问题，而不是原样重发（原样重发大概率重复同一个错）
+                msgs = [
+                    *messages,
+                    {"role": "assistant", "content": text[:2000]},
+                    {"role": "user", "content": _JSON_RETRY_HINT},
+                ]
         raise last_err or AiJsonError("LLM JSON 输出解析失败")
 
     async def stream(

@@ -205,6 +205,9 @@ class ClipSettings(AiProviderConfig):
 class LlmSettings(AiProviderConfig):
     temperature: float = 0.2
     json_retries: int = 2  # JSON 输出解析失败重试次数
+    # JSON 输出模式是否随请求发 response_format={"type":"json_object"}。供方不支持时置 false
+    # （如 acp-gateway 的 OpenAI 兼容接口会 400 拒绝），此时靠提示词约束 + 宽容解析 + 重试兜底
+    json_response_format: bool = True
     # 单次请求提示词上限（messages content 字符合计）：超限不发请求、直接报错。
     # 管线正常批次约 1.5 万字内（llm_batch_chars + 截断后的单行 + 系统提示），
     # 此为兜底闸门：异常输入（如内嵌图片 base64）按输入 token 计费，宁拒勿发。
@@ -609,6 +612,10 @@ class AgentGatewaySettings(BaseModel):
 
     url: str = "http://127.0.0.1:38095"  # 网关地址（admin 只读展示）
     request_timeout_s: float = 30.0  # 普通请求超时；SSE 流不设总超时
+    # 本机网关（mode=local，url 为回环地址）的状态目录：API Key / 管理 token 没有在 admin 配置时
+    # 读其中的 local-api-key / local-admin-token。None = $XDG_DATA_HOME/acp-gateway
+    # （缺省 ~/.local/share/acp-gateway）；须与网关一致，写绝对路径
+    state_dir: str | None = None
     models: AgentGatewayModelSettings = Field(default_factory=AgentGatewayModelSettings)
 
 

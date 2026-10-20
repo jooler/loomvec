@@ -152,11 +152,12 @@
 3. **观察期**：切换后观察一段时间。
 4. 以上满足后，单独开 **L3 删除**（见 `planning/acp-gateway.md` §11.4）。
 
-### 9.3 待决策
+### 9.3 已决策（2026-10-14）
 
-- **LLM 上游**：当前 `config/loomvec.json` 的 `ai.llm` 是 OpenCode Go，它要求请求带 `x-opencode-session` 头；网关的 deepseek 代理只转发 `content-type` / `accept`，所以 dsh 经网关会报 `missing x-opencode-session`。生产要么换官方 DeepSeek key（不用改代码），要么让网关支持上游附加头（改网关仓库）。倾向前者。
-- **claude 是否启用**：生产要用 claude 需要网关持有 Anthropic key（`ACPGW_ANTHROPIC_API_KEY`）或 Anthropic 兼容上游。只用 dsh 则不需要；`agent.default_agent` 现在可设 `dsh`。
-- **重放前缀的窗口**：迁移会话首次继续对话时补的是最近 20 条、8000 字符（保尾部），长回答多的会话会从某条回答中间截断。需要更完整的上下文就调 `history.replay_context` 的两个参数。
+- **LLM 上游**：换官方 DeepSeek key，填网关的 `ACPGW_DEEPSEEK_API_KEY`；不改网关代码。
+- **claude**：启用，走本地模式 CLI 登录（见 acp-gateway-local-mode.md）。
+- **重放前缀的窗口**：改为整条保留、从新往旧、最多 30 条 / 24000 字符，单条超 3000 字符保头尾（原先 20 条 / 8000 字符按字符硬切，会切断标签和半条消息）。见 docs/19 §4。
+- `agent.default_agent=claude`（2026-10-14，见 acp-gateway-local-mode.md §9.1）。
 
 ### 9.4 上线前检查
 
@@ -177,3 +178,23 @@
 - 迁移不带 dsh 用量；迁移会话的历史在网关里是 `imported` 态，agent 看不到，靠 `replay_pending` 补前缀（docs/19 §4）。
 - 工具调用没有结果、回合没有 `turn/end` 的旧数据，导入时按 `completed` 记。
 - 网关 `local` provider 下 claude 的 Bash 只读命令（如 `echo`）不向网关请求审批，直接执行；写 / 联网类才被策略拒绝。
+
+### 9.7 生产上线手册（生产 = 这台机器；2026-10-14 现状检查）
+
+> **已被 [acp-gateway-local-mode.md](./acp-gateway-local-mode.md) 取代**：目标改为「本机工具」（claude 用 CLI 登录态，不要 Anthropic key / docker / 防火墙）。下面的 docker 路线只在将来需要服务器模式时参考。§9.3 中「启用 claude 需网关持有 Anthropic key」「换 DeepSeek key」两条里，前一条作废，dsh 的 DeepSeek key 仍有效。
+
+现状：镜像 `acpgw/gateway:0.1.0`、`acpgw/agent-claude:0.89.1`、`acpgw/agent-dsh:0.1.5rc1` 已在本机；`loomvec-postgres`（35433）、`loomvec-redis`（6380）在跑；**网关没起，库 `acpgw` 不存在，`deploy/compose/.env` 里 `ACPGW_*` / `DOCKER_GID` 都没填，`/data/acp-gateway` 不存在**。残留的 `acpgw-sandbox` 网络是 `172.20.0.0/16`（无容器），与约定的 `172.31.88.0/24` 不符，须删了重建。正在跑的 agent（`--reload`）已是网关版代码，没配 Key 时提问直接报「未配置 ACP 网关 API Key」，不会建网关会话，旧会话未受影响——所以**对话功能在网关上线前是不可用的**。
+
+顺序：
+
+1. **root**：`sudo install -d -o 1000 -g 1000 /data/acp-gateway`
+2. 网络：`docker network rm acpgw-sandbox && docker network create --subnet 172.31.88.0/24 acpgw-sandbox`
+3. **root**：`sudo deploy/compose/sandbox-firewall.sh 172.31.88.0/24 38080,38095`（须在 2 之后）
+4. 库：`docker exec loomvec-postgres psql -U loomvec -d postgres -c 'CREATE DATABASE acpgw'`
+5. 填 `deploy/compose/.env`：`ACPGW_SECRET_KEY`（`openssl rand -hex 32`）、`ACPGW_ADMIN_TOKEN`、`ACPGW_ANTHROPIC_API_KEY`、`ACPGW_DEEPSEEK_API_KEY`、`ACPGW_SANDBOX_SUBNET=172.31.88.0/24`、`ACPGW_STORAGE_ROOT=/data/acp-gateway`、`DOCKER_GID=999`。
+6. 起网关：`cd deploy/compose && docker compose --profile gateway up -d acp-gateway`，`curl 127.0.0.1:38095/healthz`。
+7. 建租户（`settings.mcp.allowed_hosts` 含 `host.docker.internal`）与 API Key（admin「ACP 服务」菜单），在 admin「设置 → agent」填 `agent.gateway.api_key` / `admin_token`；`agent.mcp.url_sandbox=http://host.docker.internal:38080/api/v1/mcp`。
+8. docker provider 冒烟（含容器 → api 的 MCP 回调、防火墙清单见网关 `docs/operations.md`）。
+9. 迁移：先备份 PG 与 `{storage_root}/envs/`，`--dry-run` 后全量跑；**在步骤 7 配 Key 之后、告知用户可以提问之前**完成。
+10. 观察期，然后才开 L3。
+

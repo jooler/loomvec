@@ -20,13 +20,14 @@ dsh 协议事实（third_party 源码核实，影响实现）：
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loomvec.core.config import AgentSettings, Settings
+from loomvec.core.local_gateway import API_KEY_FILE, local_gateway_secret
 
 
 @dataclass(frozen=True)
@@ -108,7 +109,8 @@ class GatewayConnection:
     """一次请求内生效的网关配置：文件默认值 + system_config（DB 非空值优先，即时生效）。"""
 
     url: str
-    api_key: str | None  # 无文件回落：空 = 未配置
+    # 不进 repr / 日志。admin 配置优先；否则仅回环网关读本机状态目录；都没有 = 未配置
+    api_key: str | None = field(repr=False)
     request_timeout_s: float
     default_agent: str
     models: dict[str, str | None]  # agent -> 默认模型名（None = 用 agent 默认）
@@ -138,9 +140,13 @@ async def load_gateway_connection(session: AsyncSession, agent: AgentSettings) -
         "claude": vals.get(KEY_MODEL_CLAUDE) or agent.model_for("claude"),
         "dsh": vals.get(KEY_MODEL_DSH) or agent.model_for("dsh"),
     }
+    # admin 里没配 Key 时，回环地址的本机网关（mode=local）从它的状态目录读（同机同用户，免粘贴）
+    api_key = vals.get(KEY_GATEWAY_API_KEY) or local_gateway_secret(
+        agent.gateway.url, API_KEY_FILE, agent.gateway.state_dir
+    )
     return GatewayConnection(
         url=agent.gateway.url,
-        api_key=vals.get(KEY_GATEWAY_API_KEY),
+        api_key=api_key,
         request_timeout_s=agent.gateway.request_timeout_s,
         default_agent=default_agent,
         models=models,

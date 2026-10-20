@@ -4,8 +4,9 @@
 
 - 白名单：只能调用 `_OPERATIONS` 里登记的 (方法, 路径模板)；路径参数必须匹配 id 格式，
   拒绝 `..`、斜杠、冒号等能改写路径的字符（网关的 `sessions:import` 等迁移接口不在表内）；
-- 凭据：管理 token 取 admin 动态配置 `agent.gateway.admin_token`（DB，无文件回落），
-  只出现在发往网关的 Authorization 头里——不进日志、不进异常信息、不跟随重定向；
+- 凭据：管理 token 取 admin 动态配置 `agent.gateway.admin_token`（DB 非空值优先；没配且网关是回环
+  地址时回落本机网关状态目录的 `local-admin-token`），只出现在发往网关的 Authorization 头里——
+  不进日志、不进异常信息、不跟随重定向；
 - 网关返回的错误转换为平台统一错误结构（见 `_map_error`），网关的 `details` 不透传，
   消息里的 token / API Key 形状字符串会被抹掉；
 - 网关地址取 `agent.gateway.url`（config/loomvec.json，只读）。
@@ -31,6 +32,7 @@ from loomvec.core.errors import (
     UpstreamUnavailableError,
     ValidationError,
 )
+from loomvec.core.local_gateway import ADMIN_TOKEN_FILE, API_KEY_FILE, local_gateway_secret
 
 UPSTREAM_NAME: Final = "acp-gateway"
 
@@ -148,11 +150,19 @@ def mcp_sandbox_target() -> dict[str, str | None]:
     }
 
 
+# 敏感项 → 本机网关状态目录里的文件（admin 没配置时回落，仅回环地址的网关）
+_LOCAL_FILES: Final = {SETTING_API_KEY: API_KEY_FILE, SETTING_ADMIN_TOKEN: ADMIN_TOKEN_FILE}
+
+
 async def _secret_setting(session: AsyncSession, key: str) -> str:
     from loomvec.api.services.admin_settings import effective_value
 
     value = await effective_value(session, key)
-    return value.strip() if isinstance(value, str) else ""
+    configured = value.strip() if isinstance(value, str) else ""
+    if configured or key not in _LOCAL_FILES:
+        return configured
+    gw = get_app_config().agent.gateway
+    return local_gateway_secret(gw.url, _LOCAL_FILES[key], gw.state_dir) or ""
 
 
 async def is_configured(session: AsyncSession, key: str) -> bool:
@@ -221,6 +231,7 @@ class GatewayAdminClient:
         if not self._token:
             raise GatewayNotConfiguredError(
                 "未配置 ACP 网关管理 token：请在「设置 → agent」填写 agent.gateway.admin_token"
+                "（本机回环网关也可放在其状态目录的 local-admin-token）"
             )
         spec = _OPERATIONS.get(op)
         if spec is None:  # 编程错误：路由层只能用登记过的操作
