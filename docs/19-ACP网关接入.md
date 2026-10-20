@@ -17,7 +17,7 @@
 | `agent.default_agent` | `claude` | 新会话用的 agent（`claude` / `dsh`）；已有会话以 `agent_session.agent` 为准 |
 | `agent.gateway.url` | `http://127.0.0.1:38095` | 网关地址（admin 只读展示） |
 | `agent.gateway.request_timeout_s` | `30` | 普通请求超时；SSE 流不设总超时 |
-| `agent.gateway.state_dir` | `null` | 本机网关（本地模式）的状态目录，见 §2.1；`null` = `$XDG_DATA_HOME/acp-gateway`（`~/.local/share/acp-gateway`）；须与网关配置的 `state_dir` 指向同一目录（写绝对路径：loomvec 会展开 `~`、相对路径按进程 cwd 解析，而网关不展开 `~`，两边会指到不同目录） |
+| `agent.gateway.state_dir` | `null` | 本机网关（本地模式）的状态目录，见 §2.1；`null` = `$XDG_DATA_HOME/acp-gateway`（`XDG_DATA_HOME` 为空或相对路径时忽略，即 `~/.local/share/acp-gateway`）；须与网关配置的 `state_dir` 指向同一目录（写绝对路径：两边都展开 `~/`，但相对路径网关会拒绝启动、loomvec 按进程 cwd 解析） |
 | `agent.gateway.models.claude` / `.dsh` | `null` | 各 agent 的默认模型名；`null` = agent 默认，`dsh` 缺省回落 `agent.model.name` |
 
 `system_config`（admin「设置 → agent」写入，立即生效）：`agent.default_agent`、`agent.gateway.models.claude`、`agent.gateway.models.dsh` 覆盖文件值；两个敏感项没有配置文件回落，空 = 未配置（本机网关例外，见 §2.1）：

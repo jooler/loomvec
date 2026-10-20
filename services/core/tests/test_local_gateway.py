@@ -76,6 +76,13 @@ def test_default_state_dir_follows_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert default_state_dir() == Path.home() / ".local" / "share" / "acp-gateway"
 
 
+def test_relative_xdg_data_home_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", "relative/dir")
+    assert default_state_dir() == Path.home() / ".local" / "share" / "acp-gateway"
+    monkeypatch.setenv("XDG_DATA_HOME", "")
+    assert default_state_dir() == Path.home() / ".local" / "share" / "acp-gateway"
+
+
 def test_symlink_is_not_followed(tmp_path: Path) -> None:
     target = tmp_path / "elsewhere"
     _write(target, "stolen")

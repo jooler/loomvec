@@ -22,8 +22,13 @@ _MAX_SECRET_BYTES = 4096  # 密钥文件很小；防止被指到巨大文件
 
 
 def default_state_dir() -> Path:
-    """与网关同一约定：$XDG_DATA_HOME/acp-gateway，缺省 ~/.local/share/acp-gateway。"""
-    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    """与网关同一约定：$XDG_DATA_HOME/acp-gateway，缺省 ~/.local/share/acp-gateway。
+
+    XDG 规范要求忽略相对路径的 XDG_DATA_HOME（网关同样忽略），否则换个 cwd 就指到别的目录。
+    """
+    base = os.environ.get("XDG_DATA_HOME", "")
+    if not base or not os.path.isabs(base):
+        base = str(Path.home() / ".local" / "share")
     return Path(base) / "acp-gateway"
 
 
